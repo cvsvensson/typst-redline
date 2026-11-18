@@ -398,6 +398,11 @@ fn output_compiles() {
 }
 
 #[test]
+fn template_applied_by_a_show_rule_sees_the_content() {
+    compile("template-body", &run("template-body").files);
+}
+
+#[test]
 fn deleted_code_that_would_fail_compiles_when_shown_by_name() {
     compile("deleted-code", &generate("deleted-code", PREAMBLE, BY_NAME).files);
 }
