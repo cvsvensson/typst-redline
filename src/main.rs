@@ -607,6 +607,7 @@ fn compose(
             headings: &new_headings,
         },
         &result.changes,
+        &result.bib,
     );
     write(dir, &[(COMPOSITE.into(), source)])?;
     let out = typst(a, dir, "compile", &[&dir.join(COMPOSITE), &to])?;

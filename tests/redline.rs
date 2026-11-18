@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use typst_redline::{
-    Change, ChangeKind, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Version, pair_pages, redline,
+    Bib, Change, ChangeKind, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Side, Version, composite,
+    pair_pages, redline,
 };
 
 const FULL: Options = Options {
@@ -513,7 +514,7 @@ fn changed_code_in_imported_file_is_listed_as_not_marked() {
     let r = run("imported-code");
     let kinds: Vec<_> = r.changes.iter().map(|c| (c.file.as_str(), c.kind)).collect();
     assert_eq!(kinds, [("defs.typ", ChangeKind::Unmarked)]);
-    assert!(r.body.contains("unmarked: true"), "{}", r.body);
+    assert!(r.body.contains("code: (\"#let f(x) = x + 2\",)"), "{}", r.body);
 }
 
 #[test]
@@ -900,6 +901,23 @@ fn side_by_side_shows_an_inserted_page_without_a_counterpart() {
     let (pairs, _) = pair_pages(&old, &new, (&[(1, 3)], &[(1, 4)]));
     let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone())).collect();
     assert_eq!(pages, [(vec![], vec![3])]);
+}
+
+#[test]
+fn side_by_side_summary_lists_bibliography_changes() {
+    let side = Side {
+        label: "v",
+        pdf: "v.pdf",
+        pages: 1,
+        unbarred: &[],
+        changes: &[],
+        headings: &[],
+    };
+    let bib = Bib {
+        added: vec!["c".into()],
+        ..Bib::default()
+    };
+    assert!(composite(&side, &side, &[], &bib).contains("added: (\"c\",)"));
 }
 
 /// Whether the typst on PATH is older than the side-by-side layout needs.
