@@ -70,12 +70,13 @@
 )
 
 // Whether a part of a mark is laid out as a block of its own and gets a
-// frame. An image or content computed at layout (a drawing) is, when it is
-// all of a block mark.
+// frame. An image, a shape or content computed at layout (a drawing) is,
+// when it is all of a block mark. Names, because some shapes exist only in
+// some Typst versions.
 #let redline-framed(c, sole) = (
   c.func() in (figure, block, align, grid, table, stack, pad, columns)
     or c.func() == math.equation and c.block
-    or sole and (c.func() == image or repr(c.func()) in ("context", "layout"))
+    or sole and repr(c.func()) in ("image", "rect", "square", "circle", "ellipse", "polygon", "line", "path", "curve", "context", "layout")
 )
 
 // A frame around a block-level element, outside it so that nothing moves;
@@ -86,9 +87,14 @@
   let eq = it.func() == math.equation
   let natural = measure(if eq { math.equation(block: true, numbering: none, it.body) } else { it })
   let h = measure(block(width: size.width, it)).height
-  // An element whose height depends on the width it gets (fractional
-  // columns, wrapped text) fills the width.
-  let w = if natural.width == 0pt or natural.width > size.width or calc.abs((natural.height - h).to-absolute()) > 0.1pt { size.width } else { natural.width }
+  // `measure` cannot resolve a relative width, so it is resolved here. An
+  // element whose height depends on the width it gets (fractional columns,
+  // wrapped text) fills the width.
+  let rel = if it.func() == figure { it.body } else { it }
+  let rel = if type(rel) == content { rel.at("width", default: auto) } else { auto }
+  let w = if type(rel) == ratio { calc.min(rel * size.width, size.width) } else if type(rel) == relative {
+    calc.min(rel.ratio * size.width + rel.length.to-absolute(), size.width)
+  } else if natural.width == 0pt or natural.width > size.width or calc.abs((natural.height - h).to-absolute()) > 0.1pt { size.width } else { natural.width }
   let a = if it.func() == align { it.alignment } else if eq or it.func() == figure { center } else { align.alignment }
   let a = if a.axis() == "horizontal" { a } else if a.axis() == none { a.x } else { start }
   it
