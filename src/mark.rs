@@ -10,6 +10,7 @@ use typst_syntax::{RootedPath, Source, SyntaxKind as K, SyntaxNode, VirtualPath,
 
 use crate::align::{Step, align};
 use crate::blame::{Steps, blame};
+use crate::moves::{self, Run};
 use crate::syntax::*;
 use crate::{Bib, Change, ChangeKind, History, OLD_DIR, Options, PREAMBLE_PATH, pair_files, resolve};
 
@@ -37,8 +38,12 @@ pub struct Ctx {
     steps: Option<Vec<Vec<(String, String)>>>,
     /// The steps lead from the new version to the old one.
     swapped: bool,
-    /// Each new file that is to be written, by path, with its old file.
-    aligned: HashMap<String, Aligned>,
+    /// Each new file that is to be written, by path, with its old file, in
+    /// reading order.
+    aligned: Vec<(String, Aligned)>,
+    /// Blocks moved, by index into `aligned`.
+    #[allow(dead_code)]
+    moves: Vec<Run>,
 }
 
 /// A new file and the old file it is compared with, as blocks, and the
@@ -74,7 +79,7 @@ impl Ctx {
             .find(|p| !used(p))
             .unwrap();
         let pairs = pair_files(&old_files, &new_files);
-        let aligned = new_files
+        let aligned: Vec<(String, Aligned)> = new_files
             .iter()
             .filter_map(|(path, new_src)| {
                 let old_path = pairs.get(path).cloned().unwrap_or_default();
@@ -100,6 +105,12 @@ impl Ctx {
                 Some((path.clone(), a))
             })
             .collect();
+        let moves = moves::find(
+            &aligned
+                .iter()
+                .map(|(_, a)| (&a.docs.0, &a.docs.1, &a.steps[..]))
+                .collect::<Vec<_>>(),
+        );
         Ctx {
             prefix,
             opts,
@@ -114,6 +125,7 @@ impl Ctx {
             steps,
             swapped,
             aligned,
+            moves,
         }
     }
 
@@ -285,7 +297,7 @@ impl<'a> Writer<'a> {
     /// once; an unchanged file other than the entry is not written.
     fn file(&mut self, path: &str) {
         let ctx = self.ctx;
-        let Some(a) = ctx.aligned.get(path) else {
+        let Some((_, a)) = ctx.aligned.iter().find(|(p, _)| p == path) else {
             return;
         };
         if !self.done.insert(path.to_string()) {
