@@ -1,50 +1,271 @@
 //! Produce a Typst document that shows the new version of a file with the
 //! changes against an old version marked.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
-use typst_syntax::{SyntaxKind as K, SyntaxNode, parse};
+use typst_syntax::{SyntaxKind as K, SyntaxNode, ast, parse};
 
 pub const PREAMBLE: &str = include_str!("preamble.typ");
 
+/// Path of the preamble in the output, relative to the project root.
+pub const PREAMBLE_PATH: &str = ".redline-preamble.typ";
+
+/// A version of a project: `read` returns the file at a root-relative path
+/// with `/` separators, or `None` if it does not exist; `entry` is the path
+/// of the main file.
+pub struct Version<'a> {
+    pub label: String,
+    pub entry: String,
+    pub read: &'a dyn Fn(&str) -> Option<String>,
+}
+
+pub struct Options {
+    /// Typst source defining the functions the output calls (see [`PREAMBLE`]).
+    pub preamble: String,
+    /// Evaluate deleted code expressions; otherwise show them as source text.
+    pub eval_deleted: bool,
+    /// Diff inside the content blocks of code expressions that differ only
+    /// there; otherwise such expressions are compared whole.
+    pub content_blocks: bool,
+}
+
+pub struct Redline {
+    /// Files to lay over the new version, as (root-relative path, content).
+    pub files: Vec<(String, String)>,
+    pub changes: Vec<Change>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Change {
+    pub file: String,
+    /// Label of the enclosing section, `None` before the first section.
+    pub section: Option<String>,
+    pub kind: ChangeKind,
+    /// Typst markup of the changed content.
+    pub text: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ChangeKind {
+    Ins,
+    Del,
+    /// A change the output does not show.
+    Unmarked,
+}
+
+impl ChangeKind {
+    fn name(self) -> &'static str {
+        match self {
+            ChangeKind::Ins => "ins",
+            ChangeKind::Del => "del",
+            ChangeKind::Unmarked => "unmarked",
+        }
+    }
+}
+
+/// The new version of the project with the changes against the old version
+/// marked in every file the entry includes or imports, a summary page in
+/// the entry, and the preamble the marked files import.
+pub fn redline(old: &Version, new: &Version, opts: &Options) -> Redline {
+    let mut warnings = vec![];
+    let old_files = project(old, &mut warnings);
+    let new_files = project(new, &mut warnings);
+    let pairs = pair_files(&old_files, &new_files);
+    let union = |files: &[(String, String)], f: fn(&SyntaxNode) -> HashSet<String>| {
+        files.iter().flat_map(|(_, s)| f(&parse(s))).collect::<HashSet<_>>()
+    };
+    // Names the output adds must not collide with names in the project.
+    let used = |p: &String| {
+        old_files
+            .iter()
+            .chain(&new_files)
+            .any(|(_, s)| s.contains(&format!("{p}-")))
+    };
+    let prefix = std::iter::once("redline".into())
+        .chain((1..).map(|n| format!("redline{n}")))
+        .find(|p| !used(p))
+        .unwrap();
+    let ctx = Ctx {
+        prefix,
+        eval_deleted: opts.eval_deleted,
+        content_blocks: opts.content_blocks,
+        new_targets: union(&new_files, targets),
+        removed_defs: union(&old_files, definitions)
+            .difference(&union(&new_files, definitions))
+            .cloned()
+            .collect(),
+        old_files,
+        new_files,
+        pairs,
+    };
+    let mut w = Writer::new(&ctx, &new.entry);
+    w.file(&new.entry);
+    w.top = false;
+    w.current = None;
+    for (path, _) in &ctx.new_files {
+        w.file(path);
+    }
+    let mut files = vec![
+        (PREAMBLE_PATH.into(), opts.preamble.clone()),
+        (new.entry.clone(), w.finish(&old.label, &new.label)),
+    ];
+    files.append(&mut w.files);
+    // An old file no longer reachable is staged in its old version, so that
+    // deleted code including it shows what was deleted.
+    for (path, src) in &ctx.old_files {
+        let stale = (new.read)(path).is_some_and(|s| normalize(&s) != *src);
+        if stale && !ctx.pairs.values().any(|o| o == path) {
+            files.push((path.clone(), src.clone()));
+        }
+    }
+    Redline {
+        files,
+        changes: w.changes,
+        warnings,
+    }
+}
+
+/// The entry and the files it includes or imports by a literal path,
+/// directly or not, with their sources. A missing entry is empty.
+fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {
+    let mut files: Vec<(String, String)> = vec![];
+    let mut queue = vec![v.entry.clone()];
+    while let Some(path) = queue.pop() {
+        if files.iter().any(|(p, _)| *p == path) {
+            continue;
+        }
+        let Some(src) = (v.read)(&path).map(|s| normalize(&s)) else {
+            if path == v.entry {
+                warnings.push(format!("{path} does not exist in {}", v.label));
+                files.push((path, String::new()));
+            }
+            continue;
+        };
+        let mut deps = vec![];
+        walk(&parse(&src), &mut |n| {
+            let (source, include) = if let Some(i) = n.cast::<ast::ModuleInclude>() {
+                (i.source(), true)
+            } else if let Some(i) = n.cast::<ast::ModuleImport>() {
+                (i.source(), false)
+            } else {
+                return;
+            };
+            let warn = match source {
+                ast::Expr::Str(s) if s.get().starts_with('@') => None,
+                ast::Expr::Str(s) => match resolve(&path, &s.get()) {
+                    Some(p) => {
+                        deps.push(p);
+                        None
+                    }
+                    None => Some(format!("{path}: {} is outside the root", s.get())),
+                },
+                _ if include => Some(format!(
+                    "{path}: the included path is computed, so changes inside it are not marked"
+                )),
+                _ => None,
+            };
+            if let Some(w) = warn.filter(|w| !warnings.contains(w)) {
+                warnings.push(w);
+            }
+        });
+        files.push((path, src));
+        // Depth first in source order, so that files come in reading order.
+        queue.extend(deps.into_iter().rev());
+    }
+    files
+}
+
+/// A path relative to the file `from`, or to the root if it starts with
+/// `/`, as a normalized root-relative path; `None` if it leaves the root.
+fn resolve(from: &str, target: &str) -> Option<String> {
+    let path = match (target.strip_prefix('/'), from.rsplit_once('/')) {
+        (Some(abs), _) => abs.to_string(),
+        (None, Some((dir, _))) => format!("{dir}/{target}"),
+        (None, None) => target.to_string(),
+    };
+    let mut parts = vec![];
+    for c in path.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => drop(parts.pop()?),
+            c => parts.push(c),
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// The old file each new file is compared with: the entries with each
+/// other, then files at the same path, then the most similar remaining file
+/// (a renamed file).
+fn pair_files(old: &[(String, String)], new: &[(String, String)]) -> HashMap<String, String> {
+    let mut pairs = HashMap::from([(new[0].0.clone(), old[0].0.clone())]);
+    for (p, _) in &new[1..] {
+        if p != &old[0].0 && old.iter().any(|(q, _)| q == p) {
+            pairs.insert(p.clone(), p.clone());
+        }
+    }
+    let toks = |s: &str| words(&tokenize(&parse(s).children().cloned().collect::<Vec<_>>()));
+    for (p, s) in &new[1..] {
+        if pairs.contains_key(p) {
+            continue;
+        }
+        let ntoks = toks(s);
+        let best = old
+            .iter()
+            .filter(|(q, _)| !pairs.values().any(|o| o == q))
+            .map(|(q, os)| (q, similarity(&toks(os), &ntoks)))
+            .filter(|&(_, s)| s >= 0.4)
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((q, _)) = best {
+            pairs.insert(p.clone(), q.clone());
+        }
+    }
+    pairs
+}
+
+/// The literal path of an `#include` block.
+fn include_target(b: &Block) -> Option<String> {
+    match b.nodes.get(1)?.cast::<ast::ModuleInclude>()?.source() {
+        ast::Expr::Str(s) => Some(s.get().to_string()),
+        _ => None,
+    }
+}
+
+/// An `#import` or `#include` block: its changes show in the files it
+/// names, not in the line itself.
+fn is_import(b: &Block) -> bool {
+    b.nodes
+        .get(1)
+        .is_some_and(|n| matches!(n.kind(), K::ModuleImport | K::ModuleInclude))
+}
+
 /// Strip a byte-order mark and convert CRLF and CR line endings to LF.
-pub fn normalize(s: &str) -> String {
+fn normalize(s: &str) -> String {
     s.strip_prefix('\u{feff}')
         .unwrap_or(s)
         .replace("\r\n", "\n")
         .replace('\r', "\n")
 }
 
-/// Typst source of `new` with the changes against `old` marked, preceded by
-/// `preamble` and a summary page.
-pub fn redline(old: &str, new: &str, preamble: &str) -> String {
-    let (old, new) = (normalize(old), normalize(new));
-    let (old_root, new_root) = (parse(&old), parse(&new));
-    let old_doc = Doc::new(&old_root);
-    let new_doc = Doc::new(&new_root);
-    let ctx = Ctx {
-        new_targets: targets(&new_root),
-        removed_defs: definitions(&old_root)
-            .difference(&definitions(&new_root))
-            .cloned()
-            .collect(),
-    };
-    let mut w = Writer::new(&ctx);
-    let ops = capture_diff_slices(Algorithm::Patience, &old_doc.keys(), &new_doc.keys());
-    for op in ops {
-        let (o, n) = (op.old_range(), op.new_range());
-        match op {
-            DiffOp::Equal { .. } => {
-                for (i, j) in o.zip(n) {
-                    w.pair(&old_doc.blocks[i], &new_doc.blocks[j], true);
-                }
-            }
-            _ => w.region(&old_doc.blocks[o], &new_doc.blocks[n]),
+/// A Typst string literal holding `s`.
+fn typst_str(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => out.push(c),
         }
     }
-    w.out.push_str(&new_doc.trailing);
-    w.finish(preamble)
+    out.push('"');
+    out
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -73,26 +294,34 @@ impl Block {
         matches!(self.kind, Kind::Heading | Kind::Item).then(|| &self.nodes[0])
     }
 
-    /// Text before the body markup (`= `, `- `), the body tokens and the
-    /// trailing text (label) of a heading or item; for a paragraph, all tokens.
-    fn parts(&self) -> (String, Vec<Tok>, String) {
-        let Some(head) = self.head() else {
-            return (String::new(), tokenize(&self.nodes), String::new());
+    /// Text before the body markup (`= `, `- `, `/ Term: `), the body nodes
+    /// and the trailing text (label) of a heading or item; for a paragraph,
+    /// all nodes.
+    fn parts(&self) -> (String, Vec<SyntaxNode>, String) {
+        let body = self
+            .head()
+            .and_then(|h| h.children().rposition(|c| c.kind() == K::Markup).map(|i| (h, i)));
+        let Some((head, i)) = body else {
+            return (String::new(), self.nodes.clone(), String::new());
         };
-        let mut prefix = String::new();
-        let mut body = None;
-        for c in head.children() {
-            if c.kind() == K::Markup && body.is_none() {
-                body = Some(c);
-            } else if body.is_none() {
-                prefix.push_str(&c.full_text());
-            }
-        }
-        let suffix: String = self.nodes[1..].iter().map(|n| n.full_text().to_string()).collect();
-        match body {
-            Some(b) => (prefix, tokenize(&b.children().cloned().collect::<Vec<_>>()), suffix),
-            None => (String::new(), tokenize(&self.nodes), String::new()),
-        }
+        let prefix = head.children().take(i).map(|c| c.full_text().to_string()).collect();
+        let suffix = self.nodes[1..].iter().map(|n| n.full_text().to_string()).collect();
+        (
+            prefix,
+            head.children().nth(i).unwrap().children().cloned().collect(),
+            suffix,
+        )
+    }
+
+    fn toks(&self) -> Vec<Tok> {
+        tokenize(&self.parts().1)
+    }
+
+    /// The marker and label around the body; blocks that differ in it are
+    /// not compared word by word, so that the change is marked.
+    fn frame(&self) -> String {
+        let (prefix, _, suffix) = self.parts();
+        collapse_ws(&format!("{prefix}\n{suffix}"))
     }
 
     fn label(&self) -> Option<String> {
@@ -113,7 +342,7 @@ struct Doc {
 }
 
 impl Doc {
-    fn new(root: &SyntaxNode) -> Self {
+    fn new(children: &[SyntaxNode]) -> Self {
         let mut doc = Doc {
             blocks: vec![],
             trailing: String::new(),
@@ -140,7 +369,6 @@ impl Doc {
                 });
                 *gap = ws.drain(..).map(|n| n.full_text().to_string()).collect();
             };
-        let children: Vec<SyntaxNode> = root.children().cloned().collect();
         let mut i = 0;
         while i < children.len() {
             let n = &children[i];
@@ -169,7 +397,7 @@ impl Doc {
                     let mut k = Kind::Para;
                     match n.kind() {
                         K::Heading => k = Kind::Heading,
-                        K::ListItem | K::EnumItem => k = Kind::Item,
+                        kind if is_item(kind) => k = Kind::Item,
                         K::Hash if i + 1 < children.len() => {
                             i += 1;
                             unit.push(children[i].clone());
@@ -233,7 +461,8 @@ fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
                     toks.push(Tok {
                         kind: if space { TK::Space } else { TK::Word },
                         key: if space { " ".into() } else { piece.to_string() },
-                        text: piece.to_string(),
+                        // Literal inside a word, but markup next to a wrapper.
+                        text: piece.replace('_', "\\_").replace('*', "\\*"),
                         nodes: vec![],
                         block: false,
                     });
@@ -277,7 +506,7 @@ fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
                 }
                 atom.text.push_str(&n.full_text());
                 atom.nodes.push(n.clone());
-                atom.key = collapse_ws(&atom.text);
+                atom.key = skeleton(&atom.nodes);
             }
             _ => {
                 let mut unit = vec![n.clone()];
@@ -295,7 +524,7 @@ fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
                 let display = n.kind() == K::Equation && n.children().nth(1).is_some_and(|c| c.kind() == K::Space);
                 toks.push(Tok {
                     kind: TK::Atom,
-                    key: collapse_ws(&text),
+                    key: skeleton(&unit),
                     text,
                     block: display || (n.kind() == K::Hash && line_start && line_end),
                     nodes: unit,
@@ -307,18 +536,23 @@ fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
     toks
 }
 
-/// Split text into runs of word characters, runs of whitespace, and single
-/// other characters.
+/// Split text into runs of whitespace and of other characters, so that
+/// punctuation stays with its word.
 fn split_words(s: &str) -> Vec<&str> {
     let mut out = vec![];
     let mut start = 0;
+    // Scripts written without spaces between words: each character is a word.
+    let unspaced = |c: char| {
+        matches!(c as u32, 0x0E00..=0x0EFF | 0x1000..=0x109F | 0x1780..=0x17FF | 0x2E80..=0x9FFF
+            | 0xF900..=0xFAFF | 0xFF66..=0xFF9F | 0x20000..=0x3FFFF)
+    };
     let class = |c: char| {
-        if c.is_alphanumeric() {
-            0
+        if unspaced(c) {
+            2
         } else if c.is_whitespace() {
             1
         } else {
-            2
+            0
         }
     };
     let mut prev: Option<u8> = None;
@@ -347,11 +581,15 @@ fn is_setup(expr: &SyntaxNode) -> bool {
             f.kind() == K::Ident
                 && matches!(
                     f.leaf_text().as_str(),
-                    "pagebreak" | "colbreak" | "bibliography" | "outline" | "v"
+                    "pagebreak" | "colbreak" | "bibliography" | "outline" | "v" | "assert"
                 )
         }),
         _ => false,
     }
+}
+
+fn is_item(kind: K) -> bool {
+    matches!(kind, K::ListItem | K::EnumItem | K::TermItem)
 }
 
 fn collapse_ws(s: &str) -> String {
@@ -420,23 +658,46 @@ fn walk(n: &SyntaxNode, f: &mut impl FnMut(&SyntaxNode)) {
 }
 
 struct Ctx {
+    /// Prefix of the names the output uses for the preamble's functions and
+    /// its own labels.
+    prefix: String,
+    eval_deleted: bool,
+    content_blocks: bool,
     new_targets: HashSet<String>,
     removed_defs: HashSet<String>,
+    old_files: Vec<(String, String)>,
+    new_files: Vec<(String, String)>,
+    /// New file path to the path of the old file it is compared with.
+    pairs: HashMap<String, String>,
+}
+
+fn source<'a>(files: &'a [(String, String)], path: &str) -> Option<&'a str> {
+    files.iter().find(|(p, _)| p == path).map(|(_, s)| s.as_str())
 }
 
 impl Ctx {
+    /// The line importing the preamble's functions under the prefix.
+    fn import(&self) -> String {
+        let p = &self.prefix;
+        let names = ["ins", "del", "summary", "bars"].map(|n| match p.as_str() {
+            "redline" => format!("redline-{n}"),
+            _ => format!("redline-{n} as {p}-{n}"),
+        });
+        format!("#import \"/{PREAMBLE_PATH}\": {}\n", names.join(", "))
+    }
+
     /// Source for deleted content: labels removed, references to unknown
     /// targets turned into text. Returns `None` if the code cannot be kept live
     /// (it uses removed definitions or deleted labels).
-    fn sanitize(&self, nodes: &[SyntaxNode]) -> Option<String> {
+    fn sanitize(&self, nodes: &[SyntaxNode], removed: &HashSet<String>) -> Option<String> {
         let mut out = String::new();
         for n in nodes {
-            self.sanitize_into(n, true, &mut out)?;
+            self.sanitize_into(n, true, removed, &mut out)?;
         }
         Some(out)
     }
 
-    fn sanitize_into(&self, n: &SyntaxNode, markup: bool, out: &mut String) -> Option<()> {
+    fn sanitize_into(&self, n: &SyntaxNode, markup: bool, removed: &HashSet<String>, out: &mut String) -> Option<()> {
         match n.kind() {
             K::Label if markup => {}
             K::Label => {
@@ -453,12 +714,14 @@ impl Ctx {
                     out.push_str(&format!("\\@{name}"));
                 }
             }
-            K::Ident | K::MathIdent if self.removed_defs.contains(n.leaf_text().as_str()) => return None,
+            K::Hash if !self.eval_deleted => return None,
+            K::Error => return None,
+            K::Ident | K::MathIdent if removed.contains(n.leaf_text().as_str()) => return None,
             _ if n.children().len() == 0 => out.push_str(n.leaf_text()),
             _ => {
                 let m = n.kind() == K::Markup;
                 for c in n.children() {
-                    self.sanitize_into(c, m, out)?;
+                    self.sanitize_into(c, m, removed, out)?;
                 }
             }
         }
@@ -466,121 +729,233 @@ impl Ctx {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Side {
-    Ins,
-    Del,
-}
-
-impl Side {
-    fn name(self) -> &'static str {
-        match self {
-            Side::Ins => "ins",
-            Side::Del => "del",
-        }
-    }
-}
-
 struct Section {
+    file: String,
     level: usize,
     target: Option<String>,
+    /// Typst expression.
     title: String,
-    count: usize,
     deleted: bool,
 }
 
 struct Writer<'a> {
     ctx: &'a Ctx,
+    entry: String,
+    /// The file being written and the old file it is compared with.
+    file: String,
+    old_file: String,
     out: String,
+    entry_out: String,
+    /// Marked files other than the entry.
+    files: Vec<(String, String)>,
+    done: HashSet<String>,
+    /// Writing the top level of a file in reading order: headings are
+    /// sections.
+    top: bool,
     summary_at: Option<usize>,
     sections: Vec<Section>,
-    current: Option<usize>,
-    front: usize,
-    n_ins: usize,
-    n_del: usize,
+    /// Label of the section being written.
+    current: Option<String>,
+    changes: Vec<Change>,
+    /// Indentation of the list item body being written.
+    indent: String,
+    /// Names deleted code in this file must not use: defined in the old
+    /// file or project but not in the new one.
+    removed: HashSet<String>,
 }
 
 impl<'a> Writer<'a> {
-    fn new(ctx: &'a Ctx) -> Self {
+    fn new(ctx: &'a Ctx, entry: &str) -> Self {
         Writer {
             ctx,
+            entry: entry.into(),
+            file: entry.into(),
+            old_file: String::new(),
             out: String::new(),
+            entry_out: String::new(),
+            files: vec![],
+            done: HashSet::new(),
+            top: true,
             summary_at: None,
             sections: vec![],
             current: None,
-            front: 0,
-            n_ins: 0,
-            n_del: 0,
+            changes: vec![],
+            indent: String::new(),
+            removed: HashSet::new(),
         }
     }
 
-    fn count(&mut self, side: Side) {
-        match side {
-            Side::Ins => self.n_ins += 1,
-            Side::Del => self.n_del += 1,
+    /// Mark the changes in the new file at `path` against its old file,
+    /// once; an unchanged file other than the entry is not written.
+    fn file(&mut self, path: &str) {
+        let ctx = self.ctx;
+        let Some(new_src) = source(&ctx.new_files, path) else {
+            return;
+        };
+        if !self.done.insert(path.to_string()) {
+            return;
         }
-        match self.current {
-            Some(s) => self.sections[s].count += 1,
-            None => self.front += 1,
+        let old_path = ctx.pairs.get(path).cloned().unwrap_or_default();
+        let old_src = source(&ctx.old_files, &old_path).unwrap_or_default();
+        if path != self.entry && old_src == new_src {
+            return;
+        }
+        let out = std::mem::take(&mut self.out);
+        let file = std::mem::replace(&mut self.file, path.into());
+        let old_file = std::mem::replace(&mut self.old_file, old_path);
+        let indent = std::mem::take(&mut self.indent);
+        let (o, n) = (parse(old_src), parse(new_src));
+        let (mut removed, kept) = (definitions(&o), definitions(&n));
+        removed.retain(|d| !kept.contains(d));
+        removed.extend(ctx.removed_defs.iter().cloned());
+        let removed = std::mem::replace(&mut self.removed, removed);
+        let children = |r: &SyntaxNode| r.children().cloned().collect::<Vec<_>>();
+        self.docs(&Doc::new(&children(&o)), &Doc::new(&children(&n)));
+        let marked = std::mem::replace(&mut self.out, out);
+        self.file = file;
+        self.old_file = old_file;
+        self.indent = indent;
+        self.removed = removed;
+        if path == self.entry {
+            self.entry_out = marked;
+        } else {
+            let marked = format!("{}{marked}", ctx.import());
+            self.files.push((path.into(), marked));
         }
     }
 
-    fn finish(self, preamble: &str) -> String {
+    /// Mark the file a new `#include` block includes, here, so that its
+    /// sections come in reading order.
+    fn included(&mut self, b: &Block) {
+        if let Some(path) = include_target(b).and_then(|t| resolve(&self.file, &t)) {
+            self.file(&path);
+        }
+    }
+
+    fn record(&mut self, kind: ChangeKind, text: String) {
+        self.changes.push(Change {
+            file: self.file.clone(),
+            section: self.current.clone(),
+            kind,
+            text,
+        });
+    }
+
+    /// Emit `body` wrapped as a change and record it.
+    fn mark(&mut self, kind: ChangeKind, args: &str, body: String) {
+        let p = &self.ctx.prefix;
+        self.out.push_str(&format!("#{p}-{}({args})[{body}];", kind.name()));
+        self.record(kind, body);
+    }
+
+    /// The entry's output source: the preamble import and the marked
+    /// document with the summary at the place [`Self::summary_here`] chose.
+    fn finish(&self, old_label: &str, new_label: &str) -> String {
+        let count = |f: &dyn Fn(&Change) -> bool| self.changes.iter().filter(|c| f(c)).count();
+        let front = |file: &str, title: String| Section {
+            file: file.into(),
+            level: 1,
+            target: None,
+            title,
+            deleted: false,
+        };
+        // Changes outside sections: before the entry's first heading, and in
+        // files that are not read in order (imported, or included by code).
+        let others = self
+            .files
+            .iter()
+            .map(|(p, _)| front(p, format!("[Definitions in #raw({}), marked where used]", typst_str(p))));
+        let all: Vec<Section> = std::iter::once(front(&self.entry, "[Before the first section]".into()))
+            .chain(others)
+            .collect();
+        let (first, rest) = all.split_at(1);
         let mut entries = String::new();
-        if self.front > 0 {
-            entries.push_str(&format!(
-                "  (1, none, [Before the first section], {}, false),\n",
-                self.front
-            ));
-        }
-        for s in self.sections.iter().filter(|s| s.count > 0 || s.deleted) {
+        for s in first.iter().chain(&self.sections).chain(rest) {
+            let here = |c: &Change| c.section == s.target && (s.target.is_some() || c.file == s.file);
+            let n = if s.deleted { 0 } else { count(&here) };
+            if n == 0 && !s.deleted {
+                continue;
+            }
+            let unmarked = !s.deleted && count(&|c| here(c) && c.kind == ChangeKind::Unmarked) > 0;
             let target = s.target.as_ref().map_or("none".to_string(), |l| format!("<{l}>"));
             entries.push_str(&format!(
-                "  ({}, {target}, [{}], {}, {}),\n",
+                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, deleted: {}, unmarked: {unmarked}),\n",
+                typst_str(&s.file),
                 s.level,
-                s.title.trim(),
-                s.count,
-                s.deleted
+                s.title,
+                s.deleted,
             ));
         }
-        let summary = format!("#redline-summary({}, {}, (\n{entries}))\n", self.n_ins, self.n_del);
-        let at = self.summary_at.unwrap_or(self.out.len());
-        let mut out = self.out;
+        let at = self.summary_at.unwrap_or(self.entry_out.len());
+        let mut out = self.entry_out.clone();
+        let p = &self.ctx.prefix;
+        let summary = format!(
+            "{}#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n))\n#set page(foreground: {p}-bars)\n",
+            if out[..at].ends_with('\n') || at == 0 { "" } else { "\n" },
+            typst_str(old_label),
+            typst_str(new_label),
+            count(&|c| c.kind == ChangeKind::Ins),
+            count(&|c| c.kind == ChangeKind::Del),
+        );
         out.insert_str(at, &summary);
-        format!("{preamble}\n{out}")
+        format!("{}{out}", self.ctx.import())
     }
 
-    /// Emit a new block; the summary goes before the first non-setup block.
-    fn begin_new(&mut self, b: &Block) {
-        if b.kind != Kind::Setup && self.summary_at.is_none() {
-            let gap = b.gap.trim_end_matches(|c: char| c != '\n');
-            self.out.push_str(gap);
+    /// The summary goes at the top level of the entry, before anything
+    /// other than the rules and definitions it starts with.
+    fn summary_here(&mut self) {
+        if self.top && self.file == self.entry && self.summary_at.is_none() {
             self.summary_at = Some(self.out.len());
-            self.out.push_str(&b.gap[gap.len()..]);
-        } else {
-            self.out.push_str(&b.gap);
         }
     }
 
-    /// A run of differing blocks. Similar blocks of the same kind are paired
-    /// and diffed word by word; around each pair, deletions come first.
+    fn begin_new(&mut self, b: &Block) {
+        let config = b.kind == Kind::Setup
+            && matches!(
+                b.nodes[1].kind(),
+                K::SetRule | K::ShowRule | K::LetBinding | K::ModuleImport
+            );
+        if !config {
+            self.summary_here();
+        }
+        // A heading or item starts a line, also after a deletion.
+        let line = matches!(b.kind, Kind::Heading | Kind::Item) && !b.gap.contains('\n');
+        if line && !self.out.is_empty() && !self.out.ends_with('\n') {
+            self.out.push('\n');
+        }
+        self.out.push_str(&b.gap);
+    }
+
+    fn docs(&mut self, old: &Doc, new: &Doc) {
+        for op in capture_diff_slices(Algorithm::Patience, &old.keys(), &new.keys()) {
+            let (o, n) = (op.old_range(), op.new_range());
+            match op {
+                DiffOp::Equal { .. } => {
+                    for (i, j) in o.zip(n) {
+                        self.pair(&old.blocks[i], &new.blocks[j], true);
+                    }
+                }
+                _ => self.region(&old.blocks[o], &new.blocks[n]),
+            }
+        }
+        self.out.push_str(&new.trailing);
+    }
+
+    /// A run of differing blocks. Similar blocks of the same kind, marker
+    /// and label are paired and diffed word by word; around each pair,
+    /// deletions come first. Pairing looks a bounded number of blocks ahead,
+    /// so that its cost stays linear in the length of the run.
     fn region(&mut self, old: &[Block], new: &[Block]) {
+        let owords: Vec<Vec<String>> = old.iter().map(|b| words(&b.toks())).collect();
         let mut p = 0;
         let mut pending: Vec<&Block> = vec![];
         for nb in new {
-            let best = (nb.kind != Kind::Setup)
-                .then(|| {
-                    let ntoks = nb.parts().1;
-                    (p..old.len())
-                        .filter(|&q| {
-                            old[q].kind == nb.kind
-                                && (nb.kind != Kind::Heading || old[q].heading_level() == nb.heading_level())
-                        })
-                        .map(|q| (q, similarity(&old[q].parts().1, &ntoks)))
-                        .filter(|&(_, s)| s >= 0.4)
-                        .max_by(|a, b| a.1.total_cmp(&b.1))
-                })
-                .flatten();
+            let nwords = words(&nb.toks());
+            let best = (p..old.len().min(p + 32))
+                .filter(|&q| old[q].kind == nb.kind && old[q].frame() == nb.frame())
+                .map(|q| (q, similarity(&owords[q], &nwords)))
+                .filter(|&(_, s)| s >= 0.4)
+                .max_by(|a, b| a.1.total_cmp(&b.1));
             match best {
                 Some((q, _)) => {
                     self.unpaired(&old[p..q], &pending);
@@ -594,43 +969,50 @@ impl<'a> Writer<'a> {
         self.unpaired(&old[p..], &pending);
     }
 
-    /// Deleted then inserted blocks, but text before the first heading on
-    /// either side stays before the headings.
+    /// Deleted and inserted blocks in turn, so that a replaced block is
+    /// followed by its replacement; but leading setup code of the new
+    /// version goes first (deleted content may use its definitions), and
+    /// text before the first heading on either side stays before the
+    /// headings.
     fn unpaired(&mut self, old: &[Block], new: &[&Block]) {
+        let ns = new.iter().position(|b| b.kind != Kind::Setup).unwrap_or(new.len());
         let oh = old.iter().position(|b| b.kind == Kind::Heading).unwrap_or(old.len());
         let nh = new.iter().position(|b| b.kind == Kind::Heading).unwrap_or(new.len());
-        old[..oh].iter().for_each(|b| self.deleted(b));
-        new[..nh].iter().for_each(|b| self.inserted(b));
-        old[oh..].iter().for_each(|b| self.deleted(b));
-        new[nh..].iter().for_each(|b| self.inserted(b));
+        new[..ns].iter().for_each(|b| self.inserted(b));
+        for (old, new) in [(&old[..oh], &new[ns..nh]), (&old[oh..], &new[nh..])] {
+            for k in 0..old.len().max(new.len()) {
+                old.get(k).inspect(|b| self.deleted(b));
+                new.get(k).inspect(|b| self.inserted(b));
+            }
+        }
     }
 
     fn heading_start(&mut self, nb: &Block) -> String {
         let level = nb.heading_level();
-        if level > 2 {
+        if level > 2 || !self.top {
             return String::new();
         }
         let (target, extra) = match nb.label() {
             Some(l) => (l, String::new()),
             None => {
-                let l = format!("redline-sec-{}", self.sections.len());
+                let l = format!("{}-sec-{}", self.ctx.prefix, self.sections.len());
                 (l.clone(), format!(" <{l}>"))
             }
         };
-        let (_, toks, _) = nb.parts();
-        let title = toks
+        let title: String = nb
+            .toks()
             .iter()
             .filter(|t| t.kind != TK::Comment)
             .map(|t| t.text.as_str())
             .collect();
         self.sections.push(Section {
+            file: self.file.clone(),
             level,
-            target: Some(target),
-            title,
-            count: 0,
+            target: Some(target.clone()),
+            title: format!("[{}]", title.trim()),
             deleted: false,
         });
-        self.current = Some(self.sections.len() - 1);
+        self.current = Some(target);
         extra
     }
 
@@ -641,15 +1023,37 @@ impl<'a> Writer<'a> {
         } else {
             String::new()
         };
-        if equal || nb.kind == Kind::Setup {
+        if nb.kind == Kind::Setup {
+            let (ot, nt) = (ob.toks(), nb.toks());
+            let diffed = !equal && ot.len() == 1 && nt.len() == 1 && self.code(&ot[0], &nt[0]);
+            if !diffed {
+                self.out.push_str(&nb.text());
+                if !equal && !is_import(nb) {
+                    self.record(ChangeKind::Unmarked, nb.text());
+                }
+            }
+            self.included(nb);
+            return;
+        }
+        if equal {
             self.out.push_str(&nb.text());
             self.out.push_str(&extra);
             return;
         }
-        let (prefix, ntoks, suffix) = nb.parts();
-        let (_, otoks, _) = ob.parts();
+        let (prefix, nbody, suffix) = nb.parts();
+        let (_, obody, _) = ob.parts();
         self.out.push_str(&prefix);
-        self.diff_tokens(&otoks, &ntoks);
+        // Nested items are blocks of their own, so that a change stays
+        // inside its item.
+        let (ohead, onested) = split_nested(&obody);
+        let (nhead, nnested) = split_nested(&nbody);
+        self.diff_tokens(&tokenize(ohead), &tokenize(nhead));
+        let (odoc, ndoc) = (Doc::new(onested), Doc::new(nnested));
+        let gap = ndoc.blocks.first().or(odoc.blocks.first()).map_or("", |b| &b.gap);
+        let indent = gap.rsplit('\n').next().unwrap().to_string();
+        let outer = std::mem::replace(&mut self.indent, indent);
+        self.docs(&odoc, &ndoc);
+        self.indent = outer;
         self.out.push_str(&suffix);
         self.out.push_str(&extra);
     }
@@ -657,7 +1061,15 @@ impl<'a> Writer<'a> {
     fn inserted(&mut self, nb: &Block) {
         self.begin_new(nb);
         if nb.kind == Kind::Setup {
-            self.out.push_str(&nb.text());
+            let at = self.out.len();
+            if is_import(nb) || !self.ctx.content_blocks || !self.inserted_code(&nb.nodes) {
+                self.out.truncate(at);
+                self.out.push_str(&nb.text());
+                if !is_import(nb) {
+                    self.record(ChangeKind::Unmarked, nb.text());
+                }
+            }
+            self.included(nb);
             return;
         }
         let extra = if nb.kind == Kind::Heading {
@@ -665,67 +1077,89 @@ impl<'a> Writer<'a> {
         } else {
             String::new()
         };
-        let (prefix, toks, suffix) = nb.parts();
-        self.count(Side::Ins);
+        let (prefix, nodes, suffix) = nb.parts();
         self.out.push_str(&prefix);
-        let body = self.content(&toks, Side::Ins);
-        match nb.kind {
-            Kind::Heading => self.out.push_str(&format!("#redline-ins(start: true)[{body}];")),
-            _ => self.out.push_str(&format!("#redline-ins-block[{body}];")),
-        }
+        let body = self.content(&tokenize(&nodes), ChangeKind::Ins);
+        self.mark(ChangeKind::Ins, "block: true", body);
         self.out.push_str(&suffix);
         self.out.push_str(&extra);
     }
 
     fn deleted(&mut self, ob: &Block) {
         if ob.kind == Kind::Setup {
-            return;
-        }
-        let (prefix, toks, _) = ob.parts();
-        let body = self.content(&toks, Side::Del);
-        let text = match ob.kind {
-            Kind::Heading => {
-                let level = ob.heading_level();
-                if level <= 2 {
-                    self.sections.push(Section {
-                        level,
-                        target: None,
-                        title: body.clone(),
-                        count: 0,
-                        deleted: true,
+            // A deleted include of a file that is gone shows its content,
+            // through a root-relative path.
+            let path = include_target(ob).and_then(|t| resolve(&self.old_file, &t));
+            match path {
+                Some(p) if !self.ctx.pairs.values().any(|o| *o == p) && source(&self.ctx.old_files, &p).is_some() => {
+                    let root = parse(&format!("#include {}", typst_str(&format!("/{p}"))));
+                    self.deleted(&Block {
+                        kind: Kind::Para,
+                        gap: String::new(),
+                        nodes: root.children().cloned().collect(),
+                        key: String::new(),
                     });
                 }
-                format!("\n\n#redline-del-heading({level})[{body}];")
+                _ if !is_import(ob) => self.record(ChangeKind::Unmarked, ob.text()),
+                _ => {}
             }
-            Kind::Item => format!("\n{prefix}#redline-del-block[{body}];"),
-            _ => format!("\n\n#redline-del-block[{body}];"),
-        };
-        self.count(Side::Del);
-        self.out.push_str(&text);
-        self.out.push('\n');
+            return;
+        }
+        let body = self.content(&tokenize(&ob.parts().1), ChangeKind::Del);
+        let mut args = "block: true".to_string();
+        if ob.kind == Kind::Heading {
+            let level = ob.heading_level();
+            if level <= 2 && self.top {
+                self.sections.push(Section {
+                    file: self.file.clone(),
+                    level,
+                    target: None,
+                    title: format!("[{body}]"),
+                    deleted: true,
+                });
+            }
+            args = format!("heading: {level}");
+        }
+        self.summary_here();
+        // An indented continuation line, not a block or item of its own: it
+        // must not end a list, number an item or add a paragraph break that
+        // the new version lacks.
+        self.out.push_str(&format!("\n{}  ", self.indent));
+        self.mark(ChangeKind::Del, &args, body);
     }
 
     /// Markup for tokens placed inside a wrapper's content block.
-    fn content(&self, toks: &[Tok], side: Side) -> String {
+    fn content(&self, toks: &[Tok], side: ChangeKind) -> String {
         let mut s = String::new();
         for t in toks {
             match t.kind {
                 TK::Comment => {}
                 TK::Space => s.push_str(&t.text),
                 TK::Word => {
-                    if s.trim().is_empty() && matches!(t.text.as_str(), "-" | "+" | "=" | "/") {
-                        s.push('\\');
+                    // Text that would start a list item, heading or term at
+                    // the start of a line inside the wrapper.
+                    let line_start = s.rsplit('\n').next().unwrap().trim().is_empty();
+                    let mut text = t.text.replace('[', "\\[").replace(']', "\\]");
+                    let digits = text.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
+                    if line_start && text.starts_with(['-', '+', '=', '/']) {
+                        text.insert(0, '\\');
+                    } else if line_start && digits > 0 && text[digits..].starts_with('.') {
+                        text.insert(digits, '\\');
                     }
-                    s.push_str(&t.text.replace('[', "\\[").replace(']', "\\]"));
+                    s.push_str(&text);
                 }
                 TK::Atom => match side {
-                    Side::Ins => s.push_str(&t.text),
-                    Side::Del => match self.ctx.sanitize(&t.nodes) {
+                    ChangeKind::Del => match self.ctx.sanitize(&t.nodes, &self.removed) {
                         Some(src) => s.push_str(&src),
-                        None => s.push_str(&format!("#raw({:?});", collapse_ws(&t.text))),
+                        None => s.push_str(&format!("#raw({});", typst_str(&collapse_ws(&t.text)))),
                     },
+                    _ => s.push_str(&t.text),
                 },
             }
+        }
+        // A line break would escape the closing bracket.
+        if s.ends_with('\\') {
+            s.push(' ');
         }
         s
     }
@@ -734,7 +1168,7 @@ impl<'a> Writer<'a> {
         let ok: Vec<&str> = old.iter().map(|t| t.key.as_str()).collect();
         let nk: Vec<&str> = new.iter().map(|t| t.key.as_str()).collect();
         // Segments: (old range, new range, equal).
-        let mut segs: Vec<(std::ops::Range<usize>, std::ops::Range<usize>, bool)> = vec![];
+        let mut segs: Vec<(Range<usize>, Range<usize>, bool)> = vec![];
         for op in capture_diff_slices(Algorithm::Myers, &ok, &nk) {
             let eq = matches!(op, DiffOp::Equal { .. });
             let (o, n) = (op.old_range(), op.new_range());
@@ -746,23 +1180,23 @@ impl<'a> Writer<'a> {
                 _ => segs.push((o, n, eq)),
             }
         }
-        // Absorb equal runs without words between two changes.
-        let mut merged: Vec<(std::ops::Range<usize>, std::ops::Range<usize>, bool)> = vec![];
+        // Absorb a kept run between two changes when it is at most one
+        // short word, or much shorter than the changes around it: whole
+        // phrases replaced read better than alternating fragments.
+        let count = |toks: &[Tok]| toks.iter().filter(|t| matches!(t.kind, TK::Word | TK::Atom)).count();
+        let size = |r: &(Range<usize>, Range<usize>, bool)| count(&old[r.0.clone()]).max(count(&new[r.1.clone()]));
+        let mut merged: Vec<(Range<usize>, Range<usize>, bool)> = vec![];
         let mut i = 0;
         while i < segs.len() {
             let s = segs[i].clone();
-            // Punctuation and at most one short word: merging gives
-            // readable chunks instead of alternating fragments.
-            let trivial = |r: &std::ops::Range<usize>| {
-                let toks = &new[r.clone()];
-                let words: Vec<&Tok> = toks
-                    .iter()
-                    .filter(|t| t.kind == TK::Word && t.text.chars().any(char::is_alphanumeric))
-                    .collect();
-                toks.iter().all(|t| t.kind != TK::Atom)
-                    && (words.is_empty() || (words.len() == 1 && words[0].text.chars().count() <= 3))
-            };
-            if s.2 && i > 0 && i + 1 < segs.len() && trivial(&s.1) {
+            let kept = &new[s.1.clone()];
+            let short = kept.iter().all(|t| t.kind != TK::Atom)
+                && match count(kept) {
+                    0 => true,
+                    1 => kept.iter().all(|t| t.kind != TK::Word || t.text.chars().count() <= 4),
+                    n => i > 0 && i + 1 < segs.len() && 2 * n < size(merged.last().unwrap()).min(size(&segs[i + 1])),
+                };
+            if s.2 && i > 0 && i + 1 < segs.len() && short {
                 let next = segs[i + 1].clone();
                 let last = merged.last_mut().unwrap();
                 last.0.end = next.0.end;
@@ -781,8 +1215,12 @@ impl<'a> Writer<'a> {
         }
         for (o, n, eq) in merged {
             if eq {
-                for t in &new[n] {
-                    self.out.push_str(&t.text);
+                for (ot, nt) in old[o].iter().zip(&new[n]) {
+                    if ot.text == nt.text || nt.kind != TK::Atom {
+                        self.out.push_str(&nt.text);
+                    } else if !self.code(ot, nt) {
+                        self.change(std::slice::from_ref(ot), std::slice::from_ref(nt));
+                    }
                 }
             } else {
                 self.change(&old[o], &new[n]);
@@ -790,46 +1228,130 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// A changed run: old struck, new highlighted, whitespace outside the
-    /// wrappers.
+    /// Write code `n` with the changes inside its content blocks against
+    /// `o` marked. Writes nothing and returns false if they differ outside
+    /// content blocks, or if diffing inside code is off.
+    fn code(&mut self, o: &Tok, n: &Tok) -> bool {
+        self.ctx.content_blocks && o.key == n.key && self.code_nodes(&o.nodes, &n.nodes)
+    }
+
+    fn code_nodes(&mut self, o: &[SyntaxNode], n: &[SyntaxNode]) -> bool {
+        let (at, count) = (self.out.len(), self.changes.len());
+        let ok = o.len() == n.len() && o.iter().zip(n).all(|(a, b)| self.code_node(a, b));
+        if !ok {
+            self.out.truncate(at);
+            self.changes.truncate(count);
+        }
+        ok
+    }
+
+    /// Write new code with the markup of its content blocks marked
+    /// inserted; false if it has no content blocks.
+    fn inserted_code(&mut self, nodes: &[SyntaxNode]) -> bool {
+        let mut found = false;
+        for n in nodes {
+            if n.kind() == K::ContentBlock {
+                let toks = tokenize(&markup(n));
+                let (lead, core, trail) = trim_spaces(&toks);
+                self.out.push('[');
+                self.out.push_str(&lead);
+                if !core.is_empty() {
+                    self.mark(ChangeKind::Ins, "", self.content(core, ChangeKind::Ins));
+                    found = true;
+                }
+                self.out.push_str(&trail);
+                self.out.push(']');
+            } else if n.children().len() == 0 {
+                self.out.push_str(n.leaf_text());
+            } else {
+                found |= self.inserted_code(&n.children().cloned().collect::<Vec<_>>());
+            }
+        }
+        found
+    }
+
+    fn code_node(&mut self, o: &SyntaxNode, n: &SyntaxNode) -> bool {
+        if o.kind() != n.kind() {
+            return false;
+        }
+        if n.kind() == K::ContentBlock {
+            let (om, nm) = (markup(o), markup(n));
+            let top = std::mem::replace(&mut self.top, false);
+            self.out.push('[');
+            // Markup without blocks stays inline: no paragraph breaks around
+            // its changes.
+            let blocks = |m: &[SyntaxNode]| {
+                m.iter()
+                    .any(|c| c.kind() == K::Parbreak || c.kind() == K::Heading || is_item(c.kind()))
+            };
+            if blocks(&om) || blocks(&nm) {
+                self.docs(&Doc::new(&om), &Doc::new(&nm));
+            } else {
+                self.diff_tokens(&tokenize(&om), &tokenize(&nm));
+            }
+            self.out.push(']');
+            self.top = top;
+            return true;
+        }
+        if n.children().len() == 0 {
+            let same = o.leaf_text() == n.leaf_text() || n.kind() == K::Space;
+            if same {
+                self.out.push_str(n.leaf_text());
+            }
+            return same;
+        }
+        self.code_nodes(
+            &o.children().cloned().collect::<Vec<_>>(),
+            &n.children().cloned().collect::<Vec<_>>(),
+        )
+    }
+
+    /// A changed run: old struck, new highlighted. The new version's
+    /// whitespace stays outside the marks; a space the new version lacks
+    /// belongs to the deletion.
     fn change(&mut self, old: &[Tok], new: &[Tok]) {
         let (olead, ocore, otrail) = trim_spaces(old);
         let (nlead, ncore, ntrail) = trim_spaces(new);
-        let (lead, trail) = if ncore.is_empty() {
-            (olead, otrail)
-        } else {
-            (nlead, ntrail)
-        };
-        self.out.push_str(&lead);
+        self.out.push_str(&nlead);
         if !ocore.is_empty() {
-            self.count(Side::Del);
-            let w = format!(
-                "{}{}",
-                self.wrapper(ocore, Side::Del),
-                bracket(&self.content(ocore, Side::Del))
-            );
-            self.out.push_str(&w);
-            if !ncore.is_empty() {
-                self.out.push(' ');
-            }
+            let pad = |o: &str, n: &str| if o.is_empty() || !n.is_empty() { "" } else { " " };
+            let body = self.content(ocore, ChangeKind::Del);
+            let body = format!("{}{body}{}", pad(&olead, &nlead), pad(&otrail, &ntrail));
+            self.mark(ChangeKind::Del, block_arg(ocore), body);
         }
         if !ncore.is_empty() {
-            self.count(Side::Ins);
-            let w = format!(
-                "{}{}",
-                self.wrapper(ncore, Side::Ins),
-                bracket(&self.content(ncore, Side::Ins))
-            );
-            self.out.push_str(&w);
+            self.mark(ChangeKind::Ins, block_arg(ncore), self.content(ncore, ChangeKind::Ins));
         }
-        self.out.push_str(&trail);
+        self.out.push_str(&ntrail);
     }
+}
 
-    fn wrapper(&self, mid: &[Tok], side: Side) -> String {
-        let start = !mid[0].block;
-        let end = !mid[mid.len() - 1].block && mid.iter().any(|t| t.text.contains('\n'));
-        format!("#redline-{}(start: {start}, end: {end})", side.name())
-    }
+/// A changed run that is only display equations or code on their own
+/// lines is marked as a block.
+fn block_arg(run: &[Tok]) -> &'static str {
+    let block = run.iter().all(|t| t.block || matches!(t.kind, TK::Space | TK::Comment));
+    if block { "block: true" } else { "" }
+}
+
+/// The nodes of an item body before its first nested item, and the rest
+/// starting at the whitespace before that item.
+fn split_nested(body: &[SyntaxNode]) -> (&[SyntaxNode], &[SyntaxNode]) {
+    let at = body.iter().position(|n| is_item(n.kind())).map_or(body.len(), |i| {
+        if i > 0 && body[i - 1].kind() == K::Space {
+            i - 1
+        } else {
+            i
+        }
+    });
+    body.split_at(at)
+}
+
+/// The markup inside a content block.
+fn markup(block: &SyntaxNode) -> Vec<SyntaxNode> {
+    block
+        .children()
+        .find(|c| c.kind() == K::Markup)
+        .map_or(vec![], |m| m.children().cloned().collect())
 }
 
 /// Leading whitespace, the tokens between, and trailing whitespace.
@@ -846,25 +1368,44 @@ fn trim_spaces(toks: &[Tok]) -> (String, &[Tok], String) {
     (text(&toks[..start]), &toks[start..end], text(&toks[end..]))
 }
 
-fn bracket(body: &str) -> String {
-    format!("[{body}];")
+/// Source text with whitespace collapsed and the inside of every content
+/// block elided: code expressions with the same skeleton differ only in
+/// markup.
+fn skeleton(nodes: &[SyntaxNode]) -> String {
+    fn into(n: &SyntaxNode, s: &mut String) {
+        match n.kind() {
+            K::ContentBlock => s.push_str("[]"),
+            _ if n.children().len() == 0 => s.push_str(n.leaf_text()),
+            _ => n.children().for_each(|c| into(c, s)),
+        }
+    }
+    let mut s = String::new();
+    nodes.iter().for_each(|n| into(n, &mut s));
+    collapse_ws(&s)
 }
 
-fn similarity(a: &[Tok], b: &[Tok]) -> f64 {
-    let ka: Vec<&str> = a
-        .iter()
-        .filter(|t| t.kind != TK::Space)
-        .map(|t| t.key.as_str())
-        .collect();
-    let kb: Vec<&str> = b
-        .iter()
-        .filter(|t| t.kind != TK::Space)
-        .map(|t| t.key.as_str())
-        .collect();
+/// The words of tokens for [`similarity`]; code counts with the words of
+/// its source.
+fn words(toks: &[Tok]) -> Vec<String> {
+    toks.iter()
+        .flat_map(|t| match t.kind {
+            TK::Space => vec![],
+            TK::Atom => split_words(&t.text)
+                .into_iter()
+                .filter(|w| !w.trim().is_empty())
+                .map(str::to_string)
+                .collect(),
+            _ => vec![t.key.trim_matches(|c: char| !c.is_alphanumeric()).to_string()],
+        })
+        .collect()
+}
+
+/// Fraction of shared words.
+fn similarity(ka: &[String], kb: &[String]) -> f64 {
     if ka.is_empty() && kb.is_empty() {
         return 1.0;
     }
-    let same: usize = capture_diff_slices(Algorithm::Myers, &ka, &kb)
+    let same: usize = capture_diff_slices(Algorithm::Myers, ka, kb)
         .iter()
         .filter_map(|op| match op {
             DiffOp::Equal { len, .. } => Some(*len),

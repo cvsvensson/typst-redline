@@ -1,0 +1,3 @@
+Gone first paragraph.
+
+Kept.
