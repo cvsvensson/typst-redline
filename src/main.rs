@@ -456,10 +456,10 @@ fn renamed(old: &Spec, to: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Each level is coarser than the one before: marks inside code can break
+/// Tried in turn until one compiles: marks inside code can break
 /// functions that inspect their body, and deleted code can fail (the old
 /// version it is evaluated in fails on its own).
-const LADDER: [(Options, &str); 3] = [
+const LADDER: [(Options, &str); 4] = [
     (
         Options {
             eval_deleted: true,
@@ -473,6 +473,13 @@ const LADDER: [(Options, &str); 3] = [
             content_blocks: true,
         },
         "deleted code is shown by name",
+    ),
+    (
+        Options {
+            eval_deleted: true,
+            content_blocks: false,
+        },
+        "changed code is marked whole",
     ),
     (
         Options {

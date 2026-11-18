@@ -44,7 +44,7 @@ If your document uses files outside its own folder, such as `#import "../macros.
 - **Bars in the margin** point to every changed line, dashed for deletions and solid for insertions.
 - **Several files:** changes in files that the document includes or imports are marked too. With git, the old versions of those files, and of images the old text uses, are taken from the old commit.
 - **Moved text:** a paragraph, heading, list item or section moved elsewhere, also into another file, is shown once, unmarked at its new place, with a grey bracket and a blue "moved" note in the margin. A grey line with a red arrow at its old place names its first words and links to it. Edits made while moving are marked as usual. `--no-moves` shows moved text as deleted at one place and inserted at the other.
-- **Code:** a change to code, such as a function body or a `#set` rule, cannot be shown as a mark. The summary page lists it as *changed code not marked*, so no change goes unreported.
+- **Code:** a change inside the `[...]` content arguments of a call, such as a template's title or abstract, is marked like other text. A call whose other arguments change is marked whole: the old call deleted, the new one inserted. Code that does not show on the page, such as a function body or a `#set` rule, cannot be marked: the summary page lists the changed lines or arguments, old and new, as *changed code not marked*.
 - **Files the document reads:** when an image or data file changes while the call that reads it (`image`, `json`, `csv`, `read` and similar) stays the same, the summary page lists the file as changed. Files read through a computed path are not detected.
 
 With the deleted parts removed, the marked document has the same text, layout and numbering as the new version.
@@ -101,7 +101,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 
 ## Styling
 
-Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`. The six colours of `--each-commit` and `--steps` are in `redline-style.steps`.
+Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`. The six colours of `--each-commit` and `--steps` are in `redline-style.steps`. Changed code that is not marked reaches `redline-summary` and `redline-side-by-side` as `(old, new)` pairs of strings, either empty for inserted or deleted code; a preamble copied from a version that took plain strings there must be copied again.
 
 ## VS Code
 
