@@ -1,0 +1,12 @@
+[package]
+name = "typst-redline"
+version = "0.1.0"
+edition = "2024"
+description = "Editor's proof for Typst: the new version of a document with changes against an old version marked"
+license = "MIT"
+keywords = ["typst", "diff", "latexdiff"]
+categories = ["command-line-utilities", "text-processing"]
+
+[dependencies]
+similar = "3.2.1"
+typst-syntax = "0.15.1"

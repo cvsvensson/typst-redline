@@ -1,0 +1,49 @@
+{
+  "name": "typst-redline",
+  "displayName": "Typst Redline",
+  "description": "Show the changes in a Typst document since a git commit, as a marked-up PDF",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      { "command": "typstRedline.showChanges", "title": "Typst Redline: Show changes since…" }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "typstRedline.showChanges", "when": "editorLangId == typst || resourceExtname == .typ" }
+      ]
+    },
+    "configuration": {
+      "title": "Typst Redline",
+      "properties": {
+        "typstRedline.executable": {
+          "type": "string",
+          "default": "typst-redline",
+          "description": "Path to the typst-redline executable."
+        },
+        "typstRedline.root": {
+          "type": "string",
+          "default": "",
+          "description": "Project root passed as --root. Empty: the workspace folder of the file."
+        },
+        "typstRedline.openInEditor": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open the PDF in VS Code (needs a PDF viewer extension) instead of the system viewer."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
