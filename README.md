@@ -90,7 +90,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 
 - Some moved text still shows as deleted in one place and inserted in another: a sentence moved within or between paragraphs, a nested list item moved on its own, a short passage of fewer than four words, such as a short list item or a one-line paragraph, unless it moves together with a longer one next to it, text inside a call's content block such as `#slide[...]`, text moved into or out of a file that is not shown in order (imported, included by code, or no longer included), a passage rewritten so much that it keeps less than about 60% of its words, or of its rarer words, and moved setup code such as `#set` and `#let`.
 - Where a function reads its content as text, the changed text is missing from the page, not only its mark; the summary page lists it.
-- With Typst 0.11 to 0.13, a changed file that the document reads only through a computed path is neither marked nor listed; for a computed `#include` the tool warns on stderr. Files outside the project root and package files are not checked.
+- With Typst 0.11 to 0.13, a changed file that the document reads only through a computed path is neither marked nor listed; the summary page says that such files were not checked. Files outside the project root and package files are not checked.
 - A blank line added between list items, or removed, makes the list loose or tight and changes its spacing, but is not marked.
 - Paragraphs reordered inside a moved section show as deleted and inserted inside it.
 - A moved passage in a middle column of a page with three or more columns, and one in a narrow margin, has a bracket but no "moved" note.

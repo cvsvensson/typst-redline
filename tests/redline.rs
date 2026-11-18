@@ -1039,19 +1039,18 @@ fn page_foregrounds_of_the_document_are_kept_with_the_bars() {
 }
 
 #[test]
-fn computed_include_path_is_reported() {
+fn computed_paths_are_reported_when_the_files_read_are_unknown() {
     let read = |_: &str| Some(b"#include \"a\" + \".typ\"\n".to_vec());
     let v = Version {
         label: "v".into(),
         entry: "main.typ".into(),
         read: &read,
     };
-    assert_eq!(
-        redline(&v, &v, FULL, &History::default(), Moves::Find, None)
-            .warnings
-            .len(),
-        1
-    );
+    let r = redline(&v, &v, FULL, &History::default(), Moves::Find, None);
+    assert_eq!(r.warnings.len(), 1);
+    assert!(r.bib.unchecked);
+    let src = "#let d = json(\"d\" + \".json\")\n";
+    assert!(redline_of(src, src).bib.unchecked);
 }
 
 #[test]

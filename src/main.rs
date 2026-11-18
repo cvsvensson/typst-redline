@@ -1255,12 +1255,14 @@ fn deps_args(deps: bool, root: &Path) -> Vec<OsString> {
 }
 
 /// The files of the project in `dir` that the last compile there read, other
-/// than the files of the tool.
+/// than the files of the tool. Typst writes the paths relative to the
+/// working directory where it can, so they are compared canonicalized.
 fn read_deps(dir: &Path) -> Option<Vec<String>> {
     let list = std::fs::read(dir.join(DEPS)).ok()?;
     let root = std::fs::canonicalize(dir).ok()?;
+    let cwd = std::env::current_dir().ok()?;
     let relative = |p: &[u8]| {
-        let path = Path::new(std::str::from_utf8(p).ok()?);
+        let path = std::fs::canonicalize(cwd.join(std::str::from_utf8(p).ok()?)).ok()?;
         let parts: Option<Vec<&str>> = path
             .strip_prefix(&root)
             .ok()?

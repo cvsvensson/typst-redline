@@ -181,9 +181,11 @@ pub fn redline(
     let modules = reads.map(|_| modules.as_slice());
     let old_files = project(old, &mut warnings, modules);
     let new_files = project(new, &mut warnings, modules);
+    let unknown = reads.is_none();
     let reads = reads.unwrap_or_default();
     let mut bib = bibliography(old, &old_files, new, &new_files);
     bib.files = changed_reads(old, &old_files, new, &new_files, reads);
+    bib.unchecked = unknown && reads_computed_paths(&new_files);
     let mut checked = literal_reads(&new_files);
     checked.extend(new_files.iter().map(|(p, _)| p.clone()));
     checked.extend(reads.iter().cloned());
@@ -301,13 +303,15 @@ fn project(v: &Version, warnings: &mut Vec<String>, modules: Option<&[String]>) 
 /// What changed in the files the document reads, which the output cannot
 /// mark: keys cited only in the new or only in the old version, keys cited
 /// in the new version whose bibliography entry differs, and other files that
-/// the document reads and that differ.
+/// the document reads and that differ. `unchecked` if the document reads
+/// files through a computed path and which files it read is not known.
 #[derive(Default)]
 pub struct Bib {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub changed: Vec<String>,
     pub files: Vec<String>,
+    pub unchecked: bool,
 }
 
 impl Bib {
@@ -315,11 +319,12 @@ impl Bib {
     pub(crate) fn to_typst(&self) -> String {
         let keys = |ks: &[String]| format!("({})", ks.iter().map(|k| mark::typst_str(k) + ",").collect::<String>());
         format!(
-            "(added: {}, removed: {}, changed: {}, files: {})",
+            "(added: {}, removed: {}, changed: {}, files: {}, unchecked: {})",
             keys(&self.added),
             keys(&self.removed),
             keys(&self.changed),
-            keys(&self.files)
+            keys(&self.files),
+            self.unchecked
         )
     }
 }
@@ -385,14 +390,43 @@ fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, ne
             .filter(|k| old_entries.get(*k).is_some_and(|e| Some(e) != new_entries.get(*k)))
             .cloned()
             .collect(),
-        files: vec![],
+        ..Bib::default()
     }
+}
+
+const READERS: [&str; 9] = ["image", "read", "json", "csv", "yaml", "toml", "xml", "cbor", "plugin"];
+
+/// Whether a file includes a computed path, imports one built by an
+/// expression, or passes one to a call such as `json`. An import of a name
+/// is left out: the name usually stands for a module, not a path.
+fn reads_computed_paths(files: &[(String, String)]) -> bool {
+    let mut computed = false;
+    for (_, src) in files {
+        walk(&parse(src), &mut |n| {
+            let path = if let Some(i) = n.cast::<ast::ModuleInclude>() {
+                Some(i.source())
+            } else if let Some(i) = n.cast::<ast::ModuleImport>() {
+                Some(i.source()).filter(|s| !matches!(s, ast::Expr::Ident(_) | ast::Expr::FieldAccess(_)))
+            } else if let Some(call) = n.cast::<ast::FuncCall>()
+                && let ast::Expr::Ident(f) = call.callee()
+                && READERS.contains(&f.as_str())
+            {
+                match call.args().items().next() {
+                    Some(ast::Arg::Pos(e)) => Some(e),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            computed |= path.is_some_and(|p| !matches!(p, ast::Expr::Str(_)));
+        });
+    }
+    computed
 }
 
 /// The paths that calls such as `image("fig.png")` or `json("data.json")`
 /// read.
 fn literal_reads(files: &[(String, String)]) -> BTreeSet<String> {
-    const READERS: [&str; 9] = ["image", "read", "json", "csv", "yaml", "toml", "xml", "cbor", "plugin"];
     let mut paths = BTreeSet::new();
     for (path, src) in files {
         walk(&parse(src), &mut |n| {
