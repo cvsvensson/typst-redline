@@ -1224,6 +1224,19 @@ fn each_commit_compiles_with_the_commits_coloured() {
 }
 
 #[test]
+fn each_commit_follows_a_renamed_file() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("each-commit-rename", &["alpha", "beta"]);
+    git(&dir, &["mv", "doc/main.typ", "doc/paper.typ"]);
+    git(&dir, &["commit", "-q", "-m", "rename"]);
+    let args = ["doc/paper.typ", "--since", "c-alpha", "--each-commit"];
+    let src = marked(&dir, &args, "paper.typ");
+    assert!(steps_of_marks(&src).contains(&(1, "beta".into())), "{src}");
+}
+
+#[test]
 fn each_commit_refuses_more_commits_than_colours() {
     let dir = repo("many-commits", &["a", "b", "c", "d", "e", "f", "g", "h"]);
     let out = cli(&dir, &["doc/main.typ", "--since", "c-a", "--each-commit"]);

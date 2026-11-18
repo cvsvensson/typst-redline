@@ -366,6 +366,7 @@ fn run(a: Args) -> Result<PathBuf, String> {
         }
         _ => vec![],
     };
+    // A step before the entry was renamed has it under its old name.
     let step_entry = |t: &Tree| {
         if t.read(&new.entry).is_some() {
             new.entry.clone()
