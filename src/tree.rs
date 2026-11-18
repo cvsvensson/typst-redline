@@ -1,6 +1,7 @@
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::Mutex;
 
 /// The files of one version of a project, addressed by root-relative paths
 /// with `/` separators.
@@ -45,14 +46,9 @@ impl Tree {
     pub fn read(&self, path: &str) -> Option<Vec<u8>> {
         match self {
             Tree::Dir(root) => std::fs::read(root.join(path)).ok(),
-            Tree::Git { .. } => {
-                let mut data = None;
-                self.cat(&[path], |_, d| {
-                    data = Some(d);
-                    Ok(())
-                })
-                .ok()?;
-                data
+            Tree::Git { repo, prefix, rev } => {
+                let object = format!("{}:{prefix}{path}", rev.as_deref().unwrap_or(""));
+                read_object(repo, &object).ok()?
             }
         }
     }
@@ -93,21 +89,53 @@ impl Tree {
         let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
         let mut out = BufReader::new(child.stdout.take().unwrap());
         for p in paths {
-            let mut header = String::new();
-            out.read_line(&mut header)?;
-            // "<oid> <type> <size>", or "<name> missing".
-            let Ok(size) = header.trim_end().rsplit(' ').next().unwrap().parse::<usize>() else {
-                continue;
-            };
-            let mut data = vec![0; size + 1];
-            out.read_exact(&mut data)?;
-            data.pop();
-            f(p, data)?;
+            if let Some(data) = read_batch_entry(&mut out)? {
+                f(p, data)?;
+            }
         }
         writer.join().unwrap()?;
         child.wait()?;
         Ok(())
     }
+}
+
+type Batch = (ChildStdin, BufReader<ChildStdout>);
+
+/// An object such as `rev:path`, `None` if it does not exist. Reads go
+/// through one `git cat-file --batch` per repository, because starting git
+/// for each file of each version is slow on some systems.
+fn read_object(repo: &Path, object: &str) -> std::io::Result<Option<Vec<u8>>> {
+    static BATCHES: Mutex<Vec<(PathBuf, Batch)>> = Mutex::new(vec![]);
+    let mut batches = BATCHES.lock().unwrap();
+    if !batches.iter().any(|(r, _)| r == repo) {
+        let mut child = git(repo)
+            .args(["cat-file", "--batch"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let io = (
+            child.stdin.take().unwrap(),
+            BufReader::new(child.stdout.take().unwrap()),
+        );
+        batches.push((repo.to_path_buf(), io));
+    }
+    let (stdin, out) = &mut batches.iter_mut().find(|(r, _)| r == repo).unwrap().1;
+    writeln!(stdin, "{object}")?;
+    read_batch_entry(out)
+}
+
+/// One entry of `git cat-file --batch` output: "<oid> <type> <size>" and the
+/// content, or "<name> missing".
+fn read_batch_entry(out: &mut impl BufRead) -> std::io::Result<Option<Vec<u8>>> {
+    let mut header = String::new();
+    out.read_line(&mut header)?;
+    let Ok(size) = header.trim_end().rsplit(' ').next().unwrap().parse::<usize>() else {
+        return Ok(None);
+    };
+    let mut data = vec![0; size + 1];
+    out.read_exact(&mut data)?;
+    data.pop();
+    Ok(Some(data))
 }
 
 /// Paths under `prefix` listed by a git command, relative to `prefix`.
