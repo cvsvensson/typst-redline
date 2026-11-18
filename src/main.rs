@@ -690,12 +690,9 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 write(&old_root, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
             }
             write(&old_root, &back.files)?;
-            let new_side = side(sides[1])?;
-            if new_side.status.success() {
-                side(sides[0])?
-            } else {
-                new_side
-            }
+            let (old_side, new_side) = both(|| side(sides[0]), || side(sides[1]));
+            let new_side = new_side?;
+            if new_side.status.success() { old_side? } else { new_side }
         };
         stderr = String::from_utf8_lossy(&out.stderr).to_string();
         if out.status.success() {
@@ -1304,7 +1301,7 @@ fn compose(
     to: &Path,
 ) -> Result<(), String> {
     type Layout = (usize, Vec<usize>, Vec<usize>, Vec<Placed>, Vec<Anchor>);
-    let layout = |(root, entry, side, _): (&Path, &String, &str, &str), label: &str| -> Result<Layout, String> {
+    let query = |(root, entry, side, _): (&Path, &String, &str, &str)| {
         let input = format!("redline-side={side}");
         let entry = root.join(entry);
         let args: [&dyn AsRef<OsStr>; 7] = [
@@ -1316,7 +1313,9 @@ fn compose(
             &entry,
             &"<redline-layout>",
         ];
-        let out = typst(a, root, "query", &args)?;
+        typst(a, root, "query", &args)
+    };
+    let layout = |out: Output, label: &str| -> Result<Layout, String> {
         let nums = ints(&out.stdout);
         let Some([pages, n, rest @ ..]) = nums.as_deref() else {
             return Err(format!(
@@ -1346,7 +1345,10 @@ fn compose(
     let (
         (old_pages, old_unbarred, old_lost, old, old_headings),
         (new_pages, new_unbarred, new_lost, new, new_headings),
-    ) = (layout(sides[0], labels.0)?, layout(sides[1], labels.1)?);
+    ) = {
+        let (old, new) = both(|| query(sides[0]), || query(sides[1]));
+        (layout(old?, labels.0)?, layout(new?, labels.1)?)
+    };
     // A mark that a side did not lay out is listed as not marked, once.
     let mut changes = results[1].changes.clone();
     for (r, lost) in [(results[1], new_lost), (results[0], old_lost)] {
@@ -1392,6 +1394,15 @@ fn compose(
         ));
     }
     Ok(())
+}
+
+/// `f` and `g` run at the same time.
+fn both<A: Send, B>(f: impl FnOnce() -> A + Send, g: impl FnOnce() -> B) -> (A, B) {
+    std::thread::scope(|s| {
+        let f = s.spawn(f);
+        let b = g();
+        (f.join().unwrap(), b)
+    })
 }
 
 /// The output of `typst query --field value --one` for a flat array of
