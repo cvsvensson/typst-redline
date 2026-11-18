@@ -933,6 +933,19 @@ fn frame_of_a_relative_width_element_is_as_wide_as_the_element() {
 }
 
 #[test]
+fn frame_of_a_figure_holds_a_caption_wider_than_its_body() {
+    let doc = |f: &str| format!("#show box: it => [#metadata(it.width)<probe>#it]\nText.\n{f}\n");
+    let fig = "#figure(rect(width: 1cm), caption: [A caption much wider than the body])";
+    if let Some((marked, _)) = probes("figure-caption-frame", &doc(fig), &doc("")) {
+        let widest = marked
+            .split('"')
+            .filter_map(|v| v.rsplit('+').next()?.strip_suffix("pt")?.parse::<f64>().ok())
+            .fold(0.0, f64::max);
+        assert!(widest > 100.0, "{marked}");
+    }
+}
+
+#[test]
 fn changed_shape_in_a_figure_is_crossed_out() {
     if let Some(v) = probe("changed-shape") {
         // Lines of the cross have an end point, others have none.

@@ -182,14 +182,19 @@
   let w = if type(rel) == ratio { calc.min(rel * size.width, size.width) } else if type(rel) == relative {
     calc.min(rel.ratio * size.width + rel.length.to-absolute(), size.width)
   } else if natural.width == 0pt or natural.width > size.width or calc.abs((natural.height - h).to-absolute()) > 0.1pt { size.width } else { natural.width }
-  let a = if it.func() == align { it.alignment } else if eq or it.func() == figure { center } else { align.alignment }
+  // A figure's caption can be wider than a body of fixed width.
+  let fixed = type(rel) != ratio and (type(rel) != relative or rel.ratio == 0%)
+  let w = if it.func() == figure and fixed and natural.width <= size.width { calc.max(w, natural.width) } else { w }
+  let a =if it.func() == align { it.alignment } else if eq or it.func() == figure { center } else { align.alignment }
   let a = if a.axis() == "horizontal" { a } else if a.axis() == none { a.x } else { start }
   it
   // Content of no height, such as an empty header, gets no frame.
   let empty = h == 0pt and repr(it.func()) != "line"
   place(top + a, box(width: w, height: h, {
     if not empty { place(rect(width: 100%, height: 100%, stroke: stroke, outset: st.outset)) }
-    if cross and not empty { redline-cross(stroke, w, h) }
+    // The cross leaves a figure's caption, which is struck, alone.
+    let ch = if it.func() == figure { measure(block(width: size.width, it.body)).height } else { h }
+    if cross and not empty { redline-cross(stroke, w, ch) }
     place(top + left, if start != none { redline-tag(start, -st.outset, step: step, id: id) })
     place(bottom + left, if end != none { redline-tag("end", st.outset, width: size.width) })
   }))
