@@ -566,7 +566,10 @@ impl Drop for TempDir {
 }
 
 fn temp_dir(name: &str) -> TempDir {
-    let dir = std::env::temp_dir().join(format!("typst-redline-test-{}-{name}", std::process::id()));
+    // Tests running in parallel may use the same name, e.g. for the same fixture.
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("typst-redline-test-{}-{n}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     TempDir(dir)

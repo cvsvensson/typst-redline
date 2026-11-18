@@ -31,9 +31,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Scanning the system fonts dominates each typst start on Windows; the tests use the embedded fonts.
+      TYPST_IGNORE_SYSTEM_FONTS: "true"
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      # The runner's preinstalled stable Rust: updating it costs up to half a minute on Windows.
+      # The lint job checks with the latest stable.
       - uses: Swatinem/rust-cache@v2
       # The tests skip compilation silently when typst is missing; keep in step with typst-syntax in Cargo.toml.
       - uses: typst-community/setup-typst@v5
