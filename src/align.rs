@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
 
-use crate::syntax::{Block, Doc, Kind, most_similar, similarity, words};
+use crate::syntax::{Block, Doc, Kind, most_similar, similarity, split_nested, tokenize, words};
 
 /// One step of writing the new file, by block index.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -38,12 +38,14 @@ pub fn align(old: &Doc, new: &Doc) -> Vec<Step> {
 /// renamed. Pairing looks a bounded number of blocks ahead, so that its cost
 /// stays linear in the length of the run.
 fn region(old: &[Block], new: &[Block], or: Range<usize>, nr: Range<usize>, steps: &mut Vec<Step>) {
-    let owords: Vec<Vec<String>> = old[or.clone()].iter().map(|b| words(&b.toks())).collect();
+    // Nested items are compared as blocks of their own.
+    let own_words = |b: &Block| words(&tokenize(split_nested(&b.parts().1).0));
+    let owords: Vec<Vec<String>> = old[or.clone()].iter().map(own_words).collect();
     let mut p = or.start;
     let mut pending: Vec<usize> = vec![];
     for n in nr {
         let nb = &new[n];
-        let nwords = words(&nb.toks());
+        let nwords = own_words(nb);
         let new_section = nb.kind != Kind::Heading && pending.iter().any(|&j| new[j].kind == Kind::Heading);
         let end = or.end.min(p + 32);
         let old_heading = (p..end).find(|&q| old[q].kind == Kind::Heading).unwrap_or(end);

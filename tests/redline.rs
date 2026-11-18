@@ -375,6 +375,33 @@ fn section_replacing_another_is_not_compared_with_it() {
     );
 }
 
+#[test]
+fn call_is_compared_with_the_call_it_resembles() {
+    let r = run("same-call-pairing");
+    assert!(
+        matches!(&r.changes[..], [c] if c.kind == ChangeKind::Del && c.text.contains("Second")),
+        "{}",
+        r.body
+    );
+}
+
+#[test]
+fn changed_term_is_marked_and_its_description_is_not() {
+    let r = run("term-marker");
+    let marked = |kind, text: &str| r.changes.iter().any(|c| c.kind == kind && c.text == text);
+    assert!(marked(ChangeKind::Ins, "Plum"), "{}", r.body);
+    assert!(r.changes.iter().all(|c| !c.text.contains("description")), "{}", r.body);
+}
+
+#[test]
+fn item_nested_under_its_neighbour_leaves_the_neighbour_unchanged() {
+    let r = redline_of(
+        "- Alpha item text\n- Beta item text\n- Gamma item text\n",
+        "- Alpha item text\n  - Beta item text\n- Gamma item text\n",
+    );
+    assert!(r.changes.iter().all(|c| !c.text.contains("Alpha")), "{:?}", r.changes);
+}
+
 const MOVED_FROM: &str = "#redline-del(move: (";
 const MOVED_TO: &str = "#redline-ins(move: (";
 
@@ -516,6 +543,13 @@ fn moved_list_item_is_marked_inside_its_item() {
     let out = body("moved-item");
     assert!(out.contains(&format!("- {MOVED_TO}")), "{out}");
     assert_eq!(out.matches(MOVED_FROM).count(), 1, "{out}");
+}
+
+#[test]
+fn moved_code_is_named_by_its_first_words() {
+    let out = body("move-note-code");
+    let line = out.lines().find(|l| l.contains(MOVED_FROM)).unwrap();
+    assert!(line.contains("A boxed remark"), "{out}");
 }
 
 #[test]
