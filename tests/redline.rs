@@ -752,7 +752,7 @@ fn deleted_state_and_counter_updates_have_no_effect() {
 }
 
 #[test]
-fn document_pages_keep_their_parity_and_number_after_the_summary() {
+fn two_sided_document_keeps_its_parity_and_page_numbers() {
     // Each header records its page's parity and the page number it reads.
     let Some(marked) = probe("page-parity") else {
         return;
@@ -761,7 +761,23 @@ fn document_pages_keep_their_parity_and_number_after_the_summary() {
         &compile("page-parity-new", &tree("page-parity", "new")).unwrap(),
         "<probe>",
     );
-    assert!(marked.ends_with(&new[1..]), "{marked} does not end with {new}");
+    assert_eq!(marked, new);
+}
+
+#[test]
+fn one_sided_document_follows_a_one_page_summary_directly() {
+    let r = redline_of(
+        "#set page(height: auto)
+Old text.
+",
+        "#set page(height: auto)
+New text.
+",
+    );
+    let marked = [r.files[0].clone(), (PREAMBLE_PATH.into(), PREAMBLE.into())];
+    if let Some(pages) = render("one-sided", &marked) {
+        assert_eq!(pages.len(), 2);
+    }
 }
 
 #[test]
