@@ -1398,15 +1398,54 @@ fn steps_with_a_number_balance_the_changes() {
 }
 
 #[test]
+fn steps_with_more_steps_than_changes_make_each_a_step() {
+    if !typst_available() {
+        return;
+    }
+    let dir = growing_repo("steps-few", &[1, 1]);
+    let path = dir.join("doc/main.typ");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        text + "
+Uncommitted.
+",
+    )
+    .unwrap();
+    let args = ["doc/main.typ", "--since", "c-base", "--steps", "4"];
+    let src = marked(&dir, &args, "main.typ");
+    let steps: Vec<_> = ["Commit 1.", "Commit 2.", "Uncommitted."]
+        .iter()
+        .map(|t| step_of(&src, t))
+        .collect();
+    assert_eq!(steps, [1, 2, 3].map(Some), "{src}");
+}
+
+#[test]
 fn step_off_the_first_parent_path_is_an_error() {
     let dir = repo("steps-off-path", &["alpha", "beta"]);
     git(&dir, &["checkout", "-q", "-b", "side", "c-alpha"]);
-    commit(&dir, "doc/main.typ", "gamma");
+    commit(&dir, "doc/side.typ", "gamma");
     git(&dir, &["checkout", "-q", "main"]);
+    git(&dir, &["merge", "-q", "--no-ff", "-m", "merge", "side"]);
     commit(&dir, "doc/main.typ", "delta");
     let out = cli(&dir, &["doc/main.typ", "--since", "c-alpha", "--steps", "c-gamma"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.code() == Some(1) && stderr.contains("c-gamma"), "{stderr}");
+}
+
+#[test]
+fn step_ending_at_the_new_version_is_an_error() {
+    let dir = repo("steps-at-new", &["alpha", "beta"]);
+    let out = cli(
+        &dir,
+        &["doc/main.typ", "--since", "c-alpha", "--to", "HEAD", "--steps", "HEAD"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(1) && stderr.contains("last step already ends"),
+        "{stderr}"
+    );
 }
 
 #[test]

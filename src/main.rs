@@ -37,8 +37,9 @@ Options:
   --steps <revs|n>      Colour each change by the step that made it: the steps
                         end at the given revisions, separated by commas, and
                         at the new version. With a number n from 2 to 6, the
-                        tool splits the commits into n steps that change
-                        about the same amount of the document (one file only)
+                        tool splits the commits, and then the uncommitted
+                        changes, into n steps that change about the same
+                        amount of the document (one file only)
   --typst <path>        typst executable (default: typst)
   --keep-typ            Keep the generated project and print its path on stderr
   -V, --version         Print the version
@@ -600,7 +601,8 @@ struct Log {
     /// The new version's revision; HEAD for the index or the working tree.
     to: String,
     hashes: Vec<String>,
-    /// The lines each commit adds and removes in the project files.
+    /// The lines each commit, and then the uncommitted changes if any, add
+    /// and remove in the project files.
     weights: Vec<u64>,
     history: History<'static>,
 }
@@ -615,8 +617,9 @@ fn log(old: &Spec, new: &Spec, files: &[String]) -> Result<Option<Log>, String> 
         return Ok(None);
     };
     let paths: Vec<String> = files.iter().map(|f| format!("{prefix}{f}")).collect();
-    let changed = |args: &[&str]| -> Result<bool, String> {
-        Ok(!output(git(repo).args(args).arg("--").args(&paths))?.is_empty())
+    let numstat = |args: &[&str]| -> Result<String, String> {
+        let out = output(git(repo).args(args).arg("--").args(&paths))?;
+        Ok(String::from_utf8_lossy(&out).into_owned())
     };
     let (to, uncommitted) = match &new.tree {
         Tree::Git {
@@ -624,14 +627,15 @@ fn log(old: &Spec, new: &Spec, files: &[String]) -> Result<Option<Log>, String> 
             prefix: p,
             rev,
         } if r == repo && p == prefix => match rev {
-            Some(to) => (to.as_str(), false),
-            None => ("HEAD", changed(&["diff", "--cached", "--name-only", "HEAD"])?),
+            Some(to) => (to.as_str(), None),
+            None => ("HEAD", Some(numstat(&["diff", "--cached", "--numstat", "HEAD"])?)),
         },
         Tree::Dir(root) if same_dir(root, &repo.join(prefix)) => {
-            ("HEAD", changed(&["status", "--porcelain", "--untracked-files=no"])?)
+            ("HEAD", Some(numstat(&["diff", "--numstat", "HEAD"])?))
         }
         _ => return Ok(None),
     };
+    let uncommitted = uncommitted.filter(|s| !s.is_empty());
     let out = output(
         git(repo)
             .args([
@@ -652,14 +656,7 @@ fn log(old: &Spec, new: &Spec, files: &[String]) -> Result<Option<Log>, String> 
         let f: Vec<&str> = head.splitn(4, '\x1f').collect();
         if let [full, hash, date, subject] = f[..] {
             hashes.push(full.to_string());
-            // A binary file has "-" for its lines and counts as one.
-            let lines = |n: &str| n.parse().unwrap_or(1);
-            weights.push(
-                stat.lines()
-                    .filter_map(|l| l.split_once('\t'))
-                    .map(|(add, rest)| lines(add) + lines(rest.split('\t').next().unwrap_or("")))
-                    .sum(),
-            );
+            weights.push(numstat_weight(stat));
             commits.push(Commit {
                 hash: hash.into(),
                 date: date.into(),
@@ -667,16 +664,32 @@ fn log(old: &Spec, new: &Spec, files: &[String]) -> Result<Option<Log>, String> 
             });
         }
     }
+    weights.extend(uncommitted.as_deref().map(numstat_weight));
     Ok(Some(Log {
         to: to.into(),
         hashes,
         weights,
         history: History {
             commits,
-            uncommitted,
+            uncommitted: uncommitted.is_some(),
             ..History::default()
         },
     }))
+}
+
+/// The lines that `git diff --numstat` output adds and removes; a binary
+/// file, which has "-" for both, counts as one.
+fn numstat_weight(stat: &str) -> u64 {
+    stat.lines()
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            Some((f.next()?, f.next()?))
+        })
+        .map(|(add, del)| match (add.parse::<u64>(), del.parse::<u64>()) {
+            (Ok(a), Ok(d)) => a + d,
+            _ => 1,
+        })
+        .sum()
 }
 
 /// The steps changes are coloured by: the revision each step but the last
@@ -741,9 +754,22 @@ fn plan_steps(arg: &StepArg, log: &Log, old: &Spec, new: &Spec) -> Result<Plan, 
             })
         }
         StepArg::Count(k) => {
-            if n < *k {
+            // The uncommitted changes, if any, are the last of the units
+            // that steps group.
+            if log.weights.len() < *k {
+                let s = if n == 1 { "" } else { "s" };
+                let what = match (n, h.uncommitted) {
+                    (0, _) => "the uncommitted changes".to_string(),
+                    (_, false) => format!("{n} commit{s}"),
+                    (_, true) => format!("{n} commit{s} and the uncommitted changes"),
+                };
+                let so = if log.weights.len() == 1 {
+                    "there is one step"
+                } else {
+                    "each is a step"
+                };
                 eprintln!(
-                    "note: {n} commits from {} to {} change the document, so each is a step",
+                    "note: from {} to {} the document is changed only by {what}, so {so}",
                     old.label, new.label
                 );
             }
@@ -754,72 +780,84 @@ fn plan_steps(arg: &StepArg, log: &Log, old: &Spec, new: &Spec) -> Result<Plan, 
                 commits: bounds.windows(2).map(|w| w[1] - w[0]).collect(),
             })
         }
-        StepArg::Revs(revs) => {
-            if revs.len() >= MAX_STEPS {
+        StepArg::Revs(revs) => rev_steps(revs, log, old, new),
+    }
+}
+
+/// The steps of `--steps` given as the revisions where they end.
+fn rev_steps(revs: &[String], log: &Log, old: &Spec, new: &Spec) -> Result<Plan, String> {
+    let Tree::Git {
+        repo, rev: Some(from), ..
+    } = &old.tree
+    else {
+        unreachable!()
+    };
+    if revs.len() >= MAX_STEPS {
+        return Err(format!(
+            "--steps makes at most {MAX_STEPS} steps, so it takes at most {} revisions",
+            MAX_STEPS - 1
+        ));
+    }
+    let path = git_text(
+        repo,
+        &[
+            "rev-list",
+            "--first-parent",
+            "--reverse",
+            &format!("{from}..{}", log.to),
+        ],
+    )?;
+    let path: Vec<&str> = path.lines().collect();
+    // With the working tree or the index as the new version, its last
+    // commit is a step boundary before it.
+    let new_is_rev = matches!(new.tree, Tree::Git { rev: Some(_), .. });
+    let inside = path.len().saturating_sub(usize::from(new_is_rev));
+    let mut ends: Vec<(usize, &String)> = vec![];
+    for rev in revs {
+        let hash = git_text(
+            repo,
+            &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")],
+        )
+        .map_err(|_| format!("--steps: git: no commit {rev}"))?;
+        if new_is_rev && path.last() == Some(&hash.as_str()) {
+            return Err(format!(
+                "--steps: {rev} is the new version {}, where the last step already ends; give only the revisions before it",
+                new.label
+            ));
+        }
+        let p = path[..inside].iter().position(|c| *c == hash).ok_or_else(|| {
+            format!(
+                "--steps: {rev} is not a commit between {} and {} on the first-parent path",
+                old.label, new.label
+            )
+        })?;
+        if let Some(&(q, prev)) = ends.last() {
+            if p == q && rev == prev {
+                return Err(format!("--steps: {rev} is given twice"));
+            }
+            if p == q {
+                return Err(format!("--steps: {rev} and {prev} are the same commit"));
+            }
+            if p < q {
                 return Err(format!(
-                    "--steps makes at most {MAX_STEPS} steps, so it takes at most {} revisions",
-                    MAX_STEPS - 1
+                    "--steps: {rev} comes before {prev}; give the revisions oldest first"
                 ));
             }
-            let path = git_text(
-                repo,
-                &[
-                    "rev-list",
-                    "--first-parent",
-                    "--reverse",
-                    &format!("{from}..{}", log.to),
-                ],
-            )?;
-            let path: Vec<&str> = path.lines().collect();
-            // With the working tree or the index as the new version, its last
-            // commit is a step boundary before it.
-            let inside = if matches!(new.tree, Tree::Git { rev: Some(_), .. }) {
-                path.len().saturating_sub(1)
-            } else {
-                path.len()
-            };
-            let mut ends: Vec<(usize, &String)> = vec![];
-            for rev in revs {
-                let hash = git_text(
-                    repo,
-                    &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")],
-                )
-                .map_err(|_| format!("--steps: git: no commit {rev}"))?;
-                let p = path[..inside].iter().position(|c| *c == hash).ok_or_else(|| {
-                    format!(
-                        "--steps: {rev} is not a commit between {} and {} on the first-parent path",
-                        old.label, new.label
-                    )
-                })?;
-                if let Some(&(q, prev)) = ends.last() {
-                    if p == q && rev == prev {
-                        return Err(format!("--steps: {rev} is given twice"));
-                    }
-                    if p == q {
-                        return Err(format!("--steps: {rev} and {prev} are the same commit"));
-                    }
-                    if p < q {
-                        return Err(format!(
-                            "--steps: {rev} comes before {prev}; give the revisions oldest first"
-                        ));
-                    }
-                }
-                ends.push((p, rev));
-            }
-            let mut commits = vec![0; ends.len() + 1];
-            for hash in &log.hashes {
-                let p = path.iter().position(|c| c == hash).unwrap_or(path.len());
-                commits[ends.iter().filter(|(q, _)| *q < p).count()] += 1;
-            }
-            Ok(Plan {
-                ends: ends
-                    .iter()
-                    .map(|(p, rev)| (path[*p].to_string(), rev.to_string()))
-                    .collect(),
-                commits,
-            })
         }
+        ends.push((p, rev));
     }
+    let mut commits = vec![0; ends.len() + 1];
+    for hash in &log.hashes {
+        let p = path.iter().position(|c| c == hash).unwrap_or(path.len());
+        commits[ends.iter().filter(|(q, _)| *q < p).count()] += 1;
+    }
+    Ok(Plan {
+        ends: ends
+            .iter()
+            .map(|(p, rev)| (path[*p].to_string(), rev.to_string()))
+            .collect(),
+        commits,
+    })
 }
 
 /// Where to cut commits of the given weights into `n` steps: the index of
@@ -859,24 +897,31 @@ fn balanced_cuts(weights: &[u64], n: usize) -> Vec<usize> {
         }
         t
     };
-    let mut limits: Vec<u64> = (0..m)
-        .flat_map(|i| (i + 1..=m).map(move |j| (i, j)))
-        .map(|(i, j)| sum[j] - sum[i])
-        .collect();
-    limits.sort_unstable();
-    limits.dedup();
+    // Filling steps greedily up to `limit` takes the fewest steps; with more
+    // commits than steps, any split into fewer can be cut further.
+    let fits = |limit: u64| {
+        let (mut steps, mut w) = (1, 0);
+        for &x in weights {
+            if w + x > limit {
+                steps += 1;
+                w = 0;
+            }
+            w += x;
+        }
+        steps <= n
+    };
     // The heaviest step is as light as possible at the least limit that
     // admits a split.
-    let (mut lo, mut hi) = (0, limits.len() - 1);
+    let (mut lo, mut hi) = (weights.iter().copied().max().unwrap_or(0), sum[m]);
     while lo < hi {
-        let mid = (lo + hi) / 2;
-        if best(limits[mid])[0][n].is_some() {
+        let mid = lo + (hi - lo) / 2;
+        if fits(mid) {
             hi = mid;
         } else {
             lo = mid + 1;
         }
     }
-    let t = best(limits[lo]);
+    let t = best(lo);
     let (mut cuts, mut i) = (vec![], 0);
     for k in (2..=n).rev() {
         let j = t[i][k].unwrap().1;
@@ -1178,5 +1223,7 @@ mod tests {
         assert_eq!(balanced_cuts(&[1; 10], 3), [2, 5]);
         assert_eq!(balanced_cuts(&[1, 1, 8, 1, 1], 2), [1]);
         assert_eq!(balanced_cuts(&[5, 5], 3), [0]);
+        let many: Vec<u64> = (0..4000).map(|i| i % 7 * 10 + 1).collect();
+        assert_eq!(balanced_cuts(&many, 6).len(), 5);
     }
 }

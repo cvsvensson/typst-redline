@@ -68,7 +68,7 @@ For more commits, `--steps` groups them into up to 6 steps, each in its own colo
 typst-redline paper.typ --since v1 --steps a1b2c3,submitted
 ```
 
-gives three steps: `v1..a1b2c3`, `a1b2c3..submitted` and from `submitted` to the working tree, including uncommitted changes. With a number, the tool splits the commits into that many steps that change about the same amount of the document: `--steps 3`. The summary page lists each step with its range, the date of its last commit, its number of commits and the first few commit subjects. A step whose commits do not touch the document still gets its colour and is listed as making no changes.
+gives three steps: `v1..a1b2c3`, `a1b2c3..submitted` and from `submitted` to the working tree, including uncommitted changes. With a number, the tool splits the commits, and then the uncommitted changes, into that many steps that change about the same amount of the document: `--steps 3`. The summary page lists each step with its range, the date of its last commit, its number of commits and the first few commit subjects. A step whose commits do not touch the document still gets its colour and is listed as making no changes.
 
 Only the first and the last version are compared, so text that one commit added and a later one removed does not appear. A deleted passage, formula or figure that several commits changed takes the colour of the commit that changed most of it. `--each-commit` and `--steps` need a git comparison in which the old revision is an ancestor of the new one (for a branch, give `--since main...feature`); they do not work with two plain files. With `--layout side-by-side`, the list of commits is under each pair of pages.
 
