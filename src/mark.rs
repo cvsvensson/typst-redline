@@ -26,6 +26,8 @@ pub struct Ctx {
     prefix: String,
     opts: Options,
     new_targets: HashSet<String>,
+    /// Strings that the new version's show rules match in text.
+    shown_strings: HashSet<String>,
     /// Names defined somewhere in the old version but nowhere in the new.
     removed_defs: HashSet<String>,
     /// The project files, the entry first.
@@ -199,6 +201,7 @@ impl Ctx {
             prefix,
             opts,
             new_targets: union(&new_files, targets),
+            shown_strings: union(&new_files, shown_strings),
             removed_defs: union(&old_files, definitions)
                 .difference(&union(&new_files, definitions))
                 .cloned()
@@ -395,6 +398,65 @@ impl Seg {
     fn extend(&mut self, to: &Seg) {
         self.old.end = to.old.end;
         self.new.end = to.new.end;
+    }
+}
+
+/// Widens changes so that no match of `strings` in the text of `new` crosses
+/// the edge of a change: a mark cuts the text, and a text show rule matches
+/// within one piece only.
+fn cover_shown_strings(segs: &mut Vec<Seg>, new: &[Tok], strings: &HashSet<String>) {
+    if strings.is_empty() {
+        return;
+    }
+    // The text as laid out, with a character no string holds for code.
+    let mut text = String::new();
+    let mut starts = vec![];
+    for t in new {
+        starts.push(text.len());
+        match t.kind {
+            TK::Word => text.push_str(&t.key),
+            TK::Space => text.push(if t.key == " " { ' ' } else { '\n' }),
+            TK::Atom => text.push('\u{fffc}'),
+            TK::Comment => {}
+        }
+    }
+    let tok_at = |byte: usize| starts.partition_point(|&s| s <= byte) - 1;
+    loop {
+        let seg_of = |tok: usize| segs.iter().position(|s| s.new.contains(&tok)).unwrap();
+        let cut = strings.iter().find_map(|p| {
+            text.match_indices(p.as_str()).find_map(|(a, m)| {
+                let (first, last) = (tok_at(a), tok_at(a + m.len() - 1) + 1);
+                let (k, l) = (seg_of(first), seg_of(last - 1));
+                (k != l).then_some((k, l, first, last))
+            })
+        });
+        let Some((k, l, first, last)) = cut else { return };
+        // Kept tokens outside the match stay kept; old and new tokens of a
+        // kept run correspond one to one.
+        let (a, b) = (&segs[k], &segs[l]);
+        let before = if a.equal { first - a.new.start } else { 0 };
+        let after = if b.equal { b.new.end - last } else { 0 };
+        let pieces = [
+            Seg {
+                old: a.old.start..a.old.start + before,
+                new: a.new.start..a.new.start + before,
+                equal: true,
+            },
+            Seg {
+                old: a.old.start + before..b.old.end - after,
+                new: a.new.start + before..b.new.end - after,
+                equal: false,
+            },
+            Seg {
+                old: b.old.end - after..b.old.end,
+                new: b.new.end - after..b.new.end,
+                equal: true,
+            },
+        ];
+        let rest: Vec<Seg> = segs.drain(k..).skip(l + 1 - k).collect();
+        for s in pieces.into_iter().chain(rest) {
+            push_seg(segs, s);
+        }
     }
 }
 
@@ -1397,6 +1459,7 @@ impl<'a> Writer<'a> {
                 merged[i].new.end += 1;
             }
         }
+        cover_shown_strings(&mut merged, new, &self.ctx.shown_strings);
         for s in merged {
             if !s.equal {
                 self.change(&old[s.old], &new[s.new]);

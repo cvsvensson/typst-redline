@@ -497,6 +497,21 @@ pub fn definitions(root: &SyntaxNode) -> HashSet<String> {
     set
 }
 
+/// The strings that show rules match in text, as `"new version"` in
+/// `#show "new version": strong`.
+pub fn shown_strings(root: &SyntaxNode) -> HashSet<String> {
+    let mut set = HashSet::new();
+    walk(root, &mut |n| {
+        if let Some(rule) = n.cast::<ast::ShowRule>()
+            && let Some(ast::Expr::Str(s)) = rule.selector()
+            && !s.get().is_empty()
+        {
+            set.insert(s.get().to_string());
+        }
+    });
+    set
+}
+
 pub fn walk(n: &SyntaxNode, f: &mut impl FnMut(&SyntaxNode)) {
     f(n);
     for c in n.children() {

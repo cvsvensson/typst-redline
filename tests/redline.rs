@@ -707,6 +707,72 @@ fn change_that_a_function_drops_is_listed() {
     assert_eq!(texts, ["Gamma | 2", "Delta | 3"], "{lost}");
 }
 
+/// The `<probe>` values of the marked document and of the new version.
+fn probes(name: &str, old: &str, new: &str) -> Option<(String, String)> {
+    let r = redline_of(old, new);
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let marked = compile(&format!("{name}-marked"), &files)?;
+    let plain = compile(&format!("{name}-new"), &[("main.typ".into(), new.into())]).unwrap();
+    Some((query(&marked, "<probe>"), query(&plain, "<probe>")))
+}
+
+#[test]
+fn text_show_rule_matches_across_the_edge_of_a_change() {
+    let doc = |w: &str| {
+        format!("#show \"new version\": strong\n#show strong: it => [#metadata(0)<probe>#it]\nThe {w} version.\n")
+    };
+    if let Some((marked, new)) = probes("show-string", &doc("old"), &doc("new")) {
+        assert_eq!(marked, new);
+    }
+}
+
+#[test]
+fn marked_word_is_laid_out_in_one_piece() {
+    // Split, a word is shaped as two, which breaks the joining of letters.
+    let doc = |w: &str| {
+        format!(
+            "#show text: it => if it.text.contains(\"{w}\") [#metadata(0)<probe>#it] else {{ it }}\nThe {w} text.\n"
+        )
+    };
+    if let Some((marked, new)) = probes("one-piece", &doc("zebra"), &doc("quail")) {
+        assert_eq!(marked, new);
+    }
+}
+
+#[test]
+fn deleted_drawing_in_the_text_is_crossed_out() {
+    let doc = |c: &str| format!("#show line: it => [#metadata(it.end)<probe>#it]\nA shape{c} here.\n");
+    if let Some((marked, _)) = probes("inline-drawing", &doc(" #box(circle(radius: 3mm))"), &doc("")) {
+        // Lines of the cross have an end point, bars have none.
+        assert_eq!(marked.matches("[\"").count(), 2, "{marked}");
+    }
+}
+
+#[test]
+fn bars_of_right_to_left_text_are_on_the_page() {
+    // Typst 0.11 orders the tags of right-to-left text by position.
+    let version = Command::new("typst").arg("--version").output().map(|o| o.stdout);
+    if version.is_ok_and(|v| String::from_utf8_lossy(&v).contains(" 0.11.")) {
+        return;
+    }
+    let doc = |w: &str| {
+        format!(
+            "#set page(width: 10cm, height: auto)\n#set text(lang: \"ar\")\n#show line: it => context [#metadata(here().position().x.pt())<probe>#it]\nمرحبا بالعالم {w}\n"
+        )
+    };
+    if let Some((marked, _)) = probes("rtl-bars", &doc(""), &doc("جديد")) {
+        let xs: Vec<f64> = marked
+            .trim_matches(|c| c == '[' || c == ']')
+            .split(',')
+            .map(|x| x.parse().unwrap())
+            .collect();
+        assert!(
+            !xs.is_empty() && xs.iter().all(|x| (0.0..=283.5).contains(x)),
+            "{marked}"
+        );
+    }
+}
+
 #[test]
 fn change_in_hidden_content_is_listed() {
     let doc = |w: &str| format!("First line.\n\n#hide[Second line with {w}.]\n");

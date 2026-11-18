@@ -155,6 +155,13 @@
     or sole and repr(c.func()) in ("context", "layout") and "frames" not in redline-fallback
 )
 
+// The two lines that cross out a deleted drawing of size `w` by `h`.
+#let redline-cross(stroke, w, h) = {
+  let s = 0.6pt + stroke.paint.transparentize(40%)
+  place(top + left, line(start: (0pt, 0pt), end: (w, h), stroke: s))
+  place(top + left, line(start: (0pt, h), end: (w, 0pt), stroke: s))
+}
+
 // A frame around a block-level element, outside it so that nothing moves;
 // as wide as the element. It carries the mark's tags when the element
 // starts or ends the mark, so that the bar spans the frame.
@@ -182,11 +189,7 @@
   let empty = h == 0pt and repr(it.func()) != "line"
   place(top + a, box(width: w, height: h, {
     if not empty { place(rect(width: 100%, height: 100%, stroke: stroke, outset: st.outset)) }
-    if cross and not empty {
-      let s = 0.6pt + stroke.paint.transparentize(40%)
-      place(line(start: (0pt, 0pt), end: (w, h), stroke: s))
-      place(line(start: (0pt, h), end: (w, 0pt), stroke: s))
-    }
+    if cross and not empty { redline-cross(stroke, w, h) }
     place(top + left, if start != none { redline-tag(start, -st.outset, step: step, id: id) })
     place(bottom + left, if end != none { redline-tag("end", st.outset, width: size.width) })
   }))
@@ -219,10 +222,10 @@
 // of parts that are not framed, `frame-style` to each framed part that shows
 // text. A drawing, an image, or content with colours of its own is drawn as
 // written, with only `plain` applied: its frame is the mark. A colour would
-// reach the labels of a drawing but not its lines. A deleted image or shape
-// is also crossed; content computed at layout is not, since it can hold
-// text. A figure's caption is styled all the same. The tags around content
-// that takes no room are placed, so that they do not form a line.
+// reach the labels of a drawing but not its lines. A deleted drawing is also
+// crossed. A box in the text that shows no text is a drawing too, framed at
+// its own size. A figure's caption is styled all the same. The tags around
+// content that takes no room are placed, so that they do not form a line.
 #let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, step: none, id: none) = {
   let (lead, ch, trail) = redline-parts(body)
   let n = ch.len()
@@ -242,19 +245,21 @@
       let b = if c.func() == figure { c.body } else { c }
       let drawing = not redline-textual(b)
       let own = drawing or redline-own-colours(b)
-      let cross = kind == "del" and drawing and repr(b.func()) not in ("context", "layout")
-      let f = redline-frame(c, stroke, cross: cross, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
+      let f = redline-frame(c, stroke, cross: kind == "del" and drawing, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
       out.push(if not own { frame-style(f) } else if c.func() == figure {
         show figure.caption: frame-style
         plain(f)
       } else { plain(f) })
-    } else if i == 0 and not block and c.func() == text and c.has("text") and c.text.clusters().len() > 1 {
-      // After the first character, so that the bar of a mark starting a
-      // line is not drawn on the line before.
-      let cl = c.text.clusters()
-      run += (text(cl.first()), redline-tag(kind, -0.8em, step: step, id: id), text(cl.slice(1).join()))
     } else {
-      if i == 0 { run.push(redline-tag(kind, start-dy, step: step, id: id)) }
+      // A tag in a box, joined to the text after it, starts the line the
+      // text starts; a tag alone stays on the line before a break.
+      if i == 0 { run.push(if block { redline-tag(kind, start-dy, step: step, id: id) } else [#box(redline-tag(kind, -0.8em, step: step, id: id))\u{2060}]) }
+      let c = if c.func() == box and c.at("body", default: none) != none and not redline-textual(c) {
+        box(stroke: stroke, outset: redline-style.outset, {
+          c
+          if kind == "del" { context { let s = measure(c); redline-cross(stroke, s.width, s.height) } }
+        })
+      } else { c }
       run.push(if i == n - 1 and styled { redline-end-in(c) } else { c })
     }
   }
@@ -548,7 +553,9 @@
   if block { parbreak() } else if gap { h(0.25em) }
 }
 
-// The bars code shadows `bottom` and `left`.
+// The bars code shadows `top`, `bottom` and `left`. Bars are placed from the
+// top left, also in right-to-left text.
+#let redline-top-left = top + left
 #let redline-bottom-left = bottom + left
 
 #let redline-swatch(st) = box(width: 0.8em, height: 0.8em, fill: st.ins-fill, stroke: 0.6pt + st.ins)
@@ -593,6 +600,8 @@
 // (`from`): one query per page instead of introspection per mark.
 #let redline-page-bars(from) = context {
   let st = redline-style
+  // Notes and the legend are laid out left to right, as the bars are.
+  set text(dir: ltr)
   let pg = here().page()
   [#metadata(from)<redline-page>]
   let m = page.margin
@@ -706,7 +715,7 @@
   }
   for (x, y0, y1, ins, paint) in merged {
     let stroke = (paint: paint, thickness: st.bar-width, dash: if ins { none } else { (3pt, 2pt) })
-    place(dx: x, dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
+    place(redline-top-left, dx: x, dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
   }
   // A move's bracket, from the start of its new place to its end, linked to
   // its old place, with the x of the far side of the free space for its
@@ -751,15 +760,15 @@
     } else { ((x-of(s, e-in), y0, y1, s.page == pg, e.page == pg),) }
     for ((x, right-side, _), from, to, first, last) in pieces {
       let tick = if right-side { -2.5pt } else { 2.5pt }
-      place(dx: x, dy: from, line(angle: 90deg, length: calc.max(to - from, 0pt), stroke: stroke))
-      if first { place(dx: x, dy: from, line(length: tick, stroke: stroke)) }
-      if last { place(dx: x, dy: to, line(length: tick, stroke: stroke)) }
+      place(redline-top-left, dx: x, dy: from, line(angle: 90deg, length: calc.max(to - from, 0pt), stroke: stroke))
+      if first { place(redline-top-left, dx: x, dy: from, line(length: tick, stroke: stroke)) }
+      if last { place(redline-top-left, dx: x, dy: to, line(length: tick, stroke: stroke)) }
     }
     let ((x, right-side, edge), _, y1, ..) = pieces.first()
     let (x0, x1) = if right-side { (x - 3pt, edge - 2pt) } else { (edge + 2pt, x + 3pt) }
     let other = redline-move-find("from", v.id)
     if other != none {
-      place(dx: x0, dy: y0, link(other.location(), box(width: calc.max(x1 - x0, 0pt), height: calc.max(y1 - y0, 1pt))))
+      place(redline-top-left, dx: x0, dy: y0, link(other.location(), box(width: calc.max(x1 - x0, 0pt), height: calc.max(y1 - y0, 1pt))))
     }
     if s.page != pg { continue }
     let notes = if other != none and other.location().page() != pg {
@@ -773,7 +782,7 @@
     let note = notes.map(n => { set par(leading: 0.4em); style(n) }).find(n => measure(n).width <= free)
     if note != none {
       let note = if other != none { link(other.location(), note) } else { note }
-      place(dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0, box(width: free, align(if right-side { start } else { end }, note)))
+      place(redline-top-left, dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0, box(width: free, align(if right-side { start } else { end }, note)))
     }
   }
   // The legend goes in the middle of the bottom margin below the footer,
@@ -991,6 +1000,8 @@
   let st = redline-style
   // Pages of its own, without the document's header, footer and numbers.
   page(header: none, footer: none, numbering: none, {
+    // English, whatever language the document is in.
+    set text(lang: "en", dir: ltr)
     block({
       block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
       let bib = redline-bib(info.at("bib", default: (added: (), removed: (), changed: ())))
