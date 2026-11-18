@@ -2,6 +2,7 @@
 //! the changes against an old version marked.
 
 mod blame;
+mod labels;
 mod mark;
 mod side;
 mod syntax;

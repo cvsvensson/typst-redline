@@ -294,6 +294,21 @@ fn heading_with_a_new_label_is_not_listed_as_deleted() {
 }
 
 #[test]
+fn summary_lists_labels_that_moved_or_whose_target_changed() {
+    let r = redline_of(
+        "= A\nSee @a, @b and @k.\n$ x $ <a>\n$ y $ <b>\n$ z $ <c>\n",
+        "= A\nSee @a, @b and @k.\n$ x $\n$ y + 1 $ <b>\n$ z $ <d>\n$ w $ <a>\n",
+    );
+    let main = &r.files[0].1;
+    let labels = &main[main.find("labels: ").unwrap()..];
+    let labels = &labels[..labels.find('\n').unwrap()];
+    assert!(labels.contains("moved: ((name: \"a\""), "{labels}");
+    assert!(labels.contains("changed: ((name: \"b\""), "{labels}");
+    assert!(labels.contains("renamed: ((\"c\", \"d\"),)"), "{labels}");
+    assert!(!labels.contains("\"k\""), "{labels}");
+}
+
+#[test]
 fn page_break_inserted_with_a_slide_is_part_of_it() {
     let r = run("inserted-slide");
     assert!(r.changes.iter().all(|c| c.kind != ChangeKind::Unmarked), "{}", r.body);

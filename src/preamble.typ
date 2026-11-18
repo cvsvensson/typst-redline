@@ -13,7 +13,10 @@
 //   label or none, title, count, deleted, new, code: array of changed code
 //   that is not marked), bib: (added, removed, changed: arrays of citation
 //   keys whose bibliography entry is new, gone or edited, files: paths of
-//   other files that both versions read and that differ), and if the
+//   other files that both versions read and that differ), labels: (moved,
+//   changed: arrays of (name, kind, at: places of references in unchanged
+//   text, each (target: label or none, title)), added, removed: arrays of
+//   label names, renamed: array of (old, new) names), and if the
 //   versions are git revisions, history: (commits: array of (hash, date,
 //   subject), oldest first, earlier: number of earlier commits left out,
 //   uncommitted: whether the new version has uncommitted changes, steps:
@@ -482,6 +485,32 @@
   if out.len() > 0 { out.join(" ") }
 }
 
+// The number of the heading at `target`, followed by a space, if it has one.
+#let redline-heading-number(target) = context {
+  let el = query(target)
+  if el.len() > 0 and el.first().func() == heading and el.first().numbering != none {
+    numbering(el.first().numbering, ..counter(heading).at(target)) + h(0.5em)
+  }
+}
+
+// Labels that now label a different element, labelled elements that changed
+// where text refers to them unchanged, and labels added, removed or renamed,
+// as a list, or none.
+#let redline-labels(labels) = {
+  let place(p) = box(if p.target == none { p.title } else { link(p.target, underline[#redline-heading-number(p.target)#p.title]) })
+  let refs(e) = if e.at.len() > 0 [ Unchanged text refers to it in #e.at.map(place).join(", ").]
+  let out = ()
+  for e in labels.moved { out.push[#raw(e.name) now labels a different #e.kind.#refs(e)] }
+  for e in labels.changed { out.push[#upper(e.kind.first())#e.kind.slice(e.kind.first().len()) #raw(e.name) changed.#refs(e)] }
+  let lists = (
+    ([removed], labels.removed.map(raw)),
+    ([added], labels.added.map(raw)),
+    ([renamed], labels.renamed.map(p => [#raw(p.at(0)) → #raw(p.at(1))])),
+  ).filter(p => p.at(1).len() > 0)
+  if lists.len() > 0 { out.push[Labels #lists.map(p => [#p.at(0): #p.at(1).join(", ")]).join("; ").] }
+  if out.len() > 0 { block(below: 1.5em, { block(strong[Cross-references]); list(..out) }) }
+}
+
 // The commits from the old version to the new one, each in the colour of
 // its marks if marks are coloured by commit; none without a history.
 #let redline-commits(hist, old, new) = if hist != none {
@@ -522,6 +551,7 @@
     }
     redline-commits(info.at("history", default: none), info.old, info.new)
     if bib != none { block(below: 1.5em, bib) }
+    if "labels" in info { redline-labels(info.labels) }
     context {
       let unbarred = query(<redline-unbarred>).map(m => m.value).flatten()
       if unbarred.len() > 0 {
@@ -536,12 +566,7 @@
       } else if e.target == none {
         [#e.title (#e.count#note)]
       } else {
-        let num = context {
-          let el = query(e.target)
-          if el.len() > 0 and el.first().func() == heading and el.first().numbering != none {
-            numbering(el.first().numbering, ..counter(heading).at(e.target)) + h(0.5em)
-          }
-        }
+        let num = redline-heading-number(e.target)
         // The number printed on the page, or the page of this PDF.
         let pg = context {
           let loc = query(e.target).first().location()

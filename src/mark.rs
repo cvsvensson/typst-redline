@@ -9,6 +9,7 @@ use similar::{Algorithm, DiffOp, capture_diff_slices};
 use typst_syntax::{RootedPath, Source, SyntaxKind as K, SyntaxNode, VirtualPath, VirtualRoot, parse};
 
 use crate::blame::{Steps, blame};
+use crate::labels::{self, Site, refs};
 use crate::syntax::*;
 use crate::{Bib, Change, ChangeKind, History, OLD_DIR, Options, PREAMBLE_PATH, pair_files, resolve};
 
@@ -178,6 +179,8 @@ struct Writer<'a> {
     changes: Vec<Change>,
     /// Deleted content imports the old version.
     old_scope: bool,
+    /// The references that are the same in both versions.
+    sites: Vec<Site>,
 }
 
 /// A run of tokens that is the same in both versions or changed.
@@ -237,6 +240,7 @@ impl<'a> Writer<'a> {
             current: None,
             changes: vec![],
             old_scope: false,
+            sites: vec![],
         }
     }
 
@@ -254,6 +258,13 @@ impl<'a> Writer<'a> {
         let old_src = source(&ctx.old_files, &old_path).unwrap_or_default();
         let entry = path == ctx.entry();
         if !entry && old_src == new_src {
+            for name in refs(&[parse(new_src)]) {
+                self.sites.push(Site {
+                    name,
+                    section: None,
+                    file: path.into(),
+                });
+            }
             return;
         }
         // Distinct file ids, so that a span finds its node only in its file.
@@ -315,6 +326,18 @@ impl<'a> Writer<'a> {
     fn included(&mut self, b: &Block) {
         if let Some(path) = b.include_target().and_then(|t| resolve(&self.file.path, &t)) {
             self.file(&path);
+        }
+    }
+
+    /// Record the references in `nodes`, which are the same in both
+    /// versions.
+    fn refs_in(&mut self, nodes: &[SyntaxNode]) {
+        for name in refs(nodes) {
+            self.sites.push(Site {
+                name,
+                section: self.current.clone(),
+                file: self.file.path.clone(),
+            });
         }
     }
 
@@ -527,12 +550,25 @@ impl<'a> Writer<'a> {
                 s.new,
             ));
         }
+        let place = |s: &Site| {
+            let section = self
+                .sections
+                .iter()
+                .find(|t| t.target == s.section && s.section.is_some());
+            match section {
+                Some(t) if !t.deleted => format!("(target: <{}>, title: {})", s.section.as_ref().unwrap(), t.title),
+                Some(t) => format!("(target: none, title: {})", t.title),
+                None if s.file == self.ctx.entry() => "(target: none, title: [before the first section])".into(),
+                None => format!("(target: none, title: raw({}))", typst_str(&s.file)),
+            }
+        };
+        let labels = labels::report(&self.ctx.old_files, &self.ctx.new_files, &self.sites, place);
         let p = &self.ctx.prefix;
         let history = history
             .to_typst()
             .map_or(String::new(), |h| format!("  history: {h},\n"));
         format!(
-            "#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n  bib: {},\n{history}))\n",
+            "#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n  bib: {},\n  labels: {labels},\n{history}))\n",
             typst_str(old_label),
             typst_str(new_label),
             count(&|c| c.kind == ChangeKind::Ins),
@@ -708,6 +744,7 @@ impl<'a> Writer<'a> {
         let label = self.section(b, false);
         self.out.push_str(&b.text());
         self.out.push_str(&label);
+        self.refs_in(&b.nodes);
         self.included(b);
     }
 
@@ -957,6 +994,7 @@ impl<'a> Writer<'a> {
             for (ot, nt) in old[s.old].iter().zip(&new[s.new]) {
                 if ot.text == nt.text || nt.kind != TK::Atom {
                     self.out.push_str(&nt.text);
+                    self.refs_in(&nt.nodes);
                 } else if !self.diff_code(ot, nt) {
                     self.change(std::slice::from_ref(ot), std::slice::from_ref(nt));
                 }
