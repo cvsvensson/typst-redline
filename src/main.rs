@@ -33,7 +33,7 @@ Options:
                         version next to each other (needs Typst 0.14 or later)
   --each-commit         Colour each change by the commit that made it, for at
                         most 6 commits between the two versions (one file
-                        and the inline layout only)
+                        only)
   --typst <path>        typst executable (default: typst)
   --keep-typ            Keep the generated project and print its path on stderr
   -V, --version         Print the version
@@ -115,8 +115,8 @@ fn parse_args() -> Result<Parsed, String> {
             .map(PathBuf::from);
         a.root_env = a.root.is_some();
     }
-    if a.each_commit && (a.files.len() != 1 || a.side_by_side) {
-        return Err("--each-commit needs one file and the inline layout".into());
+    if a.each_commit && a.files.len() != 1 {
+        return Err("--each-commit works with one file, not with two".into());
     }
     match (a.files.len(), &a.since, &a.to) {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(a)),
@@ -430,7 +430,12 @@ fn run(a: Args) -> Result<PathBuf, String> {
         let out = if !a.side_by_side {
             typst(&a, dir, "compile", &[&dir.join(&new.entry), &tmp])?
         } else {
-            let back = redline(&new_v, &old_v, opts, &History::default());
+            let back_history = History {
+                steps: history.steps.clone(),
+                swapped: true,
+                ..History::default()
+            };
+            let back = redline(&new_v, &old_v, opts, &back_history);
             if i == 0 {
                 stage(&old_root, &new, &old, &back)?;
                 write(&old_root, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
@@ -584,7 +589,7 @@ fn log(old: &Spec, new: &Spec, files: &[String]) -> Result<Option<Log>, String> 
         history: History {
             commits,
             uncommitted,
-            steps: None,
+            ..History::default()
         },
     }))
 }
