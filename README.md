@@ -101,6 +101,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
 - With Typst 0.11, right-to-left text gets no change bars, and a deletion in it fails to compile, because that version orders the tags in such text by position.
 - A text show rule with a `regex` selector stops matching where a mark cuts its match. For a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
+- Deleted figures, equations and citations are still figures, equations and citations, so the document's own queries for them, such as a list of figures built with `query(figure)`, also find the deleted ones. `outline` leaves them out.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
 - A citation added to or removed from a group such as `@a @b` marks the whole group, because Typst lays the group out as one piece.
 - Entries that appear in, disappear from or change in the bibliography are not marked there. The summary page names them.
