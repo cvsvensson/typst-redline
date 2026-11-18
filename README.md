@@ -4,15 +4,15 @@
 
 The two pictures are the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). Page 1 is a summary that explains the marks and lists the sections that changed. When the two versions come from git, it also lists the commits between them.
 
-<img src="docs/example-summary.png" width="560" alt="The summary page: a legend and the list of changed sections">
+<img src="docs/example-summary.png" width="420" alt="The summary page: a legend and the list of changed sections">
 
 Page 2 is the document with the changes marked:
 
-<img src="docs/example.png" width="560" alt="A page with a changed sentence, formula and drawing and a new paragraph, each marked">
+<img src="docs/example.png" width="420" alt="A page with a changed sentence, formula and drawing and a new paragraph, each marked">
 
 With `--layout side-by-side`, the old page is shown next to the new one instead:
 
-<img src="docs/example-side-by-side.png" width="800" alt="The old page with its deletions marked, next to the new page with its insertions marked">
+<img src="docs/example-side-by-side.png" width="600" alt="The old page with its deletions marked, next to the new page with its insertions marked">
 
 ## Install
 
