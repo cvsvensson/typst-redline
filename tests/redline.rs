@@ -1127,11 +1127,26 @@ fn file_outside_the_root_suggests_the_repository_as_root() {
 
 #[test]
 fn each_change_is_marked_with_the_commit_that_made_it() {
-    let (old, mid, new) = (
-        |_: &str| Some("The lazy fox jumps.\n".to_string()),
-        |_: &str| Some("The quick brown fox jumps.\n".to_string()),
-        |_: &str| Some("The quick red fox jumps.\n".to_string()),
-    );
+    let out = &redline_steps(
+        "The lazy fox jumps.\n",
+        "The quick brown fox jumps.\n",
+        "The quick red fox jumps.\n",
+    )
+    .files[0]
+        .1;
+    for mark in ["step: 1)[lazy]", "step: 1)[quick]", "step: 2)[red]"] {
+        assert!(out.contains(mark), "{out}");
+    }
+}
+
+/// The redline of `new` against `old` with each change marked with its
+/// step, `mid` being the version after the first.
+fn redline_steps(old: &str, mid: &str, new: &str) -> Redline {
+    let read = |s: &str| {
+        let s = s.to_string();
+        move |_: &str| Some(s.clone())
+    };
+    let (old, mid, new) = (read(old), read(mid), read(new));
     let v = |read| Version {
         label: "v".into(),
         entry: "main.typ".into(),
@@ -1141,10 +1156,21 @@ fn each_change_is_marked_with_the_commit_that_made_it() {
         steps: Some(vec![v(&mid)]),
         ..History::default()
     };
-    let out = &redline(&v(&old), &v(&new), FULL, &history).files[0].1;
-    for mark in ["step: 1)[lazy]", "step: 1)[quick]", "step: 2)[red]"] {
-        assert!(out.contains(mark), "{out}");
-    }
+    redline(&v(&old), &v(&new), FULL, &history)
+}
+
+#[test]
+fn paragraph_inserted_in_two_steps_keeps_its_lines() {
+    let para = |inline: &str| format!("#set page(width: 10cm, height: auto)\nA new paragraph{inline} with words.\n");
+    let new = para(" #context [here]");
+    let r = redline_steps("", &para(""), &new);
+    let marked = [r.files[0].clone(), (PREAMBLE_PATH.into(), PREAMBLE.into())];
+    let Some(marked) = render("two-steps", &marked) else {
+        return;
+    };
+    let new = render("two-steps-new", &[("main.typ".into(), new)]).unwrap();
+    let height = |png: &[u8]| u32::from_be_bytes(png[20..24].try_into().unwrap());
+    assert_eq!(height(&marked[1]), height(&new[0]), "{}", r.files[0].1);
 }
 
 #[test]
