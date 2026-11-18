@@ -139,7 +139,7 @@ impl DocBuilder {
             return;
         }
         let nodes = std::mem::take(&mut self.cur);
-        let key = format!("{:?}:{}", self.kind, collapse_ws(&text(&nodes)));
+        let key = format!("{:?}:{}", self.kind, spaced(&nodes));
         self.blocks.push(Block {
             kind: self.kind,
             gap: std::mem::take(&mut self.gap),
@@ -422,6 +422,21 @@ pub fn is_item(kind: K) -> bool {
 
 pub fn text(nodes: &[SyntaxNode]) -> String {
     nodes.iter().map(|n| n.full_text().to_string()).collect()
+}
+
+/// The source of `nodes` with each space node as one space. Paragraph
+/// breaks and the whitespace inside raw text and strings are kept: they show.
+fn spaced(nodes: &[SyntaxNode]) -> String {
+    fn into(n: &SyntaxNode, s: &mut String) {
+        match n.kind() {
+            K::Space => s.push(' '),
+            _ if n.children().len() == 0 => s.push_str(n.leaf_text()),
+            _ => n.children().for_each(|c| into(c, s)),
+        }
+    }
+    let mut s = String::new();
+    nodes.iter().for_each(|n| into(n, &mut s));
+    s
 }
 
 pub fn collapse_ws(s: &str) -> String {

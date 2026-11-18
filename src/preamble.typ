@@ -26,8 +26,8 @@
 //   marked, either empty if inserted or deleted, marks: array of (id,
 //   move: number of the move if it is one, old, new): its marks), bib: (added,
 //   removed, changed: arrays of citation keys whose bibliography entry is
-//   new, gone or edited, files: paths of other files that both versions
-//   read and that differ), and if the versions are git revisions,
+//   new, gone or edited, files: paths of other files that the document
+//   reads and that differ), and if the versions are git revisions,
 //   history: (commits: array of (hash, date, subject), oldest first,
 //   earlier: number of earlier commits left out, uncommitted: whether the
 //   new version has uncommitted changes, steps: whether marks are coloured
