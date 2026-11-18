@@ -34,6 +34,11 @@ Options:
   --each-commit         Colour each change by the commit that made it, for at
                         most 6 commits between the two versions (one file
                         only)
+  --steps <revs|n>      Colour each change by the step that made it: the steps
+                        end at the given revisions, separated by commas, and
+                        at the new version. With a number n from 2 to 6, the
+                        tool splits the commits into n steps that change
+                        about the same amount of the document (one file only)
   --typst <path>        typst executable (default: typst)
   --keep-typ            Keep the generated project and print its path on stderr
   -V, --version         Print the version
@@ -53,12 +58,50 @@ struct Args {
     typst: String,
     keep: bool,
     side_by_side: bool,
-    each_commit: bool,
+    steps: Option<StepArg>,
     typst_args: Vec<String>,
 }
 
+/// How changes are grouped into steps, each marked in its own colour.
+enum StepArg {
+    EachCommit,
+    /// This many steps that change about the same amount.
+    Count(usize),
+    /// The revisions where steps end, but the last.
+    Revs(Vec<String>),
+}
+
+impl StepArg {
+    fn parse(v: &str) -> Result<StepArg, String> {
+        // Git abbreviates hashes to at least four digits.
+        if v.len() < 4 && v.chars().all(|c| c.is_ascii_digit()) {
+            return match v.parse() {
+                Ok(n @ 2..=MAX_STEPS) => Ok(StepArg::Count(n)),
+                _ => Err(format!(
+                    "--steps takes a number of steps from 2 to {MAX_STEPS}, or revisions separated by commas"
+                )),
+            };
+        }
+        let revs: Vec<String> = v.split(',').map(|r| r.trim().to_string()).collect();
+        if revs.iter().any(String::is_empty) {
+            return Err(format!("--steps {v}: an empty revision"));
+        }
+        Ok(StepArg::Revs(revs))
+    }
+
+    fn option(&self) -> &'static str {
+        match self {
+            StepArg::EachCommit => "--each-commit",
+            _ => "--steps",
+        }
+    }
+}
+
+/// The most steps the preamble has colours for.
+const MAX_STEPS: usize = 6;
+
 enum Parsed {
-    Run(Args),
+    Run(Box<Args>),
     Print(String),
 }
 
@@ -74,7 +117,7 @@ fn parse_args() -> Result<Parsed, String> {
         typst: "typst".into(),
         keep: false,
         side_by_side: false,
-        each_commit: false,
+        steps: None,
         typst_args: vec![],
     };
     let mut it = std::env::args().skip(1);
@@ -93,7 +136,15 @@ fn parse_args() -> Result<Parsed, String> {
             "--preamble" => a.preamble = Some(val()?.into()),
             "--typst" => a.typst = val()?,
             "--keep-typ" => a.keep = true,
-            "--each-commit" => a.each_commit = true,
+            "--each-commit" | "--steps" => {
+                if a.steps.is_some() {
+                    return Err("give one of --each-commit and --steps".into());
+                }
+                a.steps = Some(match arg.as_str() {
+                    "--steps" => StepArg::parse(&val()?)?,
+                    _ => StepArg::EachCommit,
+                });
+            }
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
                     "inline" => false,
@@ -115,11 +166,13 @@ fn parse_args() -> Result<Parsed, String> {
             .map(PathBuf::from);
         a.root_env = a.root.is_some();
     }
-    if a.each_commit && a.files.len() != 1 {
-        return Err("--each-commit works with one file, not with two".into());
+    if let Some(s) = &a.steps
+        && a.files.len() != 1
+    {
+        return Err(format!("{} works with one file, not with two", s.option()));
     }
     match (a.files.len(), &a.since, &a.to) {
-        (1, _, _) | (2, None, None) => Ok(Parsed::Run(a)),
+        (1, _, _) | (2, None, None) => Ok(Parsed::Run(Box::new(a))),
         _ => Err("give one file, or two files without --since and --to".into()),
     }
 }
@@ -317,7 +370,11 @@ fn run(a: Args) -> Result<PathBuf, String> {
             let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
             let needs = [
                 (a.side_by_side, "redline-side-by-side", "the side-by-side layout"),
-                (a.each_commit, "redline-step-style", "--each-commit"),
+                (
+                    a.steps.is_some(),
+                    "redline-step-style",
+                    a.steps.as_ref().map_or("", StepArg::option),
+                ),
             ];
             if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
                 return Err(format!(
@@ -358,13 +415,28 @@ fn run(a: Args) -> Result<PathBuf, String> {
     let (old_v, new_v) = (version(&old, &read_old), version(&new, &read_new));
     let files = [project_files(&old_v), project_files(&new_v)].concat();
     let log = log(&old, &new, &files)?;
-    let step_trees = match &log {
-        Some(log) if a.each_commit => step_trees(log, &old, &new)?,
-        _ if a.each_commit => {
-            return Err("--each-commit needs two git revisions, or a revision and the working tree".into());
+    let plan = match (&a.steps, &log) {
+        (None, _) => Plan::default(),
+        (Some(s), Some(log)) => plan_steps(s, log, &old, &new)?,
+        (Some(s), None) => {
+            return Err(format!(
+                "{} needs two git revisions, or a revision and the working tree",
+                s.option()
+            ));
         }
-        _ => vec![],
     };
+    let step_trees: Vec<Tree> = plan
+        .ends
+        .iter()
+        .map(|(hash, _)| match &old.tree {
+            Tree::Git { repo, prefix, .. } => Tree::Git {
+                repo: repo.clone(),
+                prefix: prefix.clone(),
+                rev: Some(hash.clone()),
+            },
+            Tree::Dir(_) => unreachable!(),
+        })
+        .collect();
     // A step before the entry was renamed has it under its old name.
     let step_entry = |t: &Tree| {
         if t.read(&new.entry).is_some() {
@@ -375,17 +447,19 @@ fn run(a: Args) -> Result<PathBuf, String> {
     };
     let step_reads: Vec<_> = step_trees.iter().map(|t| move |p: &str| t.read(p)).collect();
     let history = History {
-        steps: a.each_commit.then(|| {
+        steps: a.steps.is_some().then(|| {
             step_trees
                 .iter()
                 .zip(&step_reads)
-                .map(|(t, read)| Version {
-                    label: String::new(),
+                .zip(&plan.ends)
+                .map(|((t, read), (_, label))| Version {
+                    label: label.clone(),
                     entry: step_entry(t),
                     read,
                 })
                 .collect()
         }),
+        step_commits: plan.commits,
         ..log.map(|l| l.history).unwrap_or_default()
     };
 
@@ -429,6 +503,7 @@ fn run(a: Args) -> Result<PathBuf, String> {
         } else {
             let back_history = History {
                 steps: history.steps.clone(),
+                step_commits: history.step_commits.clone(),
                 swapped: true,
                 ..History::default()
             };
@@ -525,6 +600,8 @@ struct Log {
     /// The new version's revision; HEAD for the index or the working tree.
     to: String,
     hashes: Vec<String>,
+    /// The lines each commit adds and removes in the project files.
+    weights: Vec<u64>,
     history: History<'static>,
 }
 
@@ -562,17 +639,27 @@ fn log(old: &Spec, new: &Spec, files: &[String]) -> Result<Option<Log>, String> 
                 "--first-parent",
                 "--reverse",
                 "--date=short",
-                "--format=%H%x1f%h%x1f%ad%x1f%s",
+                "--numstat",
+                "--format=%x1e%H%x1f%h%x1f%ad%x1f%s",
                 &format!("{from}..{to}"),
                 "--",
             ])
             .args(&paths),
     )?;
-    let (mut hashes, mut commits) = (vec![], vec![]);
-    for line in String::from_utf8_lossy(&out).lines() {
-        let f: Vec<&str> = line.splitn(4, '\x1f').collect();
+    let (mut hashes, mut weights, mut commits) = (vec![], vec![], vec![]);
+    for record in String::from_utf8_lossy(&out).split('\x1e').skip(1) {
+        let (head, stat) = record.split_once('\n').unwrap_or((record, ""));
+        let f: Vec<&str> = head.splitn(4, '\x1f').collect();
         if let [full, hash, date, subject] = f[..] {
             hashes.push(full.to_string());
+            // A binary file has "-" for its lines and counts as one.
+            let lines = |n: &str| n.parse().unwrap_or(1);
+            weights.push(
+                stat.lines()
+                    .filter_map(|l| l.split_once('\t'))
+                    .map(|(add, rest)| lines(add) + lines(rest.split('\t').next().unwrap_or("")))
+                    .sum(),
+            );
             commits.push(Commit {
                 hash: hash.into(),
                 date: date.into(),
@@ -583,6 +670,7 @@ fn log(old: &Spec, new: &Spec, files: &[String]) -> Result<Option<Log>, String> 
     Ok(Some(Log {
         to: to.into(),
         hashes,
+        weights,
         history: History {
             commits,
             uncommitted,
@@ -591,15 +679,19 @@ fn log(old: &Spec, new: &Spec, files: &[String]) -> Result<Option<Log>, String> 
     }))
 }
 
-/// Each change is coloured by its step: a commit, or the uncommitted
-/// changes. The trees after each step but the last, which is the new
-/// version.
-fn step_trees(log: &Log, old: &Spec, new: &Spec) -> Result<Vec<Tree>, String> {
-    const MAX: usize = 6;
+/// The steps changes are coloured by: the revision each step but the last
+/// ends at, as (full hash, label), and the number of commits of the log in
+/// each step if steps group commits (empty if each commit is a step).
+#[derive(Default)]
+struct Plan {
+    ends: Vec<(String, String)>,
+    commits: Vec<usize>,
+}
+
+fn plan_steps(arg: &StepArg, log: &Log, old: &Spec, new: &Spec) -> Result<Plan, String> {
+    let opt = arg.option();
     let Tree::Git {
-        repo,
-        prefix,
-        rev: Some(from),
+        repo, rev: Some(from), ..
     } = &old.tree
     else {
         unreachable!()
@@ -610,39 +702,188 @@ fn step_trees(log: &Log, old: &Spec, new: &Spec) -> Result<Vec<Tree>, String> {
         .is_ok_and(|s| s.success());
     if !ancestor {
         return Err(format!(
-            "--each-commit needs {} to be an ancestor of {}; to start where they diverge, give --since {}...{}",
+            "{opt} needs {} to be an ancestor of {}; to start where they diverge, give --since {}...{}",
             old.label, new.label, old.label, log.to
         ));
     }
     let h = &log.history;
-    let steps = h.commits.len() + usize::from(h.uncommitted);
-    if steps == 0 {
+    let n = h.commits.len();
+    if n + usize::from(h.uncommitted) == 0 {
         return Err(format!(
-            "no commits from {} to {} change the document, so --each-commit has nothing to colour",
+            "no commits from {} to {} change the document, so {opt} has nothing to colour",
             old.label, new.label
         ));
     }
-    if steps > MAX {
-        return Err(format!(
-            "--each-commit colours at most {MAX} commits, but {steps} commits from {} to {} change the document{}; give a narrower range, such as --since {}",
-            old.label,
-            new.label,
-            if h.uncommitted {
-                " (counting the uncommitted changes)"
+    let at = |cuts: &[usize]| {
+        cuts.iter()
+            .map(|&i| (log.hashes[i].clone(), h.commits[i].hash.clone()))
+            .collect()
+    };
+    match arg {
+        StepArg::EachCommit => {
+            let steps = n + usize::from(h.uncommitted);
+            if steps > MAX_STEPS {
+                return Err(format!(
+                    "--each-commit colours at most {MAX_STEPS} steps, but {steps} commits from {} to {} change the document{}; give a narrower range, such as --since {}, or fewer steps with --steps",
+                    old.label,
+                    new.label,
+                    if h.uncommitted {
+                        " (counting the uncommitted changes)"
+                    } else {
+                        ""
+                    },
+                    h.commits[steps - MAX_STEPS - 1].hash
+                ));
+            }
+            Ok(Plan {
+                ends: at(&(0..steps - 1).collect::<Vec<_>>()),
+                commits: vec![],
+            })
+        }
+        StepArg::Count(k) => {
+            if n < *k {
+                eprintln!(
+                    "note: {n} commits from {} to {} change the document, so each is a step",
+                    old.label, new.label
+                );
+            }
+            let cuts = balanced_cuts(&log.weights, *k);
+            let bounds: Vec<usize> = [0].into_iter().chain(cuts.iter().map(|c| c + 1)).chain([n]).collect();
+            Ok(Plan {
+                ends: at(&cuts),
+                commits: bounds.windows(2).map(|w| w[1] - w[0]).collect(),
+            })
+        }
+        StepArg::Revs(revs) => {
+            if revs.len() >= MAX_STEPS {
+                return Err(format!(
+                    "--steps makes at most {MAX_STEPS} steps, so it takes at most {} revisions",
+                    MAX_STEPS - 1
+                ));
+            }
+            let path = git_text(
+                repo,
+                &[
+                    "rev-list",
+                    "--first-parent",
+                    "--reverse",
+                    &format!("{from}..{}", log.to),
+                ],
+            )?;
+            let path: Vec<&str> = path.lines().collect();
+            // With the working tree or the index as the new version, its last
+            // commit is a step boundary before it.
+            let inside = if matches!(new.tree, Tree::Git { rev: Some(_), .. }) {
+                path.len().saturating_sub(1)
             } else {
-                ""
-            },
-            h.commits[steps - MAX - 1].hash
-        ));
+                path.len()
+            };
+            let mut ends: Vec<(usize, &String)> = vec![];
+            for rev in revs {
+                let hash = git_text(
+                    repo,
+                    &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")],
+                )
+                .map_err(|_| format!("--steps: git: no commit {rev}"))?;
+                let p = path[..inside].iter().position(|c| *c == hash).ok_or_else(|| {
+                    format!(
+                        "--steps: {rev} is not a commit between {} and {} on the first-parent path",
+                        old.label, new.label
+                    )
+                })?;
+                if let Some(&(q, prev)) = ends.last() {
+                    if p == q && rev == prev {
+                        return Err(format!("--steps: {rev} is given twice"));
+                    }
+                    if p == q {
+                        return Err(format!("--steps: {rev} and {prev} are the same commit"));
+                    }
+                    if p < q {
+                        return Err(format!(
+                            "--steps: {rev} comes before {prev}; give the revisions oldest first"
+                        ));
+                    }
+                }
+                ends.push((p, rev));
+            }
+            let mut commits = vec![0; ends.len() + 1];
+            for hash in &log.hashes {
+                let p = path.iter().position(|c| c == hash).unwrap_or(path.len());
+                commits[ends.iter().filter(|(q, _)| *q < p).count()] += 1;
+            }
+            Ok(Plan {
+                ends: ends
+                    .iter()
+                    .map(|(p, rev)| (path[*p].to_string(), rev.to_string()))
+                    .collect(),
+                commits,
+            })
+        }
     }
-    Ok(log.hashes[..steps - 1]
-        .iter()
-        .map(|rev| Tree::Git {
-            repo: repo.clone(),
-            prefix: prefix.clone(),
-            rev: Some(rev.clone()),
-        })
-        .collect())
+}
+
+/// Where to cut commits of the given weights into `n` steps: the index of
+/// the last commit of each step but the last. The cuts make the heaviest step
+/// as light as possible, then the steps as even as possible (least sum of
+/// squares), then come as early as possible. Fewer commits than `n` are a
+/// step each.
+fn balanced_cuts(weights: &[u64], n: usize) -> Vec<usize> {
+    let m = weights.len();
+    if m <= n {
+        return (0..m.saturating_sub(1)).collect();
+    }
+    let mut sum = vec![0u64; m + 1];
+    for (i, w) in weights.iter().enumerate() {
+        sum[i + 1] = sum[i] + w;
+    }
+    // For commits i.. in k steps no heavier than `limit`: the least sum of
+    // squares and the end of the first step, the earliest among equals.
+    let best = |limit: u64| {
+        let mut t = vec![vec![None::<(u64, usize)>; n + 1]; m + 1];
+        for i in (0..m).rev() {
+            let w = sum[m] - sum[i];
+            t[i][1] = (w <= limit).then_some((w * w, m));
+            for k in 2..=n.min(m - i) {
+                for j in i + 1..=m - (k - 1) {
+                    let w = sum[j] - sum[i];
+                    if w > limit {
+                        break;
+                    }
+                    if let Some((rest, _)) = t[j][k - 1]
+                        && t[i][k].is_none_or(|(c, _)| w * w + rest < c)
+                    {
+                        t[i][k] = Some((w * w + rest, j));
+                    }
+                }
+            }
+        }
+        t
+    };
+    let mut limits: Vec<u64> = (0..m)
+        .flat_map(|i| (i + 1..=m).map(move |j| (i, j)))
+        .map(|(i, j)| sum[j] - sum[i])
+        .collect();
+    limits.sort_unstable();
+    limits.dedup();
+    // The heaviest step is as light as possible at the least limit that
+    // admits a split.
+    let (mut lo, mut hi) = (0, limits.len() - 1);
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if best(limits[mid])[0][n].is_some() {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    let t = best(limits[lo]);
+    let (mut cuts, mut i) = (vec![], 0);
+    for k in (2..=n).rev() {
+        let j = t[i][k].unwrap().1;
+        cuts.push(j - 1);
+        i = j;
+    }
+    cuts
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
@@ -914,7 +1155,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match run(args) {
+    match run(*args) {
         Ok(pdf) => {
             println!("{}", pdf.display());
             ExitCode::SUCCESS
@@ -923,5 +1164,19 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::balanced_cuts;
+
+    #[test]
+    fn cuts_balance_the_weight_of_the_steps() {
+        let big_first = [vec![100], vec![1; 9]].concat();
+        assert_eq!(balanced_cuts(&big_first, 3), [0, 4]);
+        assert_eq!(balanced_cuts(&[1; 10], 3), [2, 5]);
+        assert_eq!(balanced_cuts(&[1, 1, 8, 1, 1], 2), [1]);
+        assert_eq!(balanced_cuts(&[5, 5], 3), [0]);
     }
 }

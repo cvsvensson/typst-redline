@@ -529,7 +529,7 @@ impl<'a> Writer<'a> {
         }
         let p = &self.ctx.prefix;
         let history = history
-            .to_typst()
+            .to_typst(old_label, new_label)
             .map_or(String::new(), |h| format!("  history: {h},\n"));
         format!(
             "#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n  bib: {},\n{history}))\n",

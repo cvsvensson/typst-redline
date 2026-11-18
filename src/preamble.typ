@@ -17,9 +17,12 @@
 //   versions are git revisions, history: (commits: array of (hash, date,
 //   subject), oldest first, earlier: number of earlier commits left out,
 //   uncommitted: whether the new version has uncommitted changes, steps:
-//   whether marks are coloured by commit)).
-// With --each-commit, marks take `step: n`: the change is from the n-th
-// commit of the history, or from the uncommitted changes after the last.
+//   whether marks are coloured by step, and with --steps groups: array of
+//   (from, to: revision labels, commits: number of commits of the history
+//   in the step, the uncommitted changes belonging to the last))).
+// With --each-commit or --steps, marks take `step: n`: the change is from
+// the n-th group, or else the n-th commit of the history or the uncommitted
+// changes after the last.
 // redline-step-style(n) gives the style of its marks.
 // With `redline-ins(body, ..args) = body` and `redline-del(..args) = none`
 // the document is the new version unchanged; marks must keep that so.
@@ -313,13 +316,24 @@
 
 #let redline-swatch(st) = box(width: 0.8em, height: 0.8em, fill: st.ins-fill, stroke: 0.6pt + st.ins)
 
-// With --each-commit, each commit's colour, hash and the start of its
-// subject on one line no wider than `width`; hashes alone if subjects do not
-// fit, none if hashes do not.
+#let redline-mono = text.with(font: "DejaVu Sans Mono", size: 0.85em)
+
+// A revision label: a revision in monospace, a name such as "working tree"
+// as text.
+#let redline-rev(label) = if label.contains(" ") { label } else { redline-mono(label) }
+
+// Each step's colour and label on one line no wider than `width`: with
+// --each-commit the commit's hash and the start of its subject, hashes alone
+// if subjects do not fit; with --steps the revision the step ends at. None
+// if that does not fit.
 #let redline-legend(hist, width, size: 7pt) = {
-  let mono = text.with(font: "DejaVu Sans Mono", size: 0.85em)
-  let items = hist.commits.enumerate().map(p => (hist.earlier + p.at(0) + 1, mono(p.at(1).hash), p.at(1).subject.clusters()))
-  if hist.uncommitted { items.push((hist.earlier + hist.commits.len() + 1, [uncommitted], ())) }
+  let mono = redline-mono
+  let items = if "groups" in hist {
+    hist.groups.enumerate().map(p => (p.at(0) + 1, redline-rev(p.at(1).to), ()))
+  } else {
+    hist.commits.enumerate().map(p => (hist.earlier + p.at(0) + 1, mono(p.at(1).hash), p.at(1).subject.clusters()))
+  }
+  if hist.uncommitted and "groups" not in hist { items.push((hist.earlier + hist.commits.len() + 1, [uncommitted], ())) }
   let legend(n) = {
     set text(size: size, fill: luma(90), weight: "regular", style: "normal")
     items.map(((step, hash, subject)) => {
@@ -482,9 +496,41 @@
   if out.len() > 0 { out.join(" ") }
 }
 
+// The steps of --steps, each in the colour of its marks with its range,
+// the date of its last commit, its number of commits and the subjects of
+// the first few.
+#let redline-groups(hist, old, new) = {
+  let shown = 4
+  let start = 0
+  let rows = ()
+  for (i, g) in hist.groups.enumerate() {
+    let st = redline-step-style(i + 1)
+    let commits = hist.commits.slice(start, start + g.commits)
+    start += g.commits
+    let uncommitted = hist.uncommitted and i == hist.groups.len() - 1
+    let count = if g.commits > 0 [#g.commits #if g.commits == 1 [commit] else [commits]]
+    let range = [#redline-rev(g.from)..#redline-rev(g.to)]
+    rows += (redline-swatch(st), ..(range, commits.at(-1, default: (date: [])).date, count).map(text.with(fill: st.ins)))
+    let listed = if commits.len() > shown { commits.slice(0, shown - 1) } else { commits }
+    let lines = listed.map(c => [#redline-mono(c.hash) #c.subject])
+    if listed.len() < commits.len() { lines.push[and #(commits.len() - listed.len()) more] }
+    if uncommitted { lines.push(emph[Uncommitted changes]) }
+    if lines.len() == 0 { lines.push(emph[No changes to the document]) }
+    rows += ([], grid.cell(colspan: 3, text(size: 0.85em, lines.join(linebreak()))))
+  }
+  block(below: 1.5em, {
+    block(below: 0.8em, strong[Steps from #old to #new])
+    set par(justify: false)
+    grid(columns: (auto, auto, auto, 1fr), column-gutter: 0.6em, row-gutter: 0.6em, ..rows)
+  })
+}
+
 // The commits from the old version to the new one, each in the colour of
 // its marks if marks are coloured by commit; none without a history.
-#let redline-commits(hist, old, new) = if hist != none {
+#let redline-commits(hist, old, new) = if hist != none and "groups" in hist {
+  [#metadata(hist)<redline-history>]
+  redline-groups(hist, old, new)
+} else if hist != none {
   let row(step, ..cells) = if hist.steps {
     let st = redline-step-style(step)
     (redline-swatch(st), ..cells.pos().map(text.with(fill: st.ins)))
@@ -515,7 +561,7 @@
     if info.entries.len() == 0 and bib == none { [No changes.] } else if steps {
       let st = st + redline-colours(luma(70))
       let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
-      block(below: 1.5em)[#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the commit that made the change. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Numbers count changed passages.]
+      block(below: 1.5em)[#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the #if "groups" in info.history [step] else [commit] that made the change. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Numbers count changed passages.]
     } else {
       let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
       block(below: 1.5em)[#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Numbers count changed passages.]
@@ -596,7 +642,7 @@
     let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
     let bib = redline-bib(info.bib)
     if info.pairs.len() == 0 { if bib == none [No changes.] } else [
-      Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the commit that made the change]. Bars in the margin mark the changed lines.
+      Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the #if "groups" in hist [step] else [commit] that made the change]. Bars in the margin mark the changed lines.
       #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
     ]
     let at = 2

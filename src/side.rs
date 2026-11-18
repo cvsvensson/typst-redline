@@ -219,7 +219,7 @@ pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history:
         ));
     }
     out.push_str(&format!("  ),\n  bib: {},\n", bib.to_typst()));
-    if let Some(h) = history.to_typst() {
+    if let Some(h) = history.to_typst(old.label, new.label) {
         out.push_str(&format!("  history: {h},\n"));
     }
     out.push_str("))\n");
