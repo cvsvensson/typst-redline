@@ -32,7 +32,7 @@ If your document uses files outside its own folder, such as `#import "../macros.
 ## What is marked
 
 - **Text:** deleted words are struck through in red, new words are highlighted in blue, and a wholly new paragraph is blue. This also works inside headings, list items, captions, bold and emphasized text.
-- **Formulas, figures and drawings** are shown whole: the old one in a dashed red frame, the new one in a blue frame. An old drawing or image is crossed out.
+- **Formulas, figures and drawings** are shown whole: the old one in a dashed red frame, the new one in a blue frame. An old drawing, image or empty shape is crossed out.
 - **Bars in the margin** point to every changed line, dashed for deletions and solid for insertions.
 - **Several files:** changes in files that the document includes or imports are marked too. With git, the old versions of those files, and of images the old text uses, are taken from the old commit.
 - **Code:** a change to code, such as a function body or a `#set` rule, cannot be shown as a mark. The summary page lists it as *changed code not marked*, so no change goes unreported.
@@ -58,7 +58,8 @@ The picture is made from [docs/example-slides/old.typ](docs/example-slides/old.t
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
 - A citation added to or removed from a group such as `@a @b` marks the whole group, because Typst lays the group out as one piece.
 - Entries that appear in, disappear from or change in the bibliography are not marked there. The summary page names them.
-- Pages where your document sets both its own page foreground and background partway through get no margin bars. The summary page lists those pages.
+- Pages where your document or its template sets both its own page foreground and background get no margin bars. The summary page lists those pages.
+- In side-by-side, an inserted or deleted page is shown next to an empty one only when the pages have headings; otherwise it can be paired with a neighbouring page.
 
 ## Styling
 
