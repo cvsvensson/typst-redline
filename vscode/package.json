@@ -32,6 +32,11 @@
           "default": "typst-redline",
           "description": "Path to the typst-redline executable."
         },
+        "typstRedline.typst": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the typst executable, passed as --typst. Empty: typst on PATH."
+        },
         "typstRedline.root": {
           "type": "string",
           "default": "",

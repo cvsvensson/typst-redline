@@ -53,12 +53,13 @@ async function showChanges() {
   const folder = vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.fsPath ?? dir;
   const root = path.resolve(folder, config.get<string>("root") || "");
   const exe = config.get<string>("executable") || "typst-redline";
+  const typst = config.get<string>("typst");
   const pdf = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Typst Redline: changes since ${pick.rev}` },
     () =>
       run(
         exe,
-        [file, "--since", pick.rev, "--root", root],
+        [file, "--since", pick.rev, "--root", root, ...(typst ? ["--typst", typst] : [])],
         dir,
         "Install typst-redline and put it on PATH, or set typstRedline.executable to its full path.",
       ),

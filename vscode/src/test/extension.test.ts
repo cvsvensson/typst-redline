@@ -72,6 +72,19 @@ suite("Show changes since…", () => {
     assert.strictEqual(fs.readFileSync(opened[0].fsPath).subarray(0, 5).toString(), "%PDF-");
   });
 
+  test("the typst setting is passed to the CLI", async () => {
+    await config.update("executable", binary, vscode.ConfigurationTarget.Global);
+    await config.update("typst", "no-such-typst", vscode.ConfigurationTarget.Global);
+    try {
+      await vscode.commands.executeCommand("typstRedline.showChanges");
+    } finally {
+      await config.update("typst", undefined, vscode.ConfigurationTarget.Global);
+    }
+    assert.strictEqual(opened.length, 0);
+    assert.strictEqual(errors.length, 1);
+    assert.match(errors[0], /no-such-typst/);
+  });
+
   test("a missing executable is reported with a hint at the setting", async () => {
     await config.update("executable", "no-such-typst-redline", vscode.ConfigurationTarget.Global);
     await vscode.commands.executeCommand("typstRedline.showChanges");
