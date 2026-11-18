@@ -47,7 +47,7 @@ With the deleted parts removed, the marked document has the same text, layout an
 typst-redline paper.typ --since HEAD~4 --each-commit
 ```
 
-Only the first and the last version are compared, so text that one commit added and a later one removed does not appear. A deleted passage, formula or figure that several commits changed takes the colour of the commit that changed most of it. `--each-commit` does not work with two plain files or with `--layout side-by-side`.
+Only the first and the last version are compared, so text that one commit added and a later one removed does not appear. A deleted passage, formula or figure that several commits changed takes the colour of the commit that changed most of it. `--each-commit` does not work with two plain files or with `--layout side-by-side`, and needs the old revision to be an ancestor of the new one; for a branch, give `--since main...feature`.
 
 ## Slides and side-by-side
 

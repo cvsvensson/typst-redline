@@ -518,6 +518,8 @@ fn repository(spec: &Spec) -> Option<PathBuf> {
 /// git revision and the new one a later revision, the index or the working
 /// tree of the same project. Merged branches count as their merge commit.
 struct Log {
+    /// The new version's revision; HEAD for the index or the working tree.
+    to: String,
     hashes: Vec<String>,
     history: History<'static>,
 }
@@ -571,6 +573,7 @@ fn log(old: &Spec, new: &Spec) -> Result<Option<Log>, String> {
         }
     }
     Ok(Some(Log {
+        to: to.into(),
         hashes,
         history: History {
             commits,
@@ -585,6 +588,24 @@ fn log(old: &Spec, new: &Spec) -> Result<Option<Log>, String> {
 /// version.
 fn step_trees(log: &Log, old: &Spec, new: &Spec) -> Result<Vec<Tree>, String> {
     const MAX: usize = 6;
+    let Tree::Git {
+        repo,
+        prefix,
+        rev: Some(from),
+    } = &old.tree
+    else {
+        unreachable!()
+    };
+    let ancestor = git(repo)
+        .args(["merge-base", "--is-ancestor", from, &log.to])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ancestor {
+        return Err(format!(
+            "--each-commit needs {} to be an ancestor of {}; to start where they diverge, give --since {}...{}",
+            old.label, new.label, old.label, log.to
+        ));
+    }
     let h = &log.history;
     let steps = h.commits.len() + usize::from(h.uncommitted);
     if steps == 0 {
@@ -606,9 +627,6 @@ fn step_trees(log: &Log, old: &Spec, new: &Spec) -> Result<Vec<Tree>, String> {
             h.commits[steps - MAX - 1].hash
         ));
     }
-    let Tree::Git { repo, prefix, .. } = &old.tree else {
-        unreachable!()
-    };
     Ok(log.hashes[..steps - 1]
         .iter()
         .map(|rev| Tree::Git {
