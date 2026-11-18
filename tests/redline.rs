@@ -1137,8 +1137,9 @@ fn each_change_is_marked_with_the_commit_that_made_it() {
     )
     .files[0]
         .1;
-    for mark in ["step: 1)[lazy]", "step: 1)[quick]", "step: 2)[red]"] {
-        assert!(out.contains(mark), "{out}");
+    let marks = steps_of_marks(out);
+    for (step, body) in [(1, "lazy"), (1, "quick"), (2, "red")] {
+        assert!(marks.contains(&(step, body.into())), "{out}");
     }
 }
 
@@ -1160,6 +1161,18 @@ fn redline_steps(old: &str, mid: &str, new: &str) -> Redline {
         ..History::default()
     };
     redline(&v(&old), &v(&new), FULL, &history)
+}
+
+/// The step and the body of each mark in marked source.
+fn steps_of_marks(src: &str) -> Vec<(u8, String)> {
+    src.split("#redline-")
+        .skip(1)
+        .filter_map(|m| {
+            let (args, rest) = m.split_once(")[")?;
+            let step = args.split("step: ").nth(1)?.split([',', ' ']).next()?;
+            Some((step.parse().ok()?, rest.split("];").next()?.to_string()))
+        })
+        .collect()
 }
 
 #[test]
@@ -1204,7 +1217,10 @@ fn each_commit_compiles_with_the_commits_coloured() {
         &["doc/main.typ", "--since", "c-alpha", "--each-commit"],
         "main.typ",
     );
-    assert!(src.contains("step: 2)[gamma"), "{src}");
+    let gamma = steps_of_marks(&src)
+        .into_iter()
+        .any(|(s, b)| s == 2 && b.starts_with("gamma"));
+    assert!(gamma, "{src}");
 }
 
 #[test]
