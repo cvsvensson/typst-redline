@@ -2,11 +2,17 @@
 
 `typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document: a PDF of the new version with deleted text struck out and new text highlighted. It does for Typst what `latexdiff` does for LaTeX. AI agents wrote this tool.
 
-<img src="docs/example.png" width="560" alt="A page with a changed title, sentence, formula and drawing, each marked">
-
-The picture is page 2 of the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). Page 1 is a summary that explains the marks and lists the sections that changed and, when the two versions come from git, the commits between them:
+The two pictures are the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). Page 1 is a summary that explains the marks and lists the sections that changed. When the two versions come from git, it also lists the commits between them.
 
 <img src="docs/example-summary.png" width="560" alt="The summary page: a legend and the list of changed sections">
+
+Page 2 is the document with the changes marked:
+
+<img src="docs/example.png" width="560" alt="A page with a changed sentence, formula and drawing and a new paragraph, each marked">
+
+With `--layout side-by-side`, the old page is shown next to the new one instead:
+
+<img src="docs/example-side-by-side.png" width="800" alt="The old page with its deletions marked, next to the new page with its insertions marked">
 
 ## Install
 
@@ -52,15 +58,13 @@ Only the first and the last version are compared, so text that one commit added 
 
 ## Slides and side-by-side
 
-Deleted content takes room, so a full slide can overflow. `--layout side-by-side` puts each changed page of the old version next to the same page of the new version, and leaves out pages without changes. It works for any document and needs Typst 0.14 or later.
+`--layout side-by-side` puts each changed page of the old version next to the same page of the new version, as in the third picture above, and leaves out pages without changes. The first page of the PDF lists which pages are shown and how many were left out. It works for any document and needs Typst 0.14 or later.
 
 ```sh
 typst-redline talk.typ --since HEAD~1 --layout side-by-side
 ```
 
-<img src="docs/example-slides.png" width="800" alt="An old slide with deletions struck, next to the new slide with insertions highlighted">
-
-The picture is made from [docs/example-slides/old.typ](docs/example-slides/old.typ) and [docs/example-slides/new.typ](docs/example-slides/new.typ). The first page of that PDF lists which pages are shown and how many were left out.
+This is the layout to use for slides. In the default layout the deleted content is shown on the same page as the new content, so the page holds more than it was designed for; a slide has a fixed size, and a full one overflows. Side by side, each page holds only the content of its own version.
 
 ## Known problems
 
