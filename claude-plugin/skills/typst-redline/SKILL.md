@@ -20,7 +20,7 @@ The document is the `.typ` file the user names. Otherwise, take the one that is 
   - What changed since the user last reviewed it: `--since reviewed`; once they have read it, `typst-redline <file.typ> --mark-reviewed` records the last commit as reviewed.
 - `typst-redline --help` lists the rest.
 
-When the user only asks for the changes, the redline alone is enough: it is the new version with changes marked. Moved text appears once, at its new place, with a grey bracket in the margin; its old place is a single grey line linking there; edits made while moving are marked as usual. `--no-moves` shows it as deleted and inserted instead.
+When the user only asks for the changes, the redline alone is enough: it is the new version with changes marked. Moved text appears once, at its new place, with a grey bracket and a "moved" note in the margin; its old place is a single grey line with an arrow, linking there; edits made while moving are marked as usual. `--no-moves` shows it as deleted and inserted instead.
 
 Diagnostics go to stderr. Pass on to the user any note that changes were *not marked* or that a fallback was used. If the first page lists no changes, say so and don't send an empty redline.
 

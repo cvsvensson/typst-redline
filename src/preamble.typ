@@ -87,11 +87,11 @@
 
 // Each mark is bracketed by two of these; `redline-bars` draws a bar in the
 // margin from the start of one to its end, `dy` beyond the tags. The end tag
-// records the width of the column, cell or other container it is in and the
-// column gutter in effect; the word joiner keeps a line break from
-// separating it from the mark.
+// records the width of the column, cell or other container it is in, the
+// column gutter in effect and the number of page columns; the word joiner
+// keeps a line break from separating it from the mark.
 #let redline-tag(kind, dy, width: none, step: none) = if kind != "end" or width != none {
-  [#metadata((kind, dy, width, if width != none { columns.gutter }, step))<redline-tag>]
+  [#metadata((kind, dy, width, if width != none { columns.gutter }, step, if width != none { page.columns }))<redline-tag>]
 } else [\u{2060}#box(layout(size => redline-tag(kind, dy, width: size.width)))]
 
 // Spaces at the edges of a mark go outside it: a struck space looks like a
@@ -299,9 +299,6 @@
   [#metadata((kind, redline-hash(if kind == "ins" { 1 } else { 2 }, body)))<redline-change>]
 }
 
-// The colour of a move's bracket and line.
-#let redline-move-colour(step) = if step == none { redline-style.move } else { redline-step-style(step).ins }
-
 // A move is bracketed by tags of its own, because it encloses ordinary
 // marks: "to" at the start of its new place and "end" at its end, which
 // records its container as redline-tag does; "from" at the line at its old
@@ -314,7 +311,7 @@
     let tag = [#metadata(v)#label("redline-move-" + kind + "-" + str(id))]
     if block { tag } else { box(tag) }
   } else {
-    let tag = layout(size => [#metadata(v + (width: size.width, gutter: columns.gutter))<redline-move>])
+    let tag = layout(size => [#metadata(v + (width: size.width, gutter: columns.gutter, columns: page.columns))<redline-move>])
     if block { place(tag) } else [\u{2060}#box(tag)]
   }
 }
@@ -334,13 +331,14 @@
 
 // The line at the old place of moved text, linked to its new place: the
 // first words of what moved, as many as fit on one line. It takes the place
-// of a paragraph: the paragraph spacing above, about half of it below.
+// of a paragraph, with the paragraph spacing above and below. Its arrow has
+// the colour of deletions.
 #let redline-move-line(m, note, step) = {
   parbreak()
   context {
     let spacing = if sys.version >= version(0, 12, 0) { par.spacing } else { 1.2em }
-    block(above: spacing, below: spacing / 2, width: 100%, layout(size => {
-      set text(size: 0.85em, fill: redline-move-colour(step), hyphenate: false)
+    block(above: spacing, below: spacing, width: 100%, layout(size => {
+      set text(size: 0.85em, fill: redline-style.move, hyphenate: false)
       redline-move-tag("from", m.id, step: step)
       let pieces = redline-pieces(redline-neutral(note))
       let style = if m.heading { strong } else { emph }
@@ -348,7 +346,7 @@
       let head = if to == none [Moved:] else {
         let down = m.at("down", default: true)
         let where = if to.location().page() != here().page() [to p. #redline-page-of(to.location())] else if down [below] else [above]
-        [#if down { sym.arrow.b } else { sym.arrow.t } Moved #where:]
+        [#text(fill: redline-step-style(step).del, if down { sym.arrow.b } else { sym.arrow.t }) Moved #where:]
       }
       let counts = ((m.at("paragraphs", default: 0), "paragraph"), (m.at("items", default: 0), "item")).filter(c => c.at(0) > 0)
       let count = if counts.map(c => c.at(0)).sum(default: 0) + int(m.heading) > 1 {
@@ -500,13 +498,22 @@
   // narrowed to fit. Any other container's left edge is unknown and text can
   // run up to it, so its bar goes in a margin: the right one if the
   // container cannot reach the left edge of the text area but can reach its
-  // right edge, such as a right-hand cell.
-  let bar-x(s, e, cw, g, lane) = {
+  // right edge, such as a right-hand cell. A container narrower than a page
+  // column, such as a list item, is in one of the `n` page columns.
+  let column(s, e, cw, g, n) = {
     let cw = if cw == none or cw <= 0pt { body } else { cw }
     let g = if g == none { 0pt } else { absolute(g, body) }
     let q = (body + g) / (cw + g)
     let cols = if calc.abs(q - calc.round(q)) < 0.001 { int(calc.round(q)) } else { 1 }
+    if cols == 1 and n != none and n > 1 {
+      cols = n
+      cw = (body - (n - 1) * g) / n
+    }
     let k = calc.clamp(calc.floor(((if s.page == pg { s.x } else { e.x }) - left) / (cw + g)), 0, cols - 1)
+    (k, cols, cw, g)
+  }
+  let bar-x(s, e, cw, g, n, lane) = {
+    let (k, cols, cw, g) = column(s, e, cw, g, n)
     let at = calc.min(s.x, e.x) - left
     if cols > 1 and k > 0 {
       let l = calc.max(0pt, calc.min(st.lane, (g - st.bar-width) / 2))
@@ -537,7 +544,7 @@
       let y1 = if e.page == pg { e.y + b.value.at(1).to-absolute() } else { bottom }
       let ins = a.value.at(0) == "ins"
       // Deletions are one lane further out.
-      let (x, ..) = bar-x(s, e, b.value.at(2, default: none), b.value.at(3, default: none), if ins { 0 } else { 1 })
+      let (x, ..) = bar-x(s, e, b.value.at(2, default: none), b.value.at(3, default: none), b.value.at(5, default: none), if ins { 0 } else { 1 })
       let sst = redline-step-style(a.value.at(4, default: none))
       bars.push((x, y0 + 1pt, y1 - 1pt, ins, if ins { sst.ins } else { sst.del }))
     }
@@ -556,10 +563,22 @@
     let stroke = (paint: paint, thickness: st.bar-width, dash: if ins { none } else { (3pt, 2pt) })
     place(dx: x, dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
   }
-  // A move's bracket, in a lane outside the bars, from the start of its new
-  // place to its end, linked to its old place. Next to its start, in the
-  // free part of the lane, the longest note that fits says where it came
-  // from. End tags come in document order, each after its start tag.
+  // A move's bracket, from the start of its new place to its end, linked to
+  // its old place, with the x of the far side of the free space for its
+  // note. In the first column it is in a lane outside the bars, in the last
+  // of several in the right margin, and in a column between them close to
+  // the text, inside the bars, without a note: the gutter is the other
+  // column's too. End tags come in document order, each after its start tag.
+  let bracket-x(s, e, cw, g, n) = {
+    let (k, cols, cw, g) = column(s, e, cw, g, n)
+    if cols > 1 and k == cols - 1 {
+      let x = left + body + calc.min(st.bar-gap, right / 2) / 2
+      (x, true, w)
+    } else if cols > 1 and k > 0 {
+      let x = left + k * (cw + g) - calc.min(3.5pt, g / 4)
+      (x, false, x - 5pt)
+    } else { bar-x(s, e, cw, g, n, 2.5) }
+  }
   let ends = query(<redline-move>)
   let (lo, hi) = (0, ends.len())
   while lo < hi {
@@ -572,18 +591,19 @@
     if a == none { continue }
     let (s, e) = (a.location().position(), t.location().position())
     if s.page > pg { break }
-    let y0 = if s.page < pg { top } else { s.y - (if a.value.block { 0.1em } else { 0.8em }).to-absolute() }
-    let y1 = if e.page > pg { bottom } else { e.y + (if v.block { 0em } else { 0.3em }).to-absolute() }
-    let stroke = st.move-stroke + redline-move-colour(a.value.step)
+    // Brackets of moves that follow each other stay a little apart.
+    let y0 = if s.page < pg { top } else { s.y - (if a.value.block { 0.1em } else { 0.8em }).to-absolute() + 2.5pt }
+    let y1 = if e.page > pg { bottom } else { e.y + (if v.block { 0em } else { 0.3em }).to-absolute() - 2.5pt }
+    let stroke = st.move-stroke + st.move
     // The end of a line of text can reach past the column; its column is
     // the one it ends.
     let e-in = if v.block { e } else { (page: e.page, x: e.x - 2pt, y: e.y) }
     // A move from one column into the next is bracketed in both.
-    let lane = 2.5
-    let (xs, xe) = (bar-x(s, s, v.width, v.gutter, lane), bar-x(e-in, e-in, v.width, v.gutter, lane))
+    let x-of(p, q) = bracket-x(p, q, v.width, v.gutter, v.at("columns", default: none))
+    let (xs, xe) = (x-of(s, s), x-of(e-in, e-in))
     let pieces = if s.page == pg and e.page == pg and xs.at(0) != xe.at(0) {
       ((xs, y0, bottom, true, false), (xe, top, y1, false, true))
-    } else { ((bar-x(s, e-in, v.width, v.gutter, lane), y0, y1, s.page == pg, e.page == pg),) }
+    } else { ((x-of(s, e-in), y0, y1, s.page == pg, e.page == pg),) }
     for ((x, right-side, _), from, to, first, last) in pieces {
       let tick = if right-side { -2.5pt } else { 2.5pt }
       place(dx: x, dy: from, line(angle: 90deg, length: calc.max(to - from, 0pt), stroke: stroke))
@@ -600,11 +620,12 @@
     let notes = if other != none and other.location().page() != pg {
       let n = redline-page-of(other.location())
       let arrow = if other.location().page() < pg { sym.arrow.t } else { sym.arrow.b }
-      ([moved from p. #n #arrow], [p. #n #arrow])
+      ([moved from p. #n #arrow], [moved#linebreak()from p. #n #arrow], [moved])
     } else { ([moved],) }
     let free = if right-side { edge - 2pt - x - 3pt } else { x - 3pt - edge - 2pt }
-    let style = text.with(size: 6.5pt, fill: redline-move-colour(a.value.step), top-edge: "cap-height", bottom-edge: "baseline", hyphenate: false)
-    let note = notes.map(style).find(n => measure(n).width <= free)
+    let sst = redline-step-style(a.value.step)
+    let style = text.with(size: 6.5pt, fill: if redline-side == "old" { sst.del } else { sst.ins }, top-edge: "cap-height", bottom-edge: "baseline", hyphenate: false)
+    let note = notes.map(n => { set par(leading: 0.4em); style(n) }).find(n => measure(n).width <= free)
     if note != none {
       let note = if other != none { link(other.location(), note) } else { note }
       place(dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0, box(width: free, align(if right-side { start } else { end }, note)))
@@ -709,14 +730,14 @@
 
 #let redline-move-bracket = {
   let s = redline-style.move-stroke + redline-style.move
-  box(width: 4pt, height: 0.8em, {
-    place(dx: 0.5pt, line(angle: 90deg, length: 0.8em, stroke: s))
+  box(width: 4pt, height: 0.65em, {
+    place(dx: 0.5pt, line(angle: 90deg, length: 0.65em, stroke: s))
     place(dx: 0.5pt, line(length: 2.5pt, stroke: s))
-    place(dx: 0.5pt, dy: 0.8em, line(length: 2.5pt, stroke: s))
+    place(dx: 0.5pt, dy: 0.65em, line(length: 2.5pt, stroke: s))
   })
 }
 
-#let redline-move-legend = [Moved text is shown once, at its new place, with a grey bracket #redline-move-bracket in the margin; a #text(fill: redline-style.move)[grey #sym.arrow.b line] at its old place links to it. Edits made while moving are marked as usual.]
+#let redline-move-legend(st) = [Moved text is shown once, unmarked at its new place, with a grey bracket #redline-move-bracket and a #text(fill: st.ins, size: 0.8em)[moved] note in the margin; at its old place a #text(fill: redline-style.move)[grey line] with an arrow #text(fill: st.del, sym.arrow.b) names its first words and links to it. Edits made while moving are marked as usual.]
 
 #let redline-summary(info) = if redline-side == none {
   let st = redline-style
@@ -728,10 +749,10 @@
     if info.entries.len() == 0 and bib == none { [No changes.] } else if steps {
       let st = st + redline-colours(luma(70))
       let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
-      block(below: 1.5em)[#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the #if "groups" in info.history [step] else [commit] that made the change. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend] Numbers count changed passages.]
+      block(below: 1.5em)[#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the #if "groups" in info.history [step] else [commit] that made the change. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend(st)] Numbers count changed passages.]
     } else {
       let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
-      block(below: 1.5em)[#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend] Numbers count changed passages.]
+      block(below: 1.5em)[#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend(st)] Numbers count changed passages.]
     }
     redline-commits(info.at("history", default: none), info.old, info.new)
     if bib != none { block(below: 1.5em, bib) }
@@ -812,7 +833,7 @@
     let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
     let bib = redline-bib(info.bib)
     if info.pairs.len() == 0 { if bib == none [No changes.] } else [
-      Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the #if "groups" in hist [step] else [commit] that made the change]. Bars in the margin mark the changed lines.#if info.at("moved", default: false) [ Moved text has a grey bracket #redline-move-bracket in the margin on both sides; edits made while moving are marked as usual.]
+      Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the #if "groups" in hist [step] else [commit] that made the change]. Bars in the margin mark the changed lines.#if info.at("moved", default: false) [ Moved text has a grey bracket #redline-move-bracket and a #text(size: 0.8em)[moved] note in the margin on both sides; edits made while moving are marked as usual.]
       #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
     ]
     let at = 2
