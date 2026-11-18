@@ -344,8 +344,8 @@
 #let redline-ins(body, block: false, step: none, move: none) = {
   if move != none {
     let end = move.at("end", default: false)
-    if redline-side != none and not end { redline-side-mark("ins", move.key) }
-    return redline-move-tag(if end { "end" } else { "to" }, move.id, step: step, block: move.block)
+    let side = if redline-side != none and not end { redline-side-mark("ins", move.key) }
+    return side + redline-move-tag(if end { "end" } else { "to" }, move.id, step: step, block: move.block)
   }
   let st = redline-step-style(step)
   if redline-side != none { redline-side-mark("ins", body) }
@@ -542,15 +542,19 @@
     place(dx: x, dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
     if s.page == pg { place(dx: x, dy: y0, line(length: tick, stroke: stroke)) }
     if e.page == pg { place(dx: x, dy: y1, line(length: tick, stroke: stroke)) }
+    // On a side of the side-by-side layout the other end is not shown.
+    let note = if redline-side != none and a.value.kind == "to" [moved]
     let other = redline-move-find(if a.value.kind == "to" { "from" } else { "to" }, v.id)
-    if other == none { continue }
-    let loc = other.location()
-    place(dx: x - calc.max(-tick, 0pt) - 1pt, dy: y0, link(loc, box(width: calc.abs(tick) + 2pt, height: calc.max(y1 - y0, 1pt))))
-    if a.value.kind == "to" and s.page == pg and (redline-side != none or loc.page() != pg) {
-      let up = loc.page() < pg or loc.page() == pg and loc.position().y < s.y
-      let note = text(size: 6.5pt, fill: redline-move-colour(a.value.step), top-edge: "cap-height", bottom-edge: "baseline",
-        if redline-side != none [moved] else [moved from\ p. #redline-page-of(loc) #if up { sym.arrow.t } else { sym.arrow.b }])
-      let note = link(loc, note)
+    if other != none {
+      let loc = other.location()
+      place(dx: x - calc.max(-tick, 0pt) - 1pt, dy: y0, link(loc, box(width: calc.abs(tick) + 2pt, height: calc.max(y1 - y0, 1pt))))
+      if a.value.kind == "to" and loc.page() != pg {
+        let up = loc.page() < pg
+        note = link(loc)[moved from\ p. #redline-page-of(loc) #if up { sym.arrow.t } else { sym.arrow.b }]
+      }
+    }
+    if note != none and s.page == pg {
+      let note = text(size: 6.5pt, fill: redline-move-colour(a.value.step), top-edge: "cap-height", bottom-edge: "baseline", note)
       if right-side {
         place(dx: x + 3pt, dy: y0, box(width: calc.max(w - x - 3pt, 0pt), align(start, note)))
       } else {

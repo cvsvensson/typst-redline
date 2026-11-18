@@ -1199,6 +1199,28 @@ fn side_by_side_shows_changed_pages() {
 }
 
 #[test]
+fn side_by_side_shows_a_pure_move() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-move");
+    for side in ["old", "new"] {
+        let src = read_fixture("moved-paragraph", side, "main.typ").unwrap();
+        std::fs::write(dir.join(format!("{side}.typ")), src).unwrap();
+    }
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let pdf =
+        String::from_utf8_lossy(&std::fs::read(dir.join("out.pdf")).unwrap()).replace("/Type /Page", "/Type/Page");
+    let pages = pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count();
+    // The summary and the pages that show the move.
+    assert_eq!(pages, 2);
+}
+
+#[test]
 fn side_by_side_needs_the_preamble_function() {
     let dir = temp_dir("side-by-side-preamble");
     std::fs::write(dir.join("old.typ"), "Old.").unwrap();
@@ -1336,6 +1358,30 @@ fn paragraph_inserted_in_two_steps_keeps_its_lines() {
     let new = render("two-steps-new", &[("main.typ".into(), new)]).unwrap();
     let height = |png: &[u8]| u32::from_be_bytes(png[20..24].try_into().unwrap());
     assert_eq!(height(&marked[1]), height(&new[0]), "{}", r.files[0].1);
+}
+
+#[test]
+fn move_is_marked_with_the_commit_that_made_it() {
+    let old = read_fixture("moved-paragraph", "old", "main.typ").unwrap();
+    let mid = read_fixture("moved-paragraph", "new", "main.typ").unwrap();
+    let new = mid.replace("dawn", "dusk");
+    let (old, mid, new) = (
+        |_: &str| Some(old.clone().into_bytes()),
+        |_: &str| Some(mid.clone().into_bytes()),
+        |_: &str| Some(new.clone().into_bytes()),
+    );
+    let v = |read| Version {
+        label: "v".into(),
+        entry: "main.typ".into(),
+        read,
+    };
+    let history = History {
+        steps: Some(vec![v(&mid)]),
+        ..History::default()
+    };
+    let out = &redline(&v(&old), &v(&new), FULL, &history).files[0].1;
+    assert_eq!(out.matches("), step: 1)[").count(), 3, "{out}");
+    assert!(out.contains("step: 2)[dusk]"), "{out}");
 }
 
 #[test]
