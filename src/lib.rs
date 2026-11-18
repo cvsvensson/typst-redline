@@ -351,10 +351,10 @@ fn normalize(s: &str) -> String {
 
 impl History<'_> {
     /// The dictionary the preamble takes, with the latest commits if there
-    /// are many; `None` if there is nothing to list.
+    /// are many; `None` without commits or steps.
     pub(crate) fn to_typst(&self) -> Option<String> {
         const SHOWN: usize = 10;
-        if self.commits.is_empty() && !self.uncommitted {
+        if self.commits.is_empty() && self.steps.is_none() {
             return None;
         }
         let earlier = self.commits.len().saturating_sub(SHOWN);
