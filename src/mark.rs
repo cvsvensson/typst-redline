@@ -349,8 +349,11 @@ impl<'a> Writer<'a> {
         let (Some(last), steps) = (self.ctx.last_step(), self.tok_steps(toks, ChangeKind::Ins)) else {
             return self.mark(ChangeKind::Ins, args, self.content(toks, ChangeKind::Ins), toks);
         };
+        let runs: Vec<&[u8]> = steps.chunk_by(|a, b| a == b).collect();
+        // Runs of several steps are parts of one block, each laid out inline.
+        let args = if runs.len() > 1 { "" } else { args };
         let mut i = 0;
-        for run in steps.chunk_by(|a, b| a == b) {
+        for run in runs {
             let (lead, core, trail) = trim_spaces(&toks[i..i + run.len()]);
             i += run.len();
             self.out.push_str(&lead);
