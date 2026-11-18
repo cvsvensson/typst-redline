@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use typst_redline::{
-    Bib, Change, ChangeKind, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Side, Version, composite,
-    pair_pages, redline,
+    Bib, Change, ChangeKind, History, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Side, Version,
+    composite, pair_pages, redline,
 };
 
 const FULL: Options = Options {
@@ -78,7 +78,7 @@ fn generate(name: &str, preamble: &str, opts: Options) -> Run {
         entry: "main.typ".into(),
         read,
     };
-    let r = redline(&v("old", &read_old), &v("new", &read_new), opts);
+    let r = redline(&v("old", &read_old), &v("new", &read_new), opts, &History::default());
     // The new tree, the old-only files, the old tree if asked for, then the
     // overlay.
     let mut files = tree(name, "new");
@@ -288,7 +288,7 @@ fn page_break_inserted_with_a_slide_is_part_of_it() {
         entry: "main.typ".into(),
         read,
     };
-    let lone = redline(&v(&old), &v(&new), FULL);
+    let lone = redline(&v(&old), &v(&new), FULL, &History::default());
     assert!(lone.changes.iter().any(|c| c.kind == ChangeKind::Unmarked));
 }
 
@@ -565,7 +565,7 @@ fn computed_include_path_is_reported() {
         entry: "main.typ".into(),
         read: &read,
     };
-    assert_eq!(redline(&v, &v, FULL).warnings.len(), 1);
+    assert_eq!(redline(&v, &v, FULL, &History::default()).warnings.len(), 1);
 }
 
 // CLI
@@ -917,7 +917,7 @@ fn side_by_side_summary_lists_bibliography_changes() {
         added: vec!["c".into()],
         ..Bib::default()
     };
-    assert!(composite(&side, &side, &[], &bib).contains("added: (\"c\",)"));
+    assert!(composite(&side, &side, &[], &bib, &History::default()).contains("added: (\"c\",)"));
 }
 
 /// Whether the typst on PATH is older than the side-by-side layout needs.
@@ -1011,4 +1011,21 @@ fn side_by_side_needs_the_preamble_function() {
         out.status.code() == Some(1) && stderr.contains("does not define redline-side-by-side"),
         "{stderr}"
     );
+}
+
+#[test]
+fn summary_lists_the_commits_since_the_old_revision() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("commit-list", &["alpha", "beta", "gamma"]);
+    std::fs::write(dir.join("doc/main.typ"), doc("delta")).unwrap();
+    let src = marked(&dir, &["doc/main.typ", "--since", "c-alpha"], "main.typ");
+    let subjects: Vec<&str> = src
+        .split("subject: ")
+        .skip(1)
+        .map(|s| s.split(')').next().unwrap())
+        .collect();
+    assert_eq!(subjects, ["\"beta\"", "\"gamma\""], "{src}");
+    assert!(src.contains("uncommitted: true"), "{src}");
 }

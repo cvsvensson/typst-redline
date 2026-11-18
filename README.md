@@ -4,7 +4,7 @@
 
 <img src="docs/example.png" width="560" alt="A page with a changed title, sentence, formula and drawing, each marked">
 
-The picture is page 2 of the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). Page 1 is a summary that explains the marks and lists the sections that changed:
+The picture is page 2 of the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). Page 1 is a summary that explains the marks and lists the sections that changed and, when the two versions come from git, the commits between them:
 
 <img src="docs/example-summary.png" width="560" alt="The summary page: a legend and the list of changed sections">
 

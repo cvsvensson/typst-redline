@@ -12,7 +12,10 @@
 //   ins, del: numbers of changes, entries: array of (file, level, target:
 //   label or none, title, count, deleted, new, code: array of changed code
 //   that is not marked), bib: (added, removed, changed: arrays of citation
-//   keys whose bibliography entry is new, gone or edited)).
+//   keys whose bibliography entry is new, gone or edited), and if the
+//   versions are git revisions, history: (commits: array of (hash, date,
+//   subject), oldest first, earlier: number of earlier commits left out,
+//   uncommitted: whether the new version has uncommitted changes)).
 // With `redline-ins(body, ..args) = body` and `redline-del(..args) = none`
 // the document is the new version unchanged; marks must keep that so.
 // For the side-by-side layout the binary compiles the marked files with
@@ -403,6 +406,18 @@
   if bib.len() > 0 [Bibliography entries, not marked in the bibliography: #bib.map(p => [#p.at(0): #p.at(1).map(raw).join(", ")]).join("; ").]
 }
 
+// The commits from the old version to the new one; none without a
+// history.
+#let redline-commits(hist, old, new) = if hist != none {
+  let rows = hist.commits.map(c => (raw(c.hash), c.date, c.subject))
+  if hist.uncommitted { rows.push(([], [], emph[Uncommitted changes])) }
+  block(below: 1.5em, {
+    block(below: 0.8em, strong[Commits from #old to #new])
+    if hist.earlier > 0 { block(emph[#hist.earlier earlier commits, not listed]) }
+    grid(columns: (auto, auto, 1fr), column-gutter: 0.6em, row-gutter: 0.6em, ..rows.flatten())
+  })
+}
+
 // A line of changed code that is not marked, shortened.
 #let redline-code(text) = {
   let t = text.clusters()
@@ -419,6 +434,7 @@
       let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
       block(below: 1.5em)[#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Numbers count changed passages.]
     }
+    redline-commits(info.at("history", default: none), info.old, info.new)
     if bib != none { block(below: 1.5em, bib) }
     context {
       let unbarred = query(<redline-unbarred>).map(m => m.value).flatten()
@@ -518,6 +534,7 @@
     }
     let bib = redline-bib(info.bib)
     if bib != none { block(bib) }
+    redline-commits(info.at("history", default: none), o.label, n.label)
     for side in (o, n) {
       if side.unbarred.len() > 0 { block[Changes on these pages of #name(side) have no bars in the margin, because the document sets its own page foreground and background there: #pages(side.unbarred).] }
     }

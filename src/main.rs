@@ -7,7 +7,8 @@ use std::process::{Command, ExitCode, Output};
 
 use tree::{Tree, git, output};
 use typst_redline::{
-    Anchor, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version, composite, redline,
+    Anchor, Commit, History, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version, composite,
+    redline,
 };
 
 const USAGE: &str = "\
@@ -314,8 +315,9 @@ fn run(a: Args) -> Result<PathBuf, String> {
         read,
     };
     let (old_v, new_v) = (version(&old, &read_old), version(&new, &read_new));
+    let history = log(&old, &new)?.unwrap_or_default();
 
-    let mut result = redline(&old_v, &new_v, LADDER[0].0);
+    let mut result = redline(&old_v, &new_v, LADDER[0].0, &history);
     for w in &result.warnings {
         eprintln!("warning: {w}");
     }
@@ -347,13 +349,13 @@ fn run(a: Args) -> Result<PathBuf, String> {
     };
     for (i, (opts, note)) in LADDER.into_iter().enumerate() {
         if i > 0 {
-            result = redline(&old_v, &new_v, opts);
+            result = redline(&old_v, &new_v, opts, &history);
         }
         write(dir, &result.files)?;
         let out = if !a.side_by_side {
             typst(&a, dir, "compile", &[&dir.join(&new.entry), &tmp])?
         } else {
-            let back = redline(&new_v, &old_v, opts);
+            let back = redline(&new_v, &old_v, opts, &History::default());
             if i == 0 {
                 stage(&old_root, &new, &old, &back)?;
                 write(&old_root, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
@@ -373,7 +375,7 @@ fn run(a: Args) -> Result<PathBuf, String> {
                 eprintln!("note: {note}, because the full proof failed to compile ({first_error})");
             }
             if a.side_by_side {
-                compose(&a, dir, sides, (&old.label, &new.label), &result, &tmp)?;
+                compose(&a, dir, sides, (&old.label, &new.label), &result, &history, &tmp)?;
             } else if ["foreground", "background"]
                 .iter()
                 .all(|w| result.files.iter().any(|(_, s)| s.contains(w)))
@@ -419,6 +421,66 @@ fn run(a: Args) -> Result<PathBuf, String> {
         " (rerun with --keep-typ to inspect the generated source)"
     };
     Err(format!("typst compile failed{hint}"))
+}
+
+/// The commits from the old version to the new one that touch the project,
+/// oldest first; `None` unless the old version is a git revision and the new
+/// one a later revision, the index or the working tree of the same project.
+/// Merged branches count as their merge commit.
+fn log(old: &Spec, new: &Spec) -> Result<Option<History>, String> {
+    let Tree::Git {
+        repo,
+        prefix,
+        rev: Some(from),
+    } = &old.tree
+    else {
+        return Ok(None);
+    };
+    let paths = if prefix.is_empty() { "." } else { prefix.as_str() };
+    let changed =
+        |args: &[&str]| -> Result<bool, String> { Ok(!output(git(repo).args(args).args(["--", paths]))?.is_empty()) };
+    let (to, uncommitted) = match &new.tree {
+        Tree::Git {
+            repo: r,
+            prefix: p,
+            rev,
+        } if r == repo && p == prefix => match rev {
+            Some(to) => (to.as_str(), false),
+            None => ("HEAD", changed(&["diff", "--cached", "--name-only", "HEAD"])?),
+        },
+        Tree::Dir(root) if same_dir(root, &repo.join(prefix)) => {
+            ("HEAD", changed(&["status", "--porcelain", "--untracked-files=no"])?)
+        }
+        _ => return Ok(None),
+    };
+    let out = output(git(repo).args([
+        "log",
+        "--first-parent",
+        "--reverse",
+        "--date=short",
+        "--format=%h%x1f%ad%x1f%s",
+        &format!("{from}..{to}"),
+        "--",
+        paths,
+    ]))?;
+    let mut commits = vec![];
+    for line in String::from_utf8_lossy(&out).lines() {
+        let f: Vec<&str> = line.splitn(3, '\x1f').collect();
+        if let [hash, date, subject] = f[..] {
+            commits.push(Commit {
+                hash: hash.into(),
+                date: date.into(),
+                subject: subject.into(),
+            });
+        }
+    }
+    Ok(Some(History { commits, uncommitted }))
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    std::fs::canonicalize(a)
+        .ok()
+        .is_some_and(|a| std::fs::canonicalize(b).ok() == Some(a))
 }
 
 /// The output PDF: `-o`, or `<name>.redline.pdf` next to the new file. It
@@ -548,6 +610,7 @@ fn compose(
     sides: [(&Path, &String, &str, &str); 2],
     labels: (&str, &str),
     result: &Redline,
+    history: &History,
     to: &Path,
 ) -> Result<(), String> {
     type Layout = (usize, Vec<usize>, Vec<Placed>, Vec<Anchor>);
@@ -608,6 +671,7 @@ fn compose(
         },
         &result.changes,
         &result.bib,
+        history,
     );
     write(dir, &[(COMPOSITE.into(), source)])?;
     let out = typst(a, dir, "compile", &[&dir.join(COMPOSITE), &to])?;
