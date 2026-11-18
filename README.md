@@ -54,6 +54,14 @@ With the deleted parts removed, the marked document has the same text, layout an
 typst-redline paper.typ --since HEAD~4 --each-commit
 ```
 
+The pictures show a document changed by three commits; its versions are in [docs/example-commits](docs/example-commits). The summary page:
+
+<img src="docs/example-commits-summary.png" width="420" alt="The summary page with the three commits listed, each in its colour">
+
+The marked page:
+
+<img src="docs/example-commits.png" width="420" alt="A page where each change has the colour of the commit that made it, with the commits listed in the bottom margin">
+
 Only the first and the last version are compared, so text that one commit added and a later one removed does not appear. A deleted passage, formula or figure that several commits changed takes the colour of the commit that changed most of it. `--each-commit` needs a git comparison in which the old revision is an ancestor of the new one (for a branch, give `--since main...feature`); it does not work with two plain files. With `--layout side-by-side`, the list of commits is under each pair of pages.
 
 ## Slides and side-by-side
