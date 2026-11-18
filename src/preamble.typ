@@ -284,7 +284,8 @@
   let st = redline-step-style(step)
   if redline-side != none { redline-side-mark("ins", body) }
   if redline-side == "old" {
-    redline-mark("del", body, block, redline-del-look, st.del-frame, frame-style: redline-del-look)
+    let look = redline-del-look.with(st: st)
+    redline-mark("del", body, block, look, st.del-frame, frame-style: look, step: step)
   } else {
     redline-mark("ins", body, block, b => redline-ins-rules(b, block, st: st), st.ins-frame, frame-style: text.with(fill: st.ins), step: step)
   }
@@ -314,12 +315,12 @@
 // With --each-commit, each commit's colour, hash and the start of its
 // subject on one line no wider than `width`; hashes alone if subjects do not
 // fit, none if hashes do not.
-#let redline-legend(hist, width) = {
+#let redline-legend(hist, width, size: 7pt) = {
   let mono = text.with(font: "DejaVu Sans Mono", size: 0.85em)
   let items = hist.commits.enumerate().map(p => (hist.earlier + p.at(0) + 1, mono(p.at(1).hash), p.at(1).subject.clusters()))
   if hist.uncommitted { items.push((hist.earlier + hist.commits.len() + 1, [uncommitted], ())) }
   let legend(n) = {
-    set text(size: 7pt, fill: luma(90), weight: "regular", style: "normal")
+    set text(size: size, fill: luma(90), weight: "regular", style: "normal")
     items.map(((step, hash, subject)) => {
       let more = if subject.len() > n { "…" }
       box[#redline-swatch(redline-step-style(step))#h(0.35em)#hash#if n > 0 and subject.len() > 0 [ #subject.slice(0, calc.min(n, subject.len())).join().trim()#more]]
@@ -579,13 +580,16 @@
   let shown(ps, steps) = if ps.len() == 0 [–] else [#pages(ps)#if steps.len() > 0 [ (last step of #pages(steps + ps))]]
   let name(side) = text(weight: "bold", fill: if side == o { st.del } else { st.ins }, side.label)
   let left-out(side, ps) = side.pages - ps.map(p => p.len()).sum(default: 0)
+  let hist = info.at("history", default: none)
+  let steps = hist != none and hist.steps
+  let sample = if steps { st + redline-colours(luma(70)) } else { st }
   set page(width: auto, height: auto, margin: gap)
   set text(size: size)
   block(width: width + gap, align(center, block(width: calc.min(width + gap, 36 * size), align(left, {
     block(text(size: 1.4em, weight: "bold")[Changes from #o.label to #n.label])
     let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
     if info.pairs.len() == 0 [No changes.] else [
-      Pages of #name(o) on the left, with #redline-del-rules[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false) text. Bars in the margin mark the changed lines.
+      Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the commit that made the change]. Bars in the margin mark the changed lines.
       #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
     ]
     let at = 2
@@ -616,7 +620,7 @@
     }
     let bib = redline-bib(info.bib)
     if bib != none { block(bib) }
-    redline-commits(info.at("history", default: none), o.label, n.label)
+    redline-commits(hist, o.label, n.label)
     for side in (o, n) {
       if side.unbarred.len() > 0 { block[Changes on these pages of #name(side) have no bars in the margin, because the document sets its own page foreground and background there: #pages(side.unbarred).] }
     }
@@ -624,11 +628,12 @@
   let head(side, pg, s, ps) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]] else if ps.len() == 0 [Not in #name(side)]
   // A side without a page keeps its width, so that the other stays in place.
   let shot(side, w, pg) = if pg == none { box(width: w) } else { box(stroke: 0.5pt + luma(150), image(side.pdf, page: pg)) }
+  let legend = if steps { redline-legend(hist, width + gap, size: 0.8 * size) }
   for p in info.pairs {
     for r in range(calc.max(p.old.len(), p.new.len())) {
       pagebreak()
       let (po, pn) = (p.old.at(r, default: none), p.new.at(r, default: none))
-      grid(columns: 2, column-gutter: gap, row-gutter: 0.5em, head(o, po, p.steps-old, p.old), head(n, pn, p.steps-new, p.new), shot(o, wo, po), shot(n, wn, pn))
+      grid(columns: 2, column-gutter: gap, row-gutter: 0.5em, head(o, po, p.steps-old, p.old), head(n, pn, p.steps-new, p.new), shot(o, wo, po), shot(n, wn, pn), ..if legend != none { (grid.cell(colspan: 2, align(center, legend)),) })
     }
   }
 }
