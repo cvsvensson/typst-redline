@@ -23,6 +23,11 @@ HEAD) and the new version is the working copy, or the file at --to. --since
 A..B is --since A --to B; --since A...B compares the merge base of A and B
 with B. With two files, each is a path or REV:PATH (:PATH for the index).
 
+--mark-reviewed records HEAD as reviewed for the file, in a local git ref
+under refs/typst-redline/reviewed/, and makes no PDF. --since reviewed then
+compares with that commit, unless git already resolves `reviewed` as a branch,
+tag or other revision, which then takes its place.
+
 Options:
   -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
   --root <dir>          Project root (default: TYPST_ROOT, else the directory
@@ -41,6 +46,7 @@ Options:
                         changes, into n steps that change about the same
                         amount of the document (one file only)
   --typst <path>        typst executable (default: typst)
+  --mark-reviewed       Record HEAD as reviewed for the file (see above)
   --keep-typ            Keep the generated project and print its path on stderr
   -V, --version         Print the version
   -h, --help            Print this help
@@ -60,6 +66,7 @@ struct Args {
     keep: bool,
     side_by_side: bool,
     steps: Option<StepArg>,
+    mark_reviewed: bool,
     typst_args: Vec<String>,
 }
 
@@ -119,6 +126,7 @@ fn parse_args() -> Result<Parsed, String> {
         keep: false,
         side_by_side: false,
         steps: None,
+        mark_reviewed: false,
         typst_args: vec![],
     };
     let mut it = std::env::args().skip(1);
@@ -146,6 +154,7 @@ fn parse_args() -> Result<Parsed, String> {
                     _ => StepArg::EachCommit,
                 });
             }
+            "--mark-reviewed" => a.mark_reviewed = true,
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
                     "inline" => false,
@@ -160,6 +169,9 @@ fn parse_args() -> Result<Parsed, String> {
     }
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
         return Err("--to cannot be combined with a range in --since".into());
+    }
+    if a.mark_reviewed && (a.files.len() != 1 || a.since.is_some() || a.to.is_some()) {
+        return Err("--mark-reviewed takes one file and no --since or --to".into());
     }
     if a.root.is_none() {
         a.root = std::env::var_os("TYPST_ROOT")
@@ -267,7 +279,7 @@ fn spec_arg(arg: &str, root: Option<&Path>) -> Result<Spec, String> {
     spec(&base.join(path), Some(rev), root, label.into())
 }
 
-fn specs<'a>(a: &'a Args) -> Result<(Spec, Spec), String> {
+fn specs(a: &Args, reviewed: Option<&str>) -> Result<(Spec, Spec), String> {
     let root = a.root.as_deref();
     if a.files.len() == 2 {
         let (mut old, mut new) = (spec_arg(&a.files[0], root)?, spec_arg(&a.files[1], root)?);
@@ -278,9 +290,11 @@ fn specs<'a>(a: &'a Args) -> Result<(Spec, Spec), String> {
     }
     let file = std::path::absolute(&a.files[0]).map_err(|e| e.to_string())?;
     let file = file.as_path();
-    let since = a.since.as_deref().unwrap_or("HEAD");
+    let since = reviewed.or(a.since.as_deref()).unwrap_or("HEAD");
     // As in git, an omitted end of a range is HEAD.
-    let head = |r: &'a str| if r.is_empty() { "HEAD" } else { r };
+    fn head(r: &str) -> &str {
+        if r.is_empty() { "HEAD" } else { r }
+    }
     let (old, to) = match (since.split_once("..."), since.split_once("..")) {
         (Some((x, y)), _) => {
             let base = git_text(file.parent().unwrap(), &["merge-base", head(x), head(y)])?;
@@ -293,13 +307,112 @@ fn specs<'a>(a: &'a Args) -> Result<(Spec, Spec), String> {
         Some(to) => spec(file, Some(to), root, to.into())?,
         None => spec(file, None, root, "working tree".into())?,
     };
-    let mut old = spec(file, Some(&old), root, old.clone())?;
+    let label = if reviewed.is_some() { "reviewed" } else { &old };
+    let mut old = spec(file, Some(&old), root, label.into())?;
     if old.tree.read(&old.entry).is_none()
         && let Some(path) = renamed(&old, to)
     {
         old.entry = path;
     }
     Ok((old, new))
+}
+
+/// The ref that records the commit marked as reviewed for the file at
+/// `path` from the repository's top level. Every character but ASCII letters,
+/// digits, `-`, `_` and `/` is percent-encoded, which keeps the names
+/// distinct and valid for git.
+fn reviewed_ref(path: &str) -> String {
+    let mut name = String::from("refs/typst-redline/reviewed/");
+    for c in path.chars() {
+        if c.is_ascii_alphanumeric() || "-_/".contains(c) {
+            name.push(c);
+        } else {
+            name.extend(c.to_string().bytes().map(|b| format!("%{b:02X}")));
+        }
+    }
+    name
+}
+
+/// The file's path from the repository's top level as git records it, which
+/// on a case-insensitive filesystem can differ in case from `file`; `None` if
+/// git does not track it.
+fn git_path(file: &Path) -> Result<Option<String>, String> {
+    let name = file.file_name().unwrap_or_default().to_string_lossy();
+    let spec = format!(":(icase,literal){name}");
+    let out = output(git(file.parent().unwrap()).args(["ls-files", "--full-name", "-z", "--", &spec]))?;
+    let out = String::from_utf8_lossy(&out);
+    let paths: Vec<&str> = out.split('\0').filter(|p| !p.is_empty()).collect();
+    let exact = paths.iter().find(|p| p.rsplit('/').next() == Some(&*name));
+    Ok(exact.or(paths.first()).map(|p| p.to_string()))
+}
+
+/// The commit marked as reviewed for the file, if `--since reviewed` refers
+/// to it: when git resolves no revision named `reviewed`.
+fn since_reviewed(a: &Args) -> Result<Option<String>, String> {
+    if a.files.len() != 1 || a.since.as_deref() != Some("reviewed") {
+        return Ok(None);
+    }
+    let file = std::path::absolute(&a.files[0]).map_err(|e| e.to_string())?;
+    let dir = file.parent().unwrap();
+    let marked = git_path(&file)?.and_then(|p| {
+        let commit = format!("{}^{{commit}}", reviewed_ref(&p));
+        git_text(dir, &["rev-parse", "--verify", "--quiet", &commit]).ok()
+    });
+    if git_text(dir, &["rev-parse", "--verify", "--quiet", "reviewed^{commit}"]).is_ok() {
+        if marked.is_some() {
+            let name = git_text(dir, &["rev-parse", "--symbolic-full-name", "reviewed"]).unwrap_or_default();
+            let name = if name.is_empty() {
+                "the revision reviewed"
+            } else {
+                &name
+            };
+            eprintln!("note: --since reviewed uses {name}; the commit marked with --mark-reviewed is ignored");
+        }
+        return Ok(None);
+    }
+    marked.map(Some).ok_or_else(|| {
+        format!(
+            "no commit is marked as reviewed for {0}; mark the last commit with: typst-redline {0} --mark-reviewed",
+            a.files[0]
+        )
+    })
+}
+
+/// Record HEAD as reviewed for the file and say so.
+fn mark_reviewed(a: &Args) -> Result<String, String> {
+    let file = &a.files[0];
+    let path = std::path::absolute(file).map_err(|e| e.to_string())?;
+    let dir = path.parent().unwrap();
+    let head = git_text(dir, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let name = git_path(&path)?
+        .filter(|p| {
+            git(dir)
+                .args(["cat-file", "-e", &format!("{head}:{p}")])
+                .output()
+                .is_ok_and(|o| o.status.success())
+        })
+        .ok_or_else(|| format!("{file} is not in the last commit, so there is nothing to mark as reviewed"))?;
+    let refname = reviewed_ref(&name);
+    output(git(dir).args(["update-ref", "-m", "typst-redline --mark-reviewed", &refname, &head]))?;
+    // The document's files at HEAD, and the file itself in case git records
+    // it in a different case than given.
+    let spec = spec(&path, Some(&head), a.root.as_deref(), String::new())?;
+    let read = |p: &str| spec.tree.read(p);
+    let version = Version {
+        label: String::new(),
+        entry: spec.entry.clone(),
+        read: &read,
+    };
+    let Tree::Git { repo, prefix, .. } = &spec.tree else {
+        unreachable!()
+    };
+    let files = project_files(&version).into_iter().map(|f| format!("{prefix}{f}"));
+    let status = ["status", "--porcelain", "--untracked-files=no", "--"];
+    if !output(git(repo).args(status).arg(&name).args(files))?.is_empty() {
+        eprintln!("note: the document has uncommitted changes, which the mark does not cover");
+    }
+    let short = git_text(dir, &["rev-parse", "--short", &head])?;
+    Ok(format!("marked {short} as reviewed for {file} in {refname}"))
 }
 
 /// Two paths labelled by as many of their last parts as tell them apart.
@@ -365,7 +478,8 @@ const LADDER: [(Options, &str); 3] = [
     ),
 ];
 
-fn run(a: Args) -> Result<PathBuf, String> {
+/// Make the PDF; `reviewed` is the commit `--since reviewed` stands for.
+fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
     let preamble = match &a.preamble {
         Some(p) => {
             let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -396,7 +510,7 @@ fn run(a: Args) -> Result<PathBuf, String> {
             a.typst
         ));
     }
-    let (old, new) = specs(&a).map_err(|e| match a.root_env && e.contains("the root") {
+    let (old, new) = specs(&a, reviewed).map_err(|e| match a.root_env && e.contains("the root") {
         true => format!("{e} (set by TYPST_ROOT)"),
         false => e,
     })?;
@@ -1200,9 +1314,21 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match run(*args) {
-        Ok(pdf) => {
-            println!("{}", pdf.display());
+    let result = if args.mark_reviewed {
+        mark_reviewed(&args)
+    } else {
+        let file = args.files[0].clone();
+        since_reviewed(&args).and_then(|reviewed| {
+            let pdf = run(*args, reviewed.as_deref())?;
+            if reviewed.is_some() {
+                eprintln!("hint: to mark the last commit as reviewed, run: typst-redline {file} --mark-reviewed");
+            }
+            Ok(pdf.display().to_string())
+        })
+    };
+    match result {
+        Ok(line) => {
+            println!("{line}");
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -1214,7 +1340,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::balanced_cuts;
+    use super::{balanced_cuts, reviewed_ref};
 
     #[test]
     fn cuts_balance_the_weight_of_the_steps() {
@@ -1225,5 +1351,32 @@ mod tests {
         assert_eq!(balanced_cuts(&[5, 5], 3), [0]);
         let many: Vec<u64> = (0..4000).map(|i| i % 7 * 10 + 1).collect();
         assert_eq!(balanced_cuts(&many, 6).len(), 5);
+    }
+
+    #[test]
+    fn reviewed_refs_are_valid_and_distinct() {
+        let paths = [
+            "doc/main.typ",
+            ".hidden/main.typ",
+            "x.lock/main.typ",
+            "main.typ.lock",
+            "dir./main.typ",
+            "a..b.typ",
+            "my paper.typ",
+            "-x.typ",
+            "übung.typ",
+            "100%.typ",
+            "100%25.typ",
+        ];
+        let names: Vec<String> = paths.iter().map(|p| reviewed_ref(p)).collect();
+        for n in &names {
+            let ok = std::process::Command::new("git")
+                .args(["check-ref-format", n])
+                .status()
+                .unwrap();
+            assert!(ok.success(), "{n}");
+        }
+        let distinct: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(distinct.len(), names.len());
     }
 }

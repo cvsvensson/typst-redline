@@ -759,6 +759,74 @@ fn renamed_file_is_compared_with_its_old_name() {
 }
 
 #[test]
+fn since_reviewed_compares_with_the_marked_commit() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("reviewed", &["alpha", "beta"]);
+    std::fs::write(dir.join("doc/main.typ"), doc("gamma")).unwrap();
+    let out = cli(&dir.join("doc"), &["main.typ", "--mark-reviewed"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("uncommitted"));
+    commit(&dir, "doc/main.typ", "gamma");
+    std::fs::write(dir.join("doc/main.typ"), doc("delta")).unwrap();
+    let src = marked(&dir, &["doc/main.typ", "--since", "reviewed"], "main.typ");
+    assert_compared(&src, "beta", "delta");
+}
+
+#[test]
+fn reviewed_mark_belongs_to_one_document() {
+    let dir = repo("reviewed-per-doc", &["alpha"]);
+    commit(&dir, "doc/other.typ", "beta");
+    std::fs::write(dir.join("doc/other.typ"), doc("gamma")).unwrap();
+    let out = cli(&dir, &["doc/main.typ", "--mark-reviewed"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && !stderr.contains("uncommitted"), "{stderr}");
+    let out = cli(&dir, &["doc/other.typ", "--since", "reviewed"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--mark-reviewed"));
+}
+
+#[test]
+fn reviewed_branch_takes_precedence_over_the_mark() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("reviewed-branch", &["alpha", "beta"]);
+    assert!(cli(&dir, &["doc/main.typ", "--mark-reviewed"]).status.success());
+    git(&dir, &["branch", "reviewed", "c-alpha"]);
+    std::fs::write(dir.join("doc/main.typ"), doc("gamma")).unwrap();
+    let src = marked(&dir, &["doc/main.typ", "--since", "reviewed"], "main.typ");
+    assert_compared(&src, "alpha", "gamma");
+    let out = cli(&dir, &["doc/main.typ", "--since", "reviewed"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("refs/heads/reviewed"));
+}
+
+#[test]
+fn mark_reviewed_needs_the_file_in_the_last_commit() {
+    let dir = repo("reviewed-missing", &["alpha"]);
+    std::fs::write(dir.join("doc/new.typ"), doc("beta")).unwrap();
+    for file in ["doc/missing.typ", "doc/new.typ"] {
+        let out = cli(&dir, &[file, "--mark-reviewed"]);
+        assert_eq!(out.status.code(), Some(1), "{file}");
+    }
+}
+
+#[test]
+fn reviewed_mark_ignores_the_case_of_the_name_given() {
+    let dir = repo("reviewed-case", &["alpha"]);
+    // Only a case-insensitive filesystem finds the file under another case.
+    if !dir.join("doc/MAIN.typ").exists() {
+        return;
+    }
+    assert!(cli(&dir, &["doc/MAIN.typ", "--mark-reviewed"]).status.success());
+    git(&dir, &["pack-refs", "--all"]);
+    let out = cli(&dir, &["doc/main.typ", "--since", "reviewed", "-o", "out.pdf"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("no commit is marked"), "{stderr}");
+}
+
+#[test]
 fn files_of_the_to_revision_are_used() {
     if !typst_available() {
         return;

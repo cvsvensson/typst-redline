@@ -17,6 +17,7 @@ The document is the `.typ` file the user names. Otherwise, take the one that is 
   - A commit, tag or branch: `--since <rev>`; between two: `--since <a> --to <b>`; since a branch left main: `--since main...HEAD`.
   - Two files, or a file at a revision: `typst-redline <old> <new>`, each a path or `REV:PATH`.
   - Who changed what: `--each-commit` colours each change by its commit (at most 6); for more commits, `--steps <n>` or `--steps <rev>,<rev>` colours them in groups.
+  - What changed since the user last reviewed it: `--since reviewed`; once they have read it, `typst-redline <file.typ> --mark-reviewed` records the last commit as reviewed.
 - `typst-redline --help` lists the rest.
 
 When the user only asks for the changes, the redline alone is enough: it is the new version with changes marked.
