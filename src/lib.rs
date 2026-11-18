@@ -2,11 +2,14 @@
 //! the changes against an old version marked.
 
 mod mark;
+mod side;
 mod syntax;
 
 use std::collections::HashMap;
 
 use typst_syntax::{SyntaxNode, ast, parse};
+
+pub use side::{Pair, Placed, Side, composite, pair_pages};
 
 use syntax::{most_similar, similarity, tokenize, walk, words};
 

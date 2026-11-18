@@ -1,11 +1,12 @@
 mod tree;
 
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Output};
 
 use tree::{Tree, git, output};
-use typst_redline::{OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Redline, Version, redline};
+use typst_redline::{OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version, composite, redline};
 
 const USAGE: &str = "\
 typst-redline: mark changes between two versions of a Typst document
@@ -23,6 +24,9 @@ Options:
   -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
   --root <dir>          Project root (default: the directory of each file)
   --preamble <file>     Replace the built-in change styling
+  --layout <layout>     inline (default): the new version with changes marked;
+                        side-by-side: changed pages of the old and the new
+                        version next to each other (needs Typst 0.14 or later)
   --typst <path>        typst executable (default: typst)
   --keep-typ            Keep the generated project and print its path on stderr
   -V, --version         Print the version
@@ -39,6 +43,7 @@ struct Args {
     preamble: Option<PathBuf>,
     typst: String,
     keep: bool,
+    side_by_side: bool,
     typst_args: Vec<String>,
 }
 
@@ -57,6 +62,7 @@ fn parse_args() -> Result<Parsed, String> {
         preamble: None,
         typst: "typst".into(),
         keep: false,
+        side_by_side: false,
         typst_args: vec![],
     };
     let mut it = std::env::args().skip(1);
@@ -75,6 +81,13 @@ fn parse_args() -> Result<Parsed, String> {
             "--preamble" => a.preamble = Some(val()?.into()),
             "--typst" => a.typst = val()?,
             "--keep-typ" => a.keep = true,
+            "--layout" => {
+                a.side_by_side = match val()?.as_str() {
+                    "inline" => false,
+                    "side-by-side" => true,
+                    l => return Err(format!("unknown layout {l}; give inline or side-by-side")),
+                }
+            }
             "--" => a.typst_args.extend(it.by_ref()),
             s if s.starts_with('-') => return Err(format!("unknown option {s}")),
             _ => a.files.push(arg),
@@ -261,6 +274,28 @@ const LADDER: [(Options, &str); 3] = [
 ];
 
 fn run(a: Args) -> Result<PathBuf, String> {
+    let preamble = match &a.preamble {
+        Some(p) => {
+            let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            if a.side_by_side && !text.contains("redline-side-by-side") {
+                return Err(format!(
+                    "the preamble {} does not define redline-side-by-side, which the side-by-side layout needs",
+                    p.display()
+                ));
+            }
+            text
+        }
+        None => PREAMBLE.to_string(),
+    };
+    if a.side_by_side
+        && let Some(v) = typst_version(&a.typst)
+        && minor(&v) < (0, 14)
+    {
+        return Err(format!(
+            "the side-by-side layout needs Typst 0.14 or later, but {} is Typst {v}",
+            a.typst
+        ));
+    }
     let (old, new) = specs(&a)?;
     if new.tree.read(&new.entry).is_none() {
         return Err(match new.tree {
@@ -268,10 +303,6 @@ fn run(a: Args) -> Result<PathBuf, String> {
             Tree::Git { .. } => format!("{} does not exist in {}", new.entry, new.label),
         });
     }
-    let preamble = match &a.preamble {
-        Some(p) => std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?,
-        None => PREAMBLE.to_string(),
-    };
     let pdf = output_path(&a, &old, &new)?;
     let text = |spec: &Spec, path: &str| String::from_utf8(spec.tree.read(path)?).ok();
     let (read_old, read_new) = (|p: &str| text(&old, p), |p: &str| text(&new, p));
@@ -289,36 +320,58 @@ fn run(a: Args) -> Result<PathBuf, String> {
     let staging = Staging::new(a.keep);
     let dir = &staging.dir;
     stage(dir, &old, &new, &result)?;
-    write(dir, &[(PREAMBLE_PATH.into(), preamble)])?;
+    write(dir, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
     // typst writes next to the staging directory, so that an output that
     // cannot be written is reported as such and is never left half written.
     let tmp = dir.with_extension(pdf.extension().unwrap_or("pdf".as_ref()));
     let mut first_error = String::new();
     let mut stderr = String::new();
+    // The old side of the side-by-side layout is the old version marked
+    // against the new one, staged with the old version at the root, so that
+    // it is laid out and numbered as the old document is.
+    let old_root = dir.join(OLD_SIDE);
+    let sides = [
+        (old_root.as_path(), &old.entry, "old", OLD_PDF),
+        (dir.as_path(), &new.entry, "new", NEW_PDF),
+    ];
+    let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
+        let input = format!("redline-side={side}");
+        typst(
+            &a,
+            root,
+            "compile",
+            &[&"--input", &input, &root.join(entry), &dir.join(pdf)],
+        )
+    };
     for (i, (opts, note)) in LADDER.into_iter().enumerate() {
         if i > 0 {
             result = redline(&old_v, &new_v, opts);
         }
         write(dir, &result.files)?;
-        let out = Command::new(&a.typst)
-            .arg("compile")
-            .arg("--root")
-            .arg(dir)
-            .args(&a.typst_args)
-            .arg(dir.join(&new.entry))
-            .arg(&tmp)
-            .output()
-            .map_err(|e| {
-                format!(
-                    "cannot run {}: {e}; install Typst or give its path with --typst",
-                    a.typst
-                )
-            })?;
+        let out = if !a.side_by_side {
+            typst(&a, dir, "compile", &[&dir.join(&new.entry), &tmp])?
+        } else {
+            let back = redline(&new_v, &old_v, opts);
+            if i == 0 {
+                stage(&old_root, &new, &old, &back)?;
+                write(&old_root, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
+            }
+            write(&old_root, &back.files)?;
+            let new_side = side(sides[1])?;
+            if new_side.status.success() {
+                side(sides[0])?
+            } else {
+                new_side
+            }
+        };
         stderr = String::from_utf8_lossy(&out.stderr).to_string();
         if out.status.success() {
             eprint!("{stderr}");
             if !note.is_empty() {
                 eprintln!("note: {note}, because the full proof failed to compile ({first_error})");
+            }
+            if a.side_by_side {
+                compose(&a, dir, sides, (&old.label, &new.label), &result, &tmp)?;
             }
             let written = std::fs::copy(&tmp, &pdf);
             let _ = std::fs::remove_file(&tmp);
@@ -447,18 +500,125 @@ fn write(dir: &Path, files: &[(String, String)]) -> Result<(), String> {
     Ok(())
 }
 
+const NEW_PDF: &str = ".redline-new.pdf";
+const OLD_PDF: &str = ".redline-old.pdf";
+const COMPOSITE: &str = ".redline-side-by-side.typ";
+const OLD_SIDE: &str = ".redline-old-side";
+
+/// Run `typst <cmd>` on the project in `dir` with the user's arguments for
+/// typst, then `args`.
+fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<Output, String> {
+    Command::new(&a.typst)
+        .args([cmd, "--root"])
+        .arg(dir)
+        .args(&a.typst_args)
+        .args(args.iter().map(|a| a.as_ref()))
+        .output()
+        .map_err(|e| {
+            format!(
+                "cannot run {}: {e}; install Typst or give its path with --typst",
+                a.typst
+            )
+        })
+}
+
+/// Pair the pages of the two compiled sides, each given as (root, entry,
+/// side, pdf), and compile the composite that shows them to `to`.
+fn compose(
+    a: &Args,
+    dir: &Path,
+    sides: [(&Path, &String, &str, &str); 2],
+    labels: (&str, &str),
+    result: &Redline,
+    to: &Path,
+) -> Result<(), String> {
+    let layout = |(root, entry, side, _): (&Path, &String, &str, &str)| -> Result<(usize, Vec<Placed>), String> {
+        let input = format!("redline-side={side}");
+        let entry = root.join(entry);
+        let args: [&dyn AsRef<OsStr>; 7] = [
+            &"--input",
+            &input,
+            &"--field",
+            &"value",
+            &"--one",
+            &entry,
+            &"<redline-layout>",
+        ];
+        let out = typst(a, root, "query", &args)?;
+        let nums: Option<Vec<u64>> = String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .trim_matches(['[', ']'])
+            .split(',')
+            .map(|s| s.trim().parse().ok())
+            .collect();
+        let Some((&pages, rest)) = nums.as_deref().and_then(<[u64]>::split_first) else {
+            return Err(format!(
+                "cannot find the pages of the changes; the side-by-side layout needs the page foreground that the preamble sets\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        };
+        let changes = rest
+            .chunks(3)
+            .map(|c| Placed {
+                ins: c[0] == 1,
+                id: c[1],
+                page: c[2] as usize,
+            })
+            .collect();
+        Ok((pages as usize, changes))
+    };
+    let ((old_pages, old), (new_pages, new)) = (layout(sides[0])?, layout(sides[1])?);
+    let (old_pdf, new_pdf) = (format!("/{OLD_PDF}"), format!("/{NEW_PDF}"));
+    let source = composite(
+        &Side {
+            label: labels.0,
+            pdf: &old_pdf,
+            pages: old_pages,
+            changes: &old,
+        },
+        &Side {
+            label: labels.1,
+            pdf: &new_pdf,
+            pages: new_pages,
+            changes: &new,
+        },
+        &result.changes,
+    );
+    write(dir, &[(COMPOSITE.into(), source)])?;
+    let out = typst(a, dir, "compile", &[&dir.join(COMPOSITE), &to])?;
+    if !out.status.success() {
+        return Err(format!(
+            "the side-by-side composite failed to compile\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// The version of the typst executable, such as "0.14.2".
+fn typst_version(typst: &str) -> Option<String> {
+    let out = Command::new(typst).arg("--version").output().ok()?;
+    Some(
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .nth(1)?
+            .to_string(),
+    )
+}
+
+/// The major and minor part of a version.
+fn minor(v: &str) -> (u32, u32) {
+    let mut parts = v.split('.').map(|p| p.parse().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+}
+
 /// A hint if the installed typst differs in minor version from the parser.
 fn version_hint(typst: &str) -> Option<String> {
-    let out = Command::new(typst).arg("--version").output().ok()?;
-    let installed = String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .nth(1)?
-        .to_string();
+    let installed = typst_version(typst)?;
     let parser = include_str!("../Cargo.toml")
         .lines()
         .find_map(|l| l.strip_prefix("typst-syntax = \""))?
         .trim_end_matches('"');
-    let minor = |v: &str| v.split('.').take(2).collect::<Vec<_>>().join(".");
     (minor(&installed) != minor(parser))
         .then(|| format!("hint: typst {installed} is installed, but typst-redline parses Typst {parser}"))
 }

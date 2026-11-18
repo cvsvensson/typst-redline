@@ -2,6 +2,7 @@
 //! calls to the preamble's functions, and the summary.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::ops::Range;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
@@ -149,10 +150,28 @@ struct Writer<'a> {
 
 /// A run of tokens that is the same in both versions or changed.
 #[derive(Clone)]
-struct Seg {
-    old: Range<usize>,
-    new: Range<usize>,
-    equal: bool,
+pub(crate) struct Seg {
+    pub old: Range<usize>,
+    pub new: Range<usize>,
+    pub equal: bool,
+}
+
+/// The runs that are the same in `old` and `new` and the changed runs
+/// between them.
+pub(crate) fn segments<T: Hash + Eq + Ord>(old: &[T], new: &[T]) -> Vec<Seg> {
+    let mut segs = vec![];
+    for op in capture_diff_slices(Algorithm::Myers, old, new) {
+        let equal = matches!(op, DiffOp::Equal { .. });
+        push_seg(
+            &mut segs,
+            Seg {
+                old: op.old_range(),
+                new: op.new_range(),
+                equal,
+            },
+        );
+    }
+    segs
 }
 
 impl Seg {
@@ -641,18 +660,7 @@ impl<'a> Writer<'a> {
     fn diff_tokens(&mut self, old: &[Tok], new: &[Tok]) {
         let ok: Vec<&str> = old.iter().map(|t| t.key.as_str()).collect();
         let nk: Vec<&str> = new.iter().map(|t| t.key.as_str()).collect();
-        let mut segs = vec![];
-        for op in capture_diff_slices(Algorithm::Myers, &ok, &nk) {
-            let equal = matches!(op, DiffOp::Equal { .. });
-            push_seg(
-                &mut segs,
-                Seg {
-                    old: op.old_range(),
-                    new: op.new_range(),
-                    equal,
-                },
-            );
-        }
+        let segs = segments(&ok, &nk);
         // Absorb a kept run between two changes when it is at most one
         // short word, or much shorter than the changes around it: whole
         // phrases replaced read better than alternating fragments.
@@ -977,7 +985,7 @@ fn old_leaf(n: &SyntaxNode) -> String {
 }
 
 /// A Typst string literal holding `s`.
-fn typst_str(s: &str) -> String {
+pub(crate) fn typst_str(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
         match c {

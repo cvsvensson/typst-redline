@@ -12,6 +12,11 @@
 //   label or none, title, count, deleted, new, unmarked)).
 // With `redline-ins(body, ..args) = body` and `redline-del(..args) = none`
 // the document is the new version unchanged; marks must keep that so.
+// For the side-by-side layout the binary compiles the marked files with
+// `--input redline-side=new`, and the old version marked against the new
+// one with `redline-side=old`, so that there an insertion is content only
+// the old version has. The composite of both calls
+// redline-side-by-side(info) (see there).
 
 #let redline-style = {
   let (ins, del) = (rgb("#1565c0"), rgb("#c62828"))
@@ -35,10 +40,11 @@
 
 // Each mark is bracketed by two of these; `redline-bars` draws a bar in the
 // margin from the start of one to its end, `dy` beyond the tags. The end tag
-// records the width of the column, cell or other container it is in; the
-// word joiner keeps a line break from separating it from the mark.
+// records the width of the column, cell or other container it is in and the
+// column gutter in effect; the word joiner keeps a line break from
+// separating it from the mark.
 #let redline-tag(kind, dy, width: none) = if kind != "end" or width != none {
-  [#metadata((kind, dy, width))<redline-tag>]
+  [#metadata((kind, dy, width, if width != none { columns.gutter }))<redline-tag>]
 } else [\u{2060}#box(layout(size => redline-tag(kind, dy, width: size.width)))]
 
 // Spaces at the edges of a mark go outside it: a struck space looks like a
@@ -96,8 +102,11 @@
 }))
 
 // The parts of a mark with its tags and frames: `style` applied to each run
-// of parts that are not framed, `frame-style` to each framed part.
-#let redline-mark(kind, body, block, style, stroke, frame-style: x => x, cross: c => false) = {
+// of parts that are not framed, `frame-style` to each framed part that shows
+// text. A drawing or image is drawn as written, with only `plain` applied:
+// its frame (crossed, if deleted) is the mark, and a colour would reach its
+// labels but not its lines. A figure's caption is styled all the same.
+#let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x) = {
   let (lead, ch, trail) = redline-parts(body)
   let n = ch.len()
   let framed = ch.map(c => redline-framed(c, block and n == 1))
@@ -108,7 +117,12 @@
       if run.len() > 0 { out.push(style(run.join())) }
       run = ()
       let start = if i == 0 { kind }
-      out.push(frame-style(redline-frame(c, stroke, cross: cross(c), start: start, end: if i == n - 1 { "end" })))
+      let drawing = not redline-textual(if c.func() == figure { c.body } else { c })
+      let f = redline-frame(c, stroke, cross: kind == "del" and drawing, start: start, end: if i == n - 1 { "end" })
+      out.push(if not drawing { frame-style(f) } else if c.func() == figure {
+        show figure.caption: frame-style
+        plain(f)
+      } else { plain(f) })
     } else if i == 0 and not block and c.func() == text and c.has("text") and c.text.clusters().len() > 1 {
       // After the first character, so that the bar of a mark starting a
       // line is not drawn on the line before.
@@ -176,11 +190,15 @@
 }
 
 // Deleted content must not step equation, figure or heading counters.
-#let redline-del-rules(body) = {
-  let st = redline-style
+#let redline-del-counters(body) = {
   set math.equation(numbering: none)
   set figure(numbering: none)
   set heading(numbering: none, outlined: false, bookmarked: false)
+  body
+}
+
+#let redline-del-look(body) = {
+  let st = redline-style
   show math.equation.where(block: false): it => context {
     let s = measure(it)
     box({
@@ -193,41 +211,73 @@
   text(fill: st.del, strike(stroke: st.strike, body))
 }
 
-#let redline-ins(body, block: false) = {
-  let st = redline-style
-  redline-mark("ins", body, block, b => redline-ins-rules(b, block), st.ins-frame, frame-style: text.with(fill: st.ins))
+#let redline-del-rules(body) = redline-del-counters(redline-del-look(body))
+
+// The version laid out for the side-by-side layout, or none.
+#let redline-side = sys.inputs.at("redline-side", default: none)
+
+// On each side of the side-by-side layout, every change records its kind
+// as a change from the old version to the new one, and an identity, so that
+// the binary can pair the pages of the two sides.
+#let redline-side-mark(kind, body) = {
+  let kind = if redline-side == "old" { if kind == "ins" { "del" } else { "ins" } } else { kind }
+  let h = if kind == "ins" { 1 } else { 2 }
+  for b in array(bytes(repr(body))) { h = calc.rem(h * 31 + b, 1000000007) }
+  [#metadata((kind, h))<redline-change>]
 }
 
+#let redline-ins(body, block: false) = {
+  let st = redline-style
+  if redline-side != none { redline-side-mark("ins", body) }
+  if redline-side == "old" {
+    redline-mark("del", body, block, redline-del-look, st.del-frame, frame-style: redline-del-look)
+  } else {
+    redline-mark("ins", body, block, b => redline-ins-rules(b, block), st.ins-frame, frame-style: text.with(fill: st.ins))
+  }
+}
+
+// On a side of the side-by-side layout, a deletion is content the version
+// does not have: the page next to it shows it.
 #let redline-del(body, block: false, heading: none, gap: false) = {
   let st = redline-style
+  if redline-side != none { return redline-side-mark("del", body) }
   let block = block or heading != none
   let body = redline-neutral(body)
   let body = if heading != none {
     text(weight: "bold", size: if heading == 1 { 1.4em } else { 1.2em }, body)
   } else { body }
   if block { parbreak() }
-  redline-mark("del", body, block, redline-del-rules, st.del-frame, frame-style: redline-del-rules, cross: c => not redline-textual(
-    if c.func() == figure { c.body } else { c },
-  ))
+  redline-mark("del", body, block, redline-del-rules, st.del-frame, frame-style: redline-del-rules, plain: redline-del-counters)
   if block { parbreak() } else if gap { h(0.25em) }
 }
 
 // The page foreground: one query per page instead of introspection per mark.
 #let redline-bars = context {
   let st = redline-style
+  let pg = here().page()
+  if redline-side != none {
+    // For the binary: the number of pages, and each change's identity and
+    // page, as one flat array of integers.
+    [#metadata(none)<redline-page>]
+    if pg == 1 {
+      let changes = query(<redline-change>).map(m => (int(m.value.at(0) == "ins"), m.value.at(1), m.location().page()))
+      [#metadata((query(<redline-page>).len(), ..changes.flatten()))<redline-layout>]
+    }
+  }
   let tags = query(<redline-tag>)
   let n = calc.quo(tags.len(), 2)
   if n == 0 { return }
-  let pg = here().page()
   let (w, h) = (page.width, page.height)
   let m = page.margin
   let even = calc.even(pg)
+  let absolute(v, full) = if type(v) == length { v.to-absolute() } else if type(v) == ratio { v * full } else {
+    v.length.to-absolute() + v.ratio * full
+  }
   let side(keys, full) = {
     let v = if type(m) == dictionary { keys.map(k => m.at(k, default: none)).find(v => v != none) } else { m }
-    let full = if full == auto { 0pt } else { full }
-    if v == none or v == auto { 2.5 / 21 * calc.min(w, if h == auto { w } else { h }) } else if type(v) == length {
-      v.to-absolute()
-    } else if type(v) == ratio { v * full } else { v.length.to-absolute() + v.ratio * full }
+    if v == none or v == auto { 2.5 / 21 * calc.min(w, if h == auto { w } else { h }) } else {
+      absolute(v, if full == auto { 0pt } else { full })
+    }
   }
   let left = side(if even { ("left", "outside") } else { ("left", "inside") }, w)
   let right = side(if even { ("right", "inside") } else { ("right", "outside") }, w)
@@ -252,25 +302,32 @@
       let y0 = if s.page == pg { calc.max(s.y + a.value.at(1).to-absolute(), top - 1em.to-absolute()) } else { top }
       let y1 = if e.page == pg { e.y + b.value.at(1).to-absolute() } else { bottom }
       let ins = a.value.at(0) == "ins"
-      // The mark is in one of `cols` containers of width `cw` side by side
-      // across the text area, as many as fit. Its bar goes just left of its
-      // container: in the margin, or in the gutter, with the lanes narrowed
-      // to fit it. Deletions are one lane further out.
+      // A container of width `cw` that is one of `cols` equal columns with
+      // the gutter in effect, as page columns and `columns` are, has its
+      // bar just left of it: in the margin or in the middle of the gutter,
+      // with the lanes narrowed to fit. Any other container's left edge is
+      // unknown and text can run up to it, so its bar goes in a margin: the
+      // right one if the container cannot reach the left edge of the text
+      // area but can reach its right edge, such as a right-hand cell.
+      // Deletions are one lane further out.
       let cw = b.value.at(2, default: none)
-      let cw = if cw == none or cw <= 0pt or cw > body { body } else { cw }
-      let cols = calc.max(calc.floor(body / cw + 0.01), 1)
-      let gap = if cols > 1 { (body - cols * cw) / (cols - 1) } else { 0pt }
-      let at = s.x - left
-      let k = calc.clamp(calc.max(calc.floor(at / (cw + gap)), calc.ceil((at - cw) / (cw + gap))), 0, cols - 1)
-      let x = if k == 0 {
-        let x = left - calc.min(st.bar-gap, left / 2)
-        if ins { x } else { x - st.lane }
+      let cw = if cw == none or cw <= 0pt { body } else { cw }
+      let g = b.value.at(3, default: none)
+      let g = if g == none { 0pt } else { absolute(g, body) }
+      let q = (body + g) / (cw + g)
+      let cols = if calc.abs(q - calc.round(q)) < 0.001 { int(calc.round(q)) } else { 1 }
+      let k = calc.clamp(calc.floor(((if s.page == pg { s.x } else { e.x }) - left) / (cw + g)), 0, cols - 1)
+      let at = calc.min(s.x, e.x) - left
+      let out = if ins { 0pt } else { st.lane }
+      let x = if cols > 1 and k > 0 {
+        let lane = calc.max(0pt, calc.min(st.lane, (g - st.bar-width) / 2))
+        left + k * (cw + g) - calc.min(st.bar-gap, g / 2) + lane / 2 - (if ins { 0pt } else { lane })
+      } else if cols == 1 and at > cw and at + cw > body - 1pt {
+        calc.min(left + body + calc.min(st.bar-gap, right / 2) + out, w - st.bar-width / 2)
       } else {
-        let lane = calc.max(0pt, calc.min(st.lane, (gap - st.bar-width) / 2))
-        let x = left + k * (cw + gap) - calc.min(st.bar-gap, gap / 2) + lane / 2
-        if ins { x } else { x - lane }
+        calc.max(left - calc.min(st.bar-gap, left / 2) - out, st.bar-width / 2)
       }
-      bars.push((calc.max(x, st.bar-width / 2), y0 + 1pt, y1 - 1pt, ins))
+      bars.push((x, y0 + 1pt, y1 - 1pt, ins))
     }
     i += 1
   }
@@ -289,7 +346,7 @@
   }
 }
 
-#let redline-summary(info) = {
+#let redline-summary(info) = if redline-side == none {
   let st = redline-style
   // One block, so that slide packages keep the summary together.
   block({
@@ -321,4 +378,80 @@
   })
   pagebreak()
   counter(page).update(1)
+}
+
+// The side-by-side layout. `info` is (old, new: (label, pdf: the version
+// compiled with `redline-side`, pages), pairs: array of (old, new: pages
+// shown next to each other, steps-old, steps-new: pages of earlier steps of
+// the same slide, not shown), unpaired: array of (side, ins, page): changes
+// found in one version only, unmarked: array of (file, text): changed code
+// that is not marked).
+#let redline-side-by-side(info) = context {
+  let st = redline-style
+  let (o, n) = (info.old, info.new)
+  let (wo, wn) = (measure(image(o.pdf, page: 1)).width, measure(image(n.pdf, page: 1)).width)
+  let width = wo + wn
+  // Pages are shown at their own size, so text is sized to them: about the
+  // size of body text on a page that wide.
+  let size = calc.max(calc.max(wo, wn) / 50, 10pt)
+  let gap = 2 * size
+  let pages(ps) = {
+    let runs = ()
+    for p in ps {
+      if runs.len() > 0 and runs.last().last() + 1 == p { runs.last().push(p) } else { runs.push((p,)) }
+    }
+    runs.map(r => str(r.first()) + if r.len() > 1 { "–" + str(r.last()) } else { "" }).join(", ", default: "–")
+  }
+  let shown(ps, steps) = if ps.len() == 0 [–] else [#pages(ps)#if steps.len() > 0 [ (last step of #pages(steps + ps))]]
+  let name(side) = text(weight: "bold", fill: if side == o { st.del } else { st.ins }, side.label)
+  let left-out(side, ps) = side.pages - ps.map(p => p.len()).sum(default: 0)
+  set page(width: auto, height: auto, margin: gap)
+  set text(size: size)
+  block(width: width + gap, align(center, block(width: calc.min(width + gap, 36 * size), align(left, {
+    block(text(size: 1.4em, weight: "bold")[Changes from #o.label to #n.label])
+    let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
+    if info.pairs.len() == 0 [No changes.] else [
+      Pages of #name(o) on the left, with #redline-del-rules[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false) text. Bars in the margin mark the changed lines.
+      #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
+    ]
+    let at = 2
+    let rows = ()
+    for p in info.pairs {
+      let k = calc.max(p.old.len(), p.new.len())
+      rows += (shown(p.old, p.steps-old), shown(p.new, p.steps-new), link((page: at, x: 0pt, y: 0pt), underline(pages(range(at, at + k)))))
+      at += k
+    }
+    if rows.len() > 0 {
+      table(
+        columns: 3,
+        stroke: none,
+        inset: (x: 0.5em, y: 0.3em),
+        align: (left, left, right),
+        table.header(..([Pages of #name(o)], [Pages of #name(n)], [Shown on page]).map(strong)),
+        table.hline(stroke: 0.5pt),
+        ..rows,
+      )
+    }
+    if info.unpaired.len() > 0 {
+      [Changes found in one version only; their pages are shown without a counterpart:]
+      list(..info.unpaired.map(u => [#if u.ins [An insertion] else [A deletion] on page #u.page of #info.at(u.side).label]))
+    }
+    if info.unmarked.len() > 0 {
+      [Changed code that is not marked:]
+      list(..info.unmarked.map(u => {
+        let t = u.text.clusters()
+        [#raw(if t.len() > 80 { t.slice(0, 80).join() + "…" } else { u.text }) in #raw(u.file)]
+      }))
+    }
+  }))))
+  let head(side, pg, s) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]]
+  // A side without a page keeps its width, so that the other stays in place.
+  let shot(side, w, pg) = if pg == none { box(width: w) } else { box(stroke: 0.5pt + luma(150), image(side.pdf, page: pg)) }
+  for p in info.pairs {
+    for r in range(calc.max(p.old.len(), p.new.len())) {
+      pagebreak()
+      let (po, pn) = (p.old.at(r, default: none), p.new.at(r, default: none))
+      grid(columns: 2, column-gutter: gap, row-gutter: 0.5em, head(o, po, p.steps-old), head(n, pn, p.steps-new), shot(o, wo, po), shot(n, wn, pn))
+    }
+  }
 }

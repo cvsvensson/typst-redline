@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use typst_redline::{Change, ChangeKind, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Version, redline};
+use typst_redline::{
+    Change, ChangeKind, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Version, pair_pages, redline,
+};
 
 const FULL: Options = Options {
     eval_deleted: true,
@@ -746,4 +748,158 @@ fn arguments_after_double_dash_go_to_typst() {
     std::fs::write(dir.join("new.typ"), new).unwrap();
     let out = cli(&dir, &["old.typ", "new.typ", "--", "--input", "v=1"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn side_by_side_pairs_pages_with_the_same_changes() {
+    let c = |ins, id, page| Placed { ins, id, page };
+    let old = [
+        c(false, 1, 1),
+        c(true, 2, 1),
+        c(true, 2, 2),
+        c(false, 3, 3),
+        c(false, 3, 4),
+        c(true, 9, 6),
+    ];
+    let new = [
+        c(false, 1, 1),
+        c(true, 2, 2),
+        c(true, 2, 2),
+        c(false, 3, 4),
+        c(false, 3, 5),
+    ];
+    let (pairs, unpaired) = pair_pages(&old, &new);
+    let pair = |old: &[usize], new: &[usize], steps_old: &[usize], steps_new: &[usize]| Pair {
+        old: old.to_vec(),
+        new: new.to_vec(),
+        steps_old: steps_old.to_vec(),
+        steps_new: steps_new.to_vec(),
+    };
+    assert_eq!(
+        pairs,
+        [
+            pair(&[1, 2], &[1, 2], &[], &[]),
+            pair(&[4], &[5], &[3], &[4]),
+            pair(&[6], &[], &[], &[])
+        ]
+    );
+    assert_eq!(unpaired, [(true, c(true, 9, 6))]);
+}
+
+#[test]
+fn side_by_side_pairs_changes_written_differently() {
+    let c = |ins, id, page| Placed { ins, id, page };
+    let old = [c(true, 5, 1), c(true, 6, 2), c(true, 7, 3), c(false, 1, 4)];
+    let new = [
+        c(true, 8, 1),
+        c(true, 9, 2),
+        c(true, 7, 3),
+        c(false, 2, 4),
+        c(false, 3, 5),
+    ];
+    let (pairs, unpaired) = pair_pages(&old, &new);
+    let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone())).collect();
+    assert_eq!(
+        pages,
+        [
+            (vec![1], vec![1]),
+            (vec![2], vec![2]),
+            (vec![3], vec![3]),
+            (vec![4], vec![4, 5])
+        ]
+    );
+    assert!(unpaired.is_empty());
+}
+
+/// Whether the typst on PATH is older than the side-by-side layout needs.
+fn typst_before_0_14() -> bool {
+    let version = Command::new("typst").arg("--version").output().unwrap().stdout;
+    let version = String::from_utf8_lossy(&version);
+    ["0.11.", "0.12.", "0.13."].iter().any(|v| version.contains(v))
+}
+
+#[test]
+fn side_by_side_old_pages_are_the_old_document() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-old");
+    std::fs::write(
+        dir.join("old.typ"),
+        "#set page(width: 8cm, height: 6cm)\nThe old word.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("new.typ"),
+        "#set page(width: 12cm, height: 6cm)\nThe new word.\n",
+    )
+    .unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let pdf = String::from_utf8_lossy(&std::fs::read(dir.join("out.pdf")).unwrap()).to_string();
+    let widest = pdf
+        .split("/MediaBox")
+        .skip(1)
+        .filter_map(|s| {
+            s.trim_start()
+                .strip_prefix('[')?
+                .split_whitespace()
+                .nth(2)?
+                .parse::<f64>()
+                .ok()
+        })
+        .fold(0.0, f64::max);
+    // An 8cm page next to a 12cm one, with less than 4cm around them.
+    assert!(widest > 0.0 && widest < 24.0 / 2.54 * 72.0, "{widest}");
+}
+
+#[test]
+fn side_by_side_shows_changed_pages() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("side-by-side");
+    let doc =
+        |word: &str| format!("#set page(height: 6cm)\nOne.\n#pagebreak()\nThe {word} two.\n#pagebreak()\nThree.\n");
+    std::fs::write(dir.join("old.typ"), doc("old")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc("new")).unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if typst_before_0_14() {
+        assert!(
+            !out.status.success() && stderr.contains("Typst 0.14 or later"),
+            "{stderr}"
+        );
+        return;
+    }
+    assert!(out.status.success(), "{stderr}");
+    let pdf =
+        String::from_utf8_lossy(&std::fs::read(dir.join("out.pdf")).unwrap()).replace("/Type /Page", "/Type/Page");
+    let pages = pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count();
+    // The summary and the one changed pair.
+    assert_eq!(pages, 2);
+}
+
+#[test]
+fn side_by_side_needs_the_preamble_function() {
+    let dir = temp_dir("side-by-side-preamble");
+    std::fs::write(dir.join("old.typ"), "Old.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New.").unwrap();
+    let inline_only = PREAMBLE.replace("redline-side-by-side", "other");
+    std::fs::write(dir.join("p.typ"), inline_only).unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "--preamble", "p.typ", "--layout", "side-by-side"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(1) && stderr.contains("does not define redline-side-by-side"),
+        "{stderr}"
+    );
 }
