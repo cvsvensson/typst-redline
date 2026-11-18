@@ -612,6 +612,21 @@
   if lo >= 8 { legend(lo) } else if fits(0) { legend(0) }
 }
 
+// A line at the top edge of the first page, above any header, that links
+// to the summary and says how many changes it lists that are not marked.
+#let redline-pointer(x, margin, width) = {
+  let at = query(<redline-summary>)
+  if at.len() == 0 { return }
+  let v = redline-value(at.first())
+  let n = v.unmarked + query(<redline-lost>).map(redline-value).flatten().len()
+  let more = if n > 0 [ · #n #if n == 1 [change is] else [changes are] listed there, not marked] else if v.notes or query(<redline-unrestored>).len() > 0 [ · with notes on what this PDF shows differently]
+  set text(size: 6.5pt, lang: "en", dir: ltr, weight: "regular", style: "normal")
+  set par(justify: false)
+  // The colours inside the link, which the document can style.
+  let line = [#text(fill: luma(110))[Changes marked by typst-redline · summary on page #at.first().location().page()]#text(fill: redline-style.del, more)]
+  place(top + left, dx: x, dy: calc.max(2pt, margin / 4 - 3pt), block(width: width, link(at.first().location(), line)))
+}
+
 // The bars of one page, drawn from the page foreground or background
 // (`from`): one query per page instead of introspection per mark.
 #let redline-page-bars(from) = context {
@@ -639,7 +654,6 @@
   }
   let tags = query(<redline-tag>)
   let n = calc.quo(tags.len(), 2)
-  if n == 0 and query(<redline-move>).len() == 0 { return }
   let (w, h) = (page.width, page.height)
   let even = calc.even(pg)
   let absolute(v, full) = if type(v) == length { v.to-absolute() } else if type(v) == ratio { v * full } else {
@@ -656,6 +670,8 @@
   let top = side(("top",), h)
   let bottom = if h == auto { 1e4pt } else { h - side(("bottom",), h) }
   let body = w - left - right
+  if pg == 1 and redline-side == none { redline-pointer(left, top, body) }
+  if n == 0 and query(<redline-move>).len() == 0 { return }
   // The x of a bar from tag `a` to end tag `b` on this page, `lane` lanes out,
   // whether it is in the right margin, and the x of the far side of the
   // free space there: the page edge or the text of the column before. A
@@ -1022,6 +1038,10 @@
   set page(header: none, footer: none, numbering: none)
   context {
     let shown = redline-laid-out()
+    let bib = info.at("bib", default: (:))
+    let listed = ("added", "removed", "changed", "files").map(k => bib.at(k, default: ()).len()).sum()
+    let unmarked = listed + info.entries.map(e => e.code.len()).sum(default: 0)
+    redline-meta((unmarked: unmarked, notes: redline-fallback-note != none or bib.at("unchecked", default: false)), <redline-summary>)
     // English, whatever language the document is in.
     set text(lang: "en", dir: ltr)
     block({
