@@ -529,11 +529,14 @@ impl<'a> Writer<'a> {
         let osecs: Vec<&[Block]> = old[oh..].chunk_by(|_, b| b.kind != Kind::Heading).collect();
         let nsecs: Vec<&[&Block]> = new[nh..].chunk_by(|_, b| b.kind != Kind::Heading).collect();
         for k in 0..osecs.len().max(nsecs.len()) {
+            // Only a deleted section's own blocks count with it.
+            let outer = self.current.clone();
             osecs
                 .get(k)
                 .into_iter()
                 .flat_map(|s| s.iter())
                 .for_each(|b| delete(self, b));
+            self.current = outer;
             nsecs
                 .get(k)
                 .into_iter()
@@ -641,8 +644,8 @@ impl<'a> Writer<'a> {
         if ob.kind == Kind::Heading {
             let level = ob.heading_level();
             if level <= 2 && self.top {
-                // The changes up to the next section are in this one; its
-                // key is not a label.
+                // Its own deleted blocks are in this section; its key is
+                // not a label.
                 let key = format!("{}-del-{}", self.ctx.prefix, self.sections.len());
                 self.sections.push(Section {
                     file: self.file.path.clone(),

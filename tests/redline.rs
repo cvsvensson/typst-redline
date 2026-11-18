@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use typst_redline::{
-    Bib, Change, ChangeKind, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Side, Version, composite,
-    pair_pages, redline,
+    Bib, Change, ChangeKind, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Redline, Side, Version,
+    composite, pair_pages, redline,
 };
 
 const FULL: Options = Options {
@@ -111,6 +111,21 @@ fn run(name: &str) -> Run {
 
 fn body(name: &str) -> String {
     run(name).body
+}
+
+/// The redline of two one-file versions.
+fn redline_of(old: &str, new: &str) -> Redline {
+    let (old, new) = (old.to_string(), new.to_string());
+    let v = |read| Version {
+        label: "v".into(),
+        entry: "main.typ".into(),
+        read,
+    };
+    redline(
+        &v(&move |_: &str| Some(old.clone())),
+        &v(&move |_: &str| Some(new.clone())),
+        FULL,
+    )
 }
 
 #[test]
@@ -281,15 +296,29 @@ fn heading_with_a_new_label_is_not_listed_as_deleted() {
 fn page_break_inserted_with_a_slide_is_part_of_it() {
     let r = run("inserted-slide");
     assert!(r.changes.iter().all(|c| c.kind != ChangeKind::Unmarked), "{}", r.body);
-    let read = |s: &'static str| move |_: &str| Some(s.to_string());
-    let (old, new) = (read("A\n\nB\n"), read("A\n#pagebreak()\nB\n"));
-    let v = |read| Version {
-        label: "v".into(),
-        entry: "main.typ".into(),
-        read,
-    };
-    let lone = redline(&v(&old), &v(&new), FULL);
+    let lone = redline_of("A\n\nB\n", "A\n#pagebreak()\nB\n");
     assert!(lone.changes.iter().any(|c| c.kind == ChangeKind::Unmarked));
+}
+
+#[test]
+fn edit_after_a_deleted_heading_counts_with_the_section_before() {
+    let r = redline_of(
+        "= A\nalpha\n= B\nbeta\n\ngamma text here.\n",
+        "= A\nalpha\n\nbeta\n\ngamma text changed.\n",
+    );
+    let section = |text: &str| {
+        r.changes
+            .iter()
+            .find(|c| c.text.contains(text))
+            .unwrap()
+            .section
+            .clone()
+    };
+    assert!(
+        section("changed").is_some() && section("changed") != section("B"),
+        "{:?}",
+        r.changes
+    );
 }
 
 #[test]
