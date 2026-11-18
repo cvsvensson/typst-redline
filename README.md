@@ -33,6 +33,8 @@ typst-redline old.typ new.typ              # changes between two files, no git n
 
 The result is `paper.redline.pdf` next to your file; `-o out.pdf` puts it elsewhere. Anything git accepts works after `--since`: a commit hash, a tag, a branch name. `--since main...feature` shows what a branch changed since it left `main`.
 
+To see what changed since you last read a document, run `typst-redline paper.typ --mark-reviewed` when you have read it, and later `typst-redline paper.typ --since reviewed`. The mark records the last commit, which must contain the document, in a local git ref under `refs/typst-redline/reviewed/`, one per document; `git push` does not send it by default, and it does not show among branches or tags. If the repository has a branch or tag named `reviewed`, `--since reviewed` means that instead and says so on stderr. `git update-ref -d <ref>`, with the ref that `--mark-reviewed` prints, removes a mark.
+
 If your document uses files outside its own folder, such as `#import "../macros.typ"`, pass the project folder with `--root`, as you would to `typst compile`. Without `--root`, the `TYPST_ROOT` environment variable is used if it is set, and otherwise the folder of the file. The compiler used is the `typst` on your `PATH`; `--typst <path>` picks another one. Arguments after `--` go to `typst compile`, for example `-- --font-path fonts`. `typst-redline --help` lists all options.
 
 ## What is marked
