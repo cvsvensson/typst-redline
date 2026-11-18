@@ -5,7 +5,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::mark::{segments, typst_str};
-use crate::{Change, ChangeKind, PREAMBLE_PATH};
+use crate::{Bib, Change, ChangeKind, PREAMBLE_PATH};
 
 /// A change as laid out in one version: an insertion or a deletion, an
 /// identity that is the same in both versions, and its page.
@@ -177,8 +177,9 @@ fn join(groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>, o: Option<usize>, 
 
 /// The source of the composite document: a call to the preamble's
 /// `redline-side-by-side` with the paired pages, the changes found in one
-/// version only and the changes that are not marked.
-pub fn composite(old: &Side, new: &Side, changes: &[Change]) -> String {
+/// version only, the changes that are not marked and the bibliography
+/// changes.
+pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib) -> String {
     let (pairs, unpaired) = pair_pages(old.changes, new.changes, (old.headings, new.headings));
     let list = |v: &[usize]| format!("({})", v.iter().map(|p| format!("{p},")).collect::<String>());
     let side = |s: &Side| {
@@ -217,6 +218,6 @@ pub fn composite(old: &Side, new: &Side, changes: &[Change]) -> String {
             typst_str(&c.text)
         ));
     }
-    out.push_str("  ),\n))\n");
+    out.push_str(&format!("  ),\n  bib: {},\n))\n", bib.to_typst()));
     out
 }

@@ -356,13 +356,18 @@ impl<'a> Writer<'a> {
             if n == 0 && !s.deleted {
                 continue;
             }
-            let unmarked = count(&|c| here(c) && c.kind == ChangeKind::Unmarked) > 0;
+            let code: String = self
+                .changes
+                .iter()
+                .filter(|c| here(c) && c.kind == ChangeKind::Unmarked)
+                .map(|c| typst_str(&c.text) + ",")
+                .collect();
             let target = match &s.target {
                 Some(l) if !s.deleted => format!("<{l}>"),
                 _ => "none".into(),
             };
             entries.push_str(&format!(
-                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, deleted: {}, new: {}, unmarked: {unmarked}),\n",
+                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, deleted: {}, new: {}, code: ({code})),\n",
                 typst_str(&s.file),
                 s.level,
                 s.title,
@@ -371,16 +376,13 @@ impl<'a> Writer<'a> {
             ));
         }
         let p = &self.ctx.prefix;
-        let keys = |ks: &[String]| format!("({})", ks.iter().map(|k| typst_str(k) + ",").collect::<String>());
         format!(
-            "#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n  bib: (added: {}, removed: {}, changed: {}),\n))\n",
+            "#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n  bib: {},\n))\n",
             typst_str(old_label),
             typst_str(new_label),
             count(&|c| c.kind == ChangeKind::Ins),
             count(&|c| c.kind == ChangeKind::Del),
-            keys(&bib.added),
-            keys(&bib.removed),
-            keys(&bib.changed),
+            bib.to_typst(),
         )
     }
 
