@@ -45,6 +45,7 @@ If your document uses files outside its own folder, such as `#import "../macros.
 - **Several files:** changes in files that the document includes or imports are marked too. With git, the old versions of those files, and of images the old text uses, are taken from the old commit.
 - **Moved text:** a paragraph, heading, list item or section moved elsewhere, also into another file, is shown once, unmarked at its new place, with a grey bracket and a blue "moved" note in the margin. A grey line with a red arrow at its old place names its first words and links to it. Edits made while moving are marked as usual. `--no-moves` shows moved text as deleted at one place and inserted at the other.
 - **Code:** a change inside the `[...]` content arguments of a call, such as a template's title or abstract, is marked like other text. A call whose other arguments change is marked whole: the old call deleted, the new one inserted. Code that does not show on the page, such as a function body or a `#set` rule, cannot be marked: the summary page lists the changed lines or arguments, old and new, as *changed code not marked*.
+- **Changes that do not reach the page:** a mark inside content that the document never shows, or that a function reads as text instead of laying it out (a table built from `|`-separated text, for example), is lost with that content. The summary page lists each such change with its source text, and a moved passage whose new place is lost by its first words. Content inside `hide` counts as shown.
 - **Files the document reads:** when an image or data file changes while the call that reads it (`image`, `json`, `csv`, `read` and similar) stays the same, the summary page lists the file as changed. Files read through a computed path are not detected.
 
 With the deleted parts removed, the marked document has the same text, layout and numbering as the new version; states are the exception (see Known problems). Deleted figures and equations are numbered where they stand without shifting the numbers after them.
@@ -88,6 +89,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 ## Known problems
 
 - Some moved text still shows as deleted in one place and inserted in another: a sentence moved within or between paragraphs, a nested list item moved on its own, a short passage of fewer than four words, such as a short list item or a one-line paragraph, unless it moves together with a longer one next to it, text inside a call's content block such as `#slide[...]`, text moved into or out of a file that is not shown in order (imported, included by code, or no longer included), a passage rewritten so much that it keeps less than about 60% of its words, or of its rarer words, and moved setup code such as `#set` and `#let`.
+- Where a function reads its content as text, the changed text is missing from the page, not only its mark; the summary page lists it.
 - Paragraphs reordered inside a moved section show as deleted and inserted inside it.
 - A moved passage in a middle column of a page with three or more columns, and one in a narrow margin, has a bracket but no "moved" note.
 - Deleted content shifts line and page breaks compared with the new version.
@@ -103,7 +105,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 
 ## Styling
 
-Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`. The six colours of `--each-commit` and `--steps` are in `redline-style.steps`. Changed code that is not marked reaches `redline-summary` and `redline-side-by-side` as `(old, new)` pairs of strings, either empty for inserted or deleted code; a preamble copied from a version that took plain strings there must be copied again.
+Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`. The six colours of `--each-commit` and `--steps` are in `redline-style.steps`. Changed code that is not marked reaches `redline-summary` and `redline-side-by-side` as `(old, new)` pairs of strings, either empty for inserted or deleted code; a preamble copied from a version that took plain strings there must be copied again. A custom preamble's `redline-ins` and `redline-del` must also take the `id` argument that every mark other than a move's carries.
 
 ## VS Code
 

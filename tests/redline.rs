@@ -47,8 +47,8 @@ struct Run {
 }
 
 impl Run {
-    fn file(&self, path: &str) -> &str {
-        &self.files.iter().find(|(p, _)| p == path).unwrap().1
+    fn file(&self, path: &str) -> String {
+        without_ids(&self.files.iter().find(|(p, _)| p == path).unwrap().1)
     }
 }
 
@@ -105,10 +105,27 @@ fn generate(name: &str, preamble: &str, opts: Options) -> Run {
         files.push((p, c));
     }
     Run {
-        body: files.iter().find(|(p, _)| p == "main.typ").unwrap().1.clone(),
+        body: without_ids(&files.iter().find(|(p, _)| p == "main.typ").unwrap().1),
         files,
         changes: r.changes,
     }
+}
+
+/// Marked source with the `id` arguments of its marks left out.
+fn without_ids(src: &str) -> String {
+    let mut out = String::new();
+    let mut rest = src;
+    while let Some(i) = rest.find("id: ") {
+        let digits = rest[i + 4..].bytes().take_while(u8::is_ascii_digit).count();
+        let end = i + 4 + digits;
+        if digits > 0 && rest[end..].starts_with(')') {
+            out.push_str(rest[..i].strip_suffix(", ").unwrap_or(&rest[..i]));
+        } else {
+            out.push_str(&rest[..end]);
+        }
+        rest = &rest[end..];
+    }
+    out + rest
 }
 
 fn run(name: &str) -> Run {
@@ -146,7 +163,14 @@ fn inline_math_is_atomic() {
 #[test]
 fn label_stays_on_changed_equation() {
     let out = body("display-label");
-    assert_eq!(out.matches("<eq-energy>").count(), 1, "{out}");
+    let (_summary, doc) = out
+        .split_once(
+            ",
+))
+",
+        )
+        .unwrap();
+    assert_eq!(doc.matches("<eq-energy>").count(), 1, "{out}");
     assert!(out.contains("$ E = m c^2 + p^2 c^2 $ <eq-energy>]"), "{out}");
 }
 
@@ -606,6 +630,30 @@ fn query(dir: &Path, label: &str) -> String {
     String::from_utf8_lossy(&out.stdout).split_whitespace().collect()
 }
 
+/// Reads its body as text, so that a mark in it is dropped.
+const PIPES: &str = r#"#let pipes(body) = {
+  let rows = body.children.map(c => if c.func() == text { c.text } else if c == [ ] { " " } else if c.func() == linebreak or repr(c.func()) == "space" { "\n" } else { "" }).join()
+  let cells = rows.split("|").map(str.trim).filter(s => s != "")
+  table(columns: 2, ..cells.map(x => [#x]))
+}
+"#;
+
+#[test]
+fn change_that_a_function_drops_is_listed() {
+    let doc = |row: &str| format!("{PIPES}#pipes[\n| Alpha | 1 |\n| {row} |\n]\n");
+    let r = redline_of(&doc("Gamma | 2"), &doc("Delta | 3"));
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let Some(dir) = compile("text-parsed-body", &files) else {
+        return;
+    };
+    let lost = query(&dir, "<redline-lost>");
+    let texts: Vec<&str> = lost
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|i| Some(r.changes.get(i.parse::<usize>().ok()?)?.text.as_str()))
+        .collect();
+    assert_eq!(texts, ["Gamma | 2", "Delta | 3"], "{lost}");
+}
+
 #[test]
 fn output_compiles() {
     // Evaluated, the deleted code of `deleted-code` fails, as it should.
@@ -915,7 +963,7 @@ fn marked(dir: &Path, args: &[&str], entry: &str) -> String {
     let kept = stderr.lines().find_map(|l| l.strip_prefix("kept ")).unwrap();
     let src = std::fs::read_to_string(Path::new(kept).join(entry)).unwrap();
     std::fs::remove_dir_all(kept).unwrap();
-    src
+    without_ids(&src)
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -1581,7 +1629,7 @@ fn move_is_marked_with_the_commit_that_made_it() {
         steps: Some(vec![v(&mid)]),
         ..History::default()
     };
-    let out = &redline(&v(&old), &v(&new), FULL, &history, Moves::Find).files[0].1;
+    let out = &without_ids(&redline(&v(&old), &v(&new), FULL, &history, Moves::Find).files[0].1);
     let moves: Vec<&str> = out.lines().filter(|l| l.contains("move: (")).collect();
     assert!(
         !moves.is_empty() && moves.iter().all(|l| l.contains("step: 1)")),
@@ -1698,7 +1746,7 @@ fn each_commit_side_by_side_colours_both_sides_by_commit() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
     let kept = Path::new(stderr.lines().find_map(|l| l.strip_prefix("kept ")).unwrap());
-    let read = |p: &str| std::fs::read_to_string(kept.join(p)).unwrap();
+    let read = |p: &str| without_ids(&std::fs::read_to_string(kept.join(p)).unwrap());
     let (old, new) = (read(".redline-old-side/main.typ"), read("main.typ"));
     std::fs::remove_dir_all(kept).unwrap();
     // beta replaced alpha, gamma replaced beta.
