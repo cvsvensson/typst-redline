@@ -28,6 +28,7 @@ pub const OLD_DIR: &str = ".redline-old";
 /// A version of a project: `read` returns the file at a root-relative path
 /// with `/` separators, or `None` if it does not exist; `entry` is the path
 /// of the main file.
+#[derive(Clone)]
 pub struct Version<'a> {
     pub label: String,
     pub entry: String,
@@ -60,6 +61,9 @@ pub struct History<'a> {
     /// To mark each change in the colour of the commit that made it: the
     /// version after each commit, the last one (the new version) left out.
     pub steps: Option<Vec<Version<'a>>>,
+    /// The two versions are swapped: the steps lead from the new version to
+    /// the old one. Each change still takes the step that made it.
+    pub swapped: bool,
 }
 
 pub struct Redline {
@@ -112,7 +116,7 @@ pub fn redline(old: &Version, new: &Version, opts: Options, history: &History) -
         .steps
         .as_ref()
         .map(|vs| vs.iter().map(|v| project(v, &mut vec![])).collect());
-    let ctx = mark::Ctx::new(old_files, new_files, steps, opts);
+    let ctx = mark::Ctx::new(old_files, new_files, steps, history.swapped, opts);
     let (files, changes) = mark::write(&ctx, &old.label, &new.label, &bib, history);
     Redline {
         files,
