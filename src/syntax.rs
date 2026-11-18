@@ -532,14 +532,18 @@ pub fn similarity(ka: &[String], kb: &[String]) -> f64 {
     if ka.is_empty() && kb.is_empty() {
         return 1.0;
     }
-    let same: usize = capture_diff_slices(Algorithm::Myers, ka, kb)
+    2.0 * shared(ka, kb) as f64 / (ka.len() + kb.len()) as f64
+}
+
+/// The number of words that two lists share in order.
+pub fn shared(ka: &[String], kb: &[String]) -> usize {
+    capture_diff_slices(Algorithm::Myers, ka, kb)
         .iter()
         .filter_map(|op| match op {
             DiffOp::Equal { len, .. } => Some(*len),
             _ => None,
         })
-        .sum();
-    2.0 * same as f64 / (ka.len() + kb.len()) as f64
+        .sum()
 }
 
 /// The most similar of the candidates scored by [`similarity`], if it is

@@ -4,6 +4,7 @@
 mod align;
 mod blame;
 mod mark;
+mod moves;
 mod side;
 mod syntax;
 
