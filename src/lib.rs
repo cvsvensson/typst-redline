@@ -115,8 +115,27 @@ pub struct Change {
     /// Typst markup of the changed content; for a change that is not
     /// marked, the new code, empty if it was deleted.
     pub text: String,
-    /// For a change that is not marked, the old code, empty if it is new.
+    /// For a change that is not marked, the old code, empty if it is new;
+    /// for moved text at its new place, a line that names it.
     pub old: String,
+}
+
+impl Change {
+    /// The change as one that is not marked, with its old and new text.
+    pub fn unmarked(&self) -> Change {
+        let (old, text) = match self.kind {
+            ChangeKind::Ins => (String::new(), self.text.clone()),
+            ChangeKind::Del => (self.text.clone(), String::new()),
+            ChangeKind::Moved => (String::new(), self.old.clone()),
+            ChangeKind::Unmarked => (self.old.clone(), self.text.clone()),
+        };
+        Change {
+            kind: ChangeKind::Unmarked,
+            text,
+            old,
+            ..self.clone()
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -126,7 +145,7 @@ pub enum ChangeKind {
     /// A change the output does not show.
     Unmarked,
     /// Moved text, recorded at its old and at its new place, with the
-    /// number of the move as its text.
+    /// number of the move as its text; at the new place `old` names it.
     Moved,
 }
 

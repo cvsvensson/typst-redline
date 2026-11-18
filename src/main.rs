@@ -7,8 +7,8 @@ use std::process::{Command, ExitCode, Output};
 
 use tree::{Tree, git, output};
 use typst_redline::{
-    Anchor, Commit, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version,
-    composite, preamble_takes_moves, project_files, redline,
+    Anchor, Change, ChangeKind, Commit, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline,
+    Side, Version, composite, preamble_takes_moves, project_files, redline,
 };
 
 const USAGE: &str = "\
@@ -644,6 +644,7 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
             &[&"--input", &input, &root.join(entry), &dir.join(pdf)],
         )
     };
+    let mut back = None;
     for (i, (opts, keep_states, note)) in LADDER.into_iter().enumerate() {
         // The side-by-side layout shows no deleted content.
         if keep_states && a.side_by_side {
@@ -663,9 +664,15 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
                 swapped: true,
                 ..History::default()
             };
-            let back = redline(&new_v, &old_v, opts, &back_history, Moves::Reverse(&result.moves));
+            let back = back.insert(redline(
+                &new_v,
+                &old_v,
+                opts,
+                &back_history,
+                Moves::Reverse(&result.moves),
+            ));
             if i == 0 {
-                stage(&old_root, &new, &old, &back)?;
+                stage(&old_root, &new, &old, back)?;
                 write(&old_root, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
             }
             write(&old_root, &back.files)?;
@@ -682,8 +689,16 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
             if !note.is_empty() {
                 eprintln!("note: {note}, because the full proof failed to compile ({first_error})");
             }
-            if a.side_by_side {
-                compose(&a, dir, sides, (&old.label, &new.label), &result, &history, &tmp)?;
+            if let Some(back) = &back {
+                compose(
+                    &a,
+                    dir,
+                    sides,
+                    (&old.label, &new.label),
+                    [back, &result],
+                    &history,
+                    &tmp,
+                )?;
             } else if ["foreground", "background"]
                 .iter()
                 .all(|w| result.files.iter().any(|(_, s)| s.contains(w)))
@@ -1214,17 +1229,18 @@ fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<
 }
 
 /// Pair the pages of the two compiled sides, each given as (root, entry,
-/// side, pdf), and compile the composite that shows them to `to`.
+/// side, pdf) with the redline it was made from, and compile the composite
+/// that shows them to `to`.
 fn compose(
     a: &Args,
     dir: &Path,
     sides: [(&Path, &String, &str, &str); 2],
     labels: (&str, &str),
-    result: &Redline,
+    results: [&Redline; 2],
     history: &History,
     to: &Path,
 ) -> Result<(), String> {
-    type Layout = (usize, Vec<usize>, Vec<Placed>, Vec<Anchor>);
+    type Layout = (usize, Vec<usize>, Vec<usize>, Vec<Placed>, Vec<Anchor>);
     let layout = |(root, entry, side, _): (&Path, &String, &str, &str), label: &str| -> Result<Layout, String> {
         let input = format!("redline-side={side}");
         let entry = root.join(entry);
@@ -1247,6 +1263,10 @@ fn compose(
         };
         let (unbarred, rest) = rest.split_at((*n).min(rest.len()));
         warn_unbarred(unbarred, label);
+        let (lost, rest) = match rest {
+            [n, rest @ ..] => rest.split_at((*n).min(rest.len())),
+            [] => (rest, rest),
+        };
         let (mut changes, mut headings) = (vec![], vec![]);
         for &[kind, id, page] in rest.as_chunks::<3>().0 {
             match kind {
@@ -1258,10 +1278,26 @@ fn compose(
                 }),
             }
         }
-        Ok((*pages, unbarred.to_vec(), changes, headings))
+        Ok((*pages, unbarred.to_vec(), lost.to_vec(), changes, headings))
     };
-    let ((old_pages, old_unbarred, old, old_headings), (new_pages, new_unbarred, new, new_headings)) =
-        (layout(sides[0], labels.0)?, layout(sides[1], labels.1)?);
+    let (
+        (old_pages, old_unbarred, old_lost, old, old_headings),
+        (new_pages, new_unbarred, new_lost, new, new_headings),
+    ) = (layout(sides[0], labels.0)?, layout(sides[1], labels.1)?);
+    // A mark that a side did not lay out is listed as not marked, once.
+    let mut changes = results[1].changes.clone();
+    for (r, lost) in [(results[1], new_lost), (results[0], old_lost)] {
+        for c in lost.iter().filter_map(|&i| r.changes.get(i)) {
+            let c = c.unmarked();
+            let listed = |d: &Change| {
+                d.kind == ChangeKind::Unmarked
+                    && (d.old == c.text && d.text == c.old || d.old == c.old && d.text == c.text)
+            };
+            if !changes.iter().any(listed) {
+                changes.push(c);
+            }
+        }
+    }
     let (old_pdf, new_pdf) = (format!("/{OLD_PDF}"), format!("/{NEW_PDF}"));
     let source = composite(
         &Side {
@@ -1280,8 +1316,8 @@ fn compose(
             changes: &new,
             headings: &new_headings,
         },
-        &result.changes,
-        &result.bib,
+        &changes,
+        &results[1].bib,
         history,
     );
     write(dir, &[(COMPOSITE.into(), source)])?;

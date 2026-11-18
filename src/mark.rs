@@ -499,10 +499,10 @@ impl<'a> Writer<'a> {
 
     /// [`Self::mark`] with the step to show, if any.
     fn emit(&mut self, kind: ChangeKind, args: &str, body: String, toks: &[Tok], step: Option<u8>) {
-        let args = match step {
-            Some(s) if args.is_empty() => format!("step: {s}"),
-            Some(s) => format!("{args}, step: {s}"),
-            None => args.to_string(),
+        let step = step.map_or(String::new(), |s| format!("step: {s}, "));
+        let args = match args {
+            "" => format!("{step}id: {}", self.changes.len()),
+            _ => format!("{args}, {step}id: {}", self.changes.len()),
         };
         let p = &self.ctx.prefix;
         let call = format!("{p}-{}({args})[{body}]", kind.name());
@@ -702,6 +702,29 @@ impl<'a> Writer<'a> {
                 .filter(|c| here(c) && c.kind == ChangeKind::Unmarked)
                 .map(|c| format!("(old: {}, new: {}),", typst_str(&c.old), typst_str(&c.text)))
                 .collect();
+            // A move is checked once, at its new place.
+            let marks: String = self
+                .changes
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| here(c))
+                .filter(|(_, c)| {
+                    matches!(c.kind, ChangeKind::Ins | ChangeKind::Del)
+                        || c.kind == ChangeKind::Moved && !c.old.is_empty()
+                })
+                .map(|(id, c)| {
+                    let m = c.unmarked();
+                    let mv = match c.kind {
+                        ChangeKind::Moved => format!("move: {}, ", c.text),
+                        _ => String::new(),
+                    };
+                    format!(
+                        "(id: {id}, {mv}old: {}, new: {}),",
+                        typst_str(&m.old),
+                        typst_str(&m.text)
+                    )
+                })
+                .collect();
             let target = match &s.target {
                 Some(l) if !s.deleted => format!("<{l}>"),
                 _ => "none".into(),
@@ -713,7 +736,7 @@ impl<'a> Writer<'a> {
                 _ => format!("moves: {moves}, moved: true, "),
             };
             entries.push_str(&format!(
-                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, {moved}deleted: {}, new: {}, code: ({code})),\n",
+                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, {moved}deleted: {}, new: {}, code: ({code}), marks: ({marks})),\n",
                 typst_str(&s.file),
                 s.level,
                 s.title,
@@ -1007,6 +1030,7 @@ impl<'a> Writer<'a> {
             if k == first {
                 self.arrived.insert(r, self.current.clone());
                 self.record(ChangeKind::Moved, r.to_string());
+                self.changes.last_mut().unwrap().old = format!("Moved: {}", self.move_note(&old.blocks[0]).0);
             }
         }
         self.file.old_path = path;
