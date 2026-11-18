@@ -320,18 +320,39 @@ impl<'a> Writer<'a> {
             .iter()
             .map(|(p, _)| front(p, format!("[Definitions in #raw({}), marked where used]", typst_str(p))))
             .collect();
-        let mut entries = String::new();
+        // A heading deleted where a heading with the same title remains was
+        // changed or moved, not deleted: its changes count with the section
+        // before it.
+        let moved = |s: &Section| {
+            s.deleted
+                && self
+                    .sections
+                    .iter()
+                    .any(|t| !t.deleted && collapse_ws(&t.title) == collapse_ws(&s.title))
+        };
+        let mut listed: Vec<(&Section, Vec<&Section>)> = vec![];
         for s in std::iter::once(&first).chain(&self.sections).chain(&others) {
-            let here = |c: &Change| c.section == s.target && (s.target.is_some() || c.file == s.file);
-            let n = if s.deleted { 0 } else { count(&here) };
-            // A heading deleted where a heading with the same title remains
-            // was changed or moved, not deleted.
-            let kept = |t: &Section| !t.deleted && collapse_ws(&t.title) == collapse_ws(&s.title);
-            if n == 0 && !s.deleted || s.deleted && self.sections.iter().any(kept) {
+            match listed.last_mut() {
+                Some((_, parts)) if moved(s) => parts.push(s),
+                _ => listed.push((s, vec![s])),
+            }
+        }
+        let mut entries = String::new();
+        for (s, parts) in listed {
+            let here = |c: &Change| {
+                parts
+                    .iter()
+                    .any(|p| c.section == p.target && (p.target.is_some() || c.file == p.file))
+            };
+            let n = count(&here);
+            if n == 0 && !s.deleted {
                 continue;
             }
-            let unmarked = !s.deleted && count(&|c| here(c) && c.kind == ChangeKind::Unmarked) > 0;
-            let target = s.target.as_ref().map_or("none".to_string(), |l| format!("<{l}>"));
+            let unmarked = count(&|c| here(c) && c.kind == ChangeKind::Unmarked) > 0;
+            let target = match &s.target {
+                Some(l) if !s.deleted => format!("<{l}>"),
+                _ => "none".into(),
+            };
             entries.push_str(&format!(
                 "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, deleted: {}, new: {}, unmarked: {unmarked}),\n",
                 typst_str(&s.file),
@@ -423,16 +444,21 @@ impl<'a> Writer<'a> {
 
     /// A run of differing blocks. Similar blocks of the same kind, marker
     /// and label are paired and diffed word by word; around each pair,
-    /// deletions come first. Pairing looks a bounded number of blocks ahead,
-    /// so that its cost stays linear in the length of the run.
+    /// deletions come first. Blocks are not paired across a heading that
+    /// replaces another: the section is new. Pairing looks a bounded number
+    /// of blocks ahead, so that its cost stays linear in the length of the
+    /// run.
     fn region(&mut self, old: &[Block], new: &[Block]) {
         let owords: Vec<Vec<String>> = old.iter().map(|b| words(&b.toks())).collect();
+        let heading = |b: &&Block| b.kind == Kind::Heading;
         let mut p = 0;
         let mut pending: Vec<&Block> = vec![];
         for nb in new {
             let nwords = words(&nb.toks());
+            let new_section = nb.kind != Kind::Heading && pending.iter().any(heading);
             let best = most_similar(
                 (p..old.len().min(p + 32))
+                    .take_while(|&q| !(new_section && old[q].kind == Kind::Heading))
                     .filter(|&q| old[q].kind == nb.kind && old[q].frame() == nb.frame())
                     .map(|q| (q, similarity(&owords[q], &nwords))),
             );
@@ -452,18 +478,45 @@ impl<'a> Writer<'a> {
     /// Deleted and inserted blocks in turn, so that a replaced block is
     /// followed by its replacement; but leading setup code of the new
     /// version goes first (deleted content may use its definitions), and
-    /// text before the first heading on either side stays before the
-    /// headings.
+    /// from the first heading on either side, sections take turns whole. A
+    /// page or column break inserted or deleted with marked content is part
+    /// of that change and is not listed.
     fn unpaired(&mut self, old: &[Block], new: &[&Block]) {
         let ns = new.iter().position(|b| b.kind != Kind::Setup).unwrap_or(new.len());
         let oh = old.iter().position(|b| b.kind == Kind::Heading).unwrap_or(old.len());
         let nh = new.iter().position(|b| b.kind == Kind::Heading).unwrap_or(new.len());
-        new[..ns].iter().for_each(|b| self.inserted(b));
-        for (old, new) in [(&old[..oh], &new[ns..nh]), (&old[oh..], &new[nh..])] {
-            for k in 0..old.len().max(new.len()) {
-                old.get(k).inspect(|b| self.deleted(b));
-                new.get(k).inspect(|b| self.inserted(b));
+        let old_content = old.iter().any(|b| b.kind != Kind::Setup);
+        let new_content = ns < new.len();
+        let insert = |w: &mut Self, b: &Block| {
+            if b.is_break() && new_content {
+                w.kept(b)
+            } else {
+                w.inserted(b)
             }
+        };
+        new[..ns].iter().for_each(|b| insert(self, b));
+        let delete = |w: &mut Self, b: &Block| {
+            if !(b.is_break() && old_content) {
+                w.deleted(b)
+            }
+        };
+        for k in 0..oh.max(nh - ns) {
+            old[..oh].get(k).inspect(|b| delete(self, b));
+            new[ns..nh].get(k).inspect(|b| insert(self, b));
+        }
+        let osecs: Vec<&[Block]> = old[oh..].chunk_by(|_, b| b.kind != Kind::Heading).collect();
+        let nsecs: Vec<&[&Block]> = new[nh..].chunk_by(|_, b| b.kind != Kind::Heading).collect();
+        for k in 0..osecs.len().max(nsecs.len()) {
+            osecs
+                .get(k)
+                .into_iter()
+                .flat_map(|s| s.iter())
+                .for_each(|b| delete(self, b));
+            nsecs
+                .get(k)
+                .into_iter()
+                .flat_map(|s| s.iter())
+                .for_each(|b| insert(self, b));
         }
     }
 
@@ -566,14 +619,18 @@ impl<'a> Writer<'a> {
         if ob.kind == Kind::Heading {
             let level = ob.heading_level();
             if level <= 2 && self.top {
+                // The changes up to the next section are in this one; its
+                // key is not a label.
+                let key = format!("{}-del-{}", self.ctx.prefix, self.sections.len());
                 self.sections.push(Section {
                     file: self.file.path.clone(),
                     level,
-                    target: None,
+                    target: Some(key.clone()),
                     title: format!("[{body}]"),
                     deleted: true,
                     new: false,
                 });
+                self.current = Some(key);
             }
             args = format!("heading: {level}");
         }

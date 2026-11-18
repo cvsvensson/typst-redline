@@ -276,6 +276,30 @@ fn heading_with_a_new_label_is_not_listed_as_deleted() {
     assert!(!out.contains("deleted: true"), "{out}");
 }
 
+#[test]
+fn page_break_inserted_with_a_slide_is_part_of_it() {
+    let r = run("inserted-slide");
+    assert!(r.changes.iter().all(|c| c.kind != ChangeKind::Unmarked), "{}", r.body);
+    let read = |s: &'static str| move |_: &str| Some(s.to_string());
+    let (old, new) = (read("A\n\nB\n"), read("A\n#pagebreak()\nB\n"));
+    let v = |read| Version {
+        label: "v".into(),
+        entry: "main.typ".into(),
+        read,
+    };
+    let lone = redline(&v(&old), &v(&new), FULL);
+    assert!(lone.changes.iter().any(|c| c.kind == ChangeKind::Unmarked));
+}
+
+#[test]
+fn section_replacing_another_is_not_compared_with_it() {
+    let out = body("replaced-section");
+    assert!(
+        out.contains("#redline-ins(block: true)[Second sweet spot appears]"),
+        "{out}"
+    );
+}
+
 fn typst_available() -> bool {
     let ok = Command::new("typst").arg("--version").output().is_ok();
     if !ok {
