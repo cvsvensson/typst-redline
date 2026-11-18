@@ -466,8 +466,9 @@ impl<'a> Writer<'a> {
 
     /// A run of differing blocks. Similar blocks of the same kind, marker
     /// and label are paired and diffed word by word; around each pair,
-    /// deletions come first. Blocks are not paired across a heading that
-    /// replaces another: the section is new. Pairing looks a bounded number
+    /// deletions come first. Across a heading that replaces another, blocks
+    /// are paired only if they are much alike: the section is likely new,
+    /// unless it was renamed. Pairing looks a bounded number
     /// of blocks ahead, so that its cost stays linear in the length of the
     /// run.
     fn region(&mut self, old: &[Block], new: &[Block]) {
@@ -478,11 +479,13 @@ impl<'a> Writer<'a> {
         for nb in new {
             let nwords = words(&nb.toks());
             let new_section = nb.kind != Kind::Heading && pending.iter().any(heading);
+            let end = old.len().min(p + 32);
+            let old_heading = (p..end).find(|&q| old[q].kind == Kind::Heading).unwrap_or(end);
             let best = most_similar(
-                (p..old.len().min(p + 32))
-                    .take_while(|&q| !(new_section && old[q].kind == Kind::Heading))
+                (p..end)
                     .filter(|&q| old[q].kind == nb.kind && old[q].frame() == nb.frame())
-                    .map(|q| (q, similarity(&owords[q], &nwords))),
+                    .map(|q| (q, similarity(&owords[q], &nwords)))
+                    .filter(|&(q, s)| !new_section || q < old_heading || s >= 0.7),
             );
             match best {
                 Some(q) => {
