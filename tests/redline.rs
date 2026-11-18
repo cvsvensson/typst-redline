@@ -182,7 +182,7 @@ fn label_stays_on_changed_equation() {
     let (_summary, doc) = out
         .split_once(
             ",
-))
+)) }
 ",
         )
         .unwrap();
@@ -217,10 +217,12 @@ fn changes_stay_inside_nested_items() {
 }
 
 #[test]
-fn summary_comes_first_at_the_top_level() {
+fn summary_and_bars_wrap_the_document_at_the_top_level() {
     for name in ["list-first", "deleted-first"] {
         let out = body(name);
-        let at = out.find("#redline-summary(").unwrap();
+        let at = out
+            .find("#show: body => { redline-bars(body); redline-summary(")
+            .unwrap();
         assert!(
             at < out.find("#redline-del(").unwrap() && out[..at].ends_with('\n'),
             "{out}"
@@ -1040,19 +1042,15 @@ fn two_sided_document_keeps_its_parity_and_page_numbers() {
 }
 
 #[test]
-fn one_sided_document_follows_a_one_page_summary_directly() {
-    let r = redline_of(
-        "#set page(height: auto)
-Old text.
-",
-        "#set page(height: auto)
-New text.
-",
+fn document_reads_the_physical_page_numbers_of_the_new_version() {
+    let Some(marked) = probe("physical-page") else {
+        return;
+    };
+    let new = query(
+        &compile("physical-page-new", &tree("physical-page", "new")).unwrap(),
+        "<probe>",
     );
-    let marked = [r.files[0].clone(), (PREAMBLE_PATH.into(), PREAMBLE.into())];
-    if let Some(pages) = render("one-sided", &marked) {
-        assert_eq!(pages.len(), 2);
-    }
+    assert_eq!(marked, new);
 }
 
 #[test]
@@ -1880,7 +1878,7 @@ fn paragraph_inserted_in_two_steps_keeps_its_lines() {
     };
     let new = render("two-steps-new", &[("main.typ".into(), new)]).unwrap();
     let height = |png: &[u8]| u32::from_be_bytes(png[20..24].try_into().unwrap());
-    assert_eq!(height(marked.last().unwrap()), height(&new[0]), "{}", r.files[0].1);
+    assert_eq!(height(&marked[0]), height(&new[0]), "{}", r.files[0].1);
 }
 
 #[test]

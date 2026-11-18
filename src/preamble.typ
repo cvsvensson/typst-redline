@@ -17,7 +17,7 @@
 //   element or on a line of its own).
 // - redline-bars(body): the rest of the document, which draws change bars on
 //   its pages (`body => body` for nothing).
-// - redline-summary(info): the summary; `info` is (old, new: version labels,
+// - redline-summary(info): the summary, after the document; `info` is (old, new: version labels,
 //   ins, del: numbers of changes, moved: number of moves, entries: array of
 //   (file, level, target: label or none, title, count: changed passages,
 //   moves: moves into or out of the section other than its own, before:
@@ -610,9 +610,6 @@
   let pg = here().page()
   [#metadata(from)<redline-page>]
   let m = page.margin
-  if type(m) == dictionary and ("inside" in m or "outside" in m) or page.binding != auto {
-    [#metadata(pg)<redline-two-sided>]
-  }
   if pg == 1 {
     // For the summary and the binary: the pages with changes but without
     // bars. For the side-by-side layout also the number of pages, the ids of
@@ -1004,7 +1001,9 @@
 #let redline-summary(info) = if redline-side == none {
   let st = redline-style
   // Pages of its own, without the document's header, footer and numbers.
-  page(header: none, footer: none, numbering: none, {
+  pagebreak(weak: true)
+  set page(header: none, footer: none, numbering: none)
+  {
     // English, whatever language the document is in.
     set text(lang: "en", dir: ltr)
     block({
@@ -1075,14 +1074,6 @@
         }
       }
     })
-    // The page counter is reset on the page before the document, where a
-    // header on its first page sees it.
-    [#metadata(none)<redline-summary-end>]
-    counter(page).update(0)
-  })
-  // A two-sided document starts on an odd page, so that it keeps its parity.
-  context if query(<redline-two-sided>).len() > 0 and calc.odd(query(<redline-summary-end>).first().location().page()) {
-    page(header: none, footer: none, numbering: none, counter(page).update(0))
   }
 } else { redline-lost(info.entries.map(e => e.marks).flatten()) }
 
