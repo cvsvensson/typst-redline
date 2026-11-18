@@ -122,6 +122,12 @@ pub fn redline(old: &Version, new: &Version, opts: Options, history: &History) -
     }
 }
 
+/// The root-relative paths of the entry and the files it includes or
+/// imports by a literal path, directly or not.
+pub fn project_files(v: &Version) -> Vec<String> {
+    project(v, &mut vec![]).into_iter().map(|(p, _)| p).collect()
+}
+
 /// The entry and the files it includes or imports by a literal path,
 /// directly or not, with their sources. A missing entry is empty.
 fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {

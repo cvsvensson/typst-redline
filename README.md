@@ -41,7 +41,7 @@ With the deleted parts removed, the marked document has the same text, layout an
 
 ## Who changed what
 
-`--each-commit` gives each commit between the two versions its own colour, for up to 6 commits. Deleted text is still struck through and new text still highlighted; the colour tells which commit made the change. The list of commits on the summary page is the legend, and each page with marks repeats it in one small line in the bottom margin when there is room.
+`--each-commit` gives each commit between the two versions that changes the document or a file it includes its own colour, for up to 6 commits. Deleted text is still struck through and new text still highlighted; the colour tells which commit made the change. The list of commits on the summary page is the legend, and each page with marks repeats it in one small line in the bottom margin when there is room.
 
 ```sh
 typst-redline paper.typ --since HEAD~4 --each-commit
