@@ -1126,6 +1126,28 @@ fn file_outside_the_root_suggests_the_repository_as_root() {
 }
 
 #[test]
+fn each_change_is_marked_with_the_commit_that_made_it() {
+    let (old, mid, new) = (
+        |_: &str| Some("The lazy fox jumps.\n".to_string()),
+        |_: &str| Some("The quick brown fox jumps.\n".to_string()),
+        |_: &str| Some("The quick red fox jumps.\n".to_string()),
+    );
+    let v = |read| Version {
+        label: "v".into(),
+        entry: "main.typ".into(),
+        read,
+    };
+    let history = History {
+        steps: Some(vec![v(&mid)]),
+        ..History::default()
+    };
+    let out = &redline(&v(&old), &v(&new), FULL, &history).files[0].1;
+    for mark in ["step: 1)[lazy]", "step: 1)[quick]", "step: 2)[red]"] {
+        assert!(out.contains(mark), "{out}");
+    }
+}
+
+#[test]
 fn summary_lists_the_commits_since_the_old_revision() {
     if !typst_available() {
         return;
@@ -1140,4 +1162,56 @@ fn summary_lists_the_commits_since_the_old_revision() {
         .collect();
     assert_eq!(subjects, ["\"beta\"", "\"gamma\""], "{src}");
     assert!(src.contains("uncommitted: true"), "{src}");
+}
+
+#[test]
+fn each_commit_compiles_with_the_commits_coloured() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("each-commit", &["alpha", "beta", "gamma"]);
+    let src = marked(
+        &dir,
+        &["doc/main.typ", "--since", "c-alpha", "--each-commit"],
+        "main.typ",
+    );
+    assert!(src.contains("step: 2)[gamma"), "{src}");
+}
+
+#[test]
+fn each_commit_refuses_more_commits_than_colours() {
+    let dir = repo("many-commits", &["a", "b", "c", "d", "e", "f", "g", "h"]);
+    let out = cli(&dir, &["doc/main.typ", "--since", "c-a", "--each-commit"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.code() == Some(1) && stderr.contains("7 commits"), "{stderr}");
+}
+
+#[test]
+fn each_commit_needs_one_file_and_the_inline_layout() {
+    let dir = temp_dir("each-commit-usage");
+    for args in [
+        &["old.typ", "new.typ", "--each-commit"][..],
+        &["main.typ", "--each-commit", "--layout", "side-by-side"],
+    ] {
+        assert_eq!(cli(&dir, args).status.code(), Some(2), "{args:?}");
+    }
+}
+
+#[test]
+fn each_commit_needs_the_preamble_function() {
+    let dir = repo("each-commit-preamble", &["alpha", "beta"]);
+    std::fs::write(dir.join("p.typ"), PREAMBLE.replace("redline-step-style", "other")).unwrap();
+    let out = cli(
+        &dir,
+        &[
+            "doc/main.typ",
+            "--since",
+            "c-alpha",
+            "--each-commit",
+            "--preamble",
+            "p.typ",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("does not define redline-step-style"), "{stderr}");
 }

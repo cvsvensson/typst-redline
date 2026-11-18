@@ -6,8 +6,9 @@ use std::hash::Hash;
 use std::ops::Range;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
-use typst_syntax::{SyntaxKind as K, SyntaxNode, parse};
+use typst_syntax::{RootedPath, Source, SyntaxKind as K, SyntaxNode, VirtualPath, VirtualRoot, parse};
 
+use crate::blame::{Steps, blame};
 use crate::syntax::*;
 use crate::{Bib, Change, ChangeKind, History, OLD_DIR, Options, PREAMBLE_PATH, pair_files, resolve};
 
@@ -30,10 +31,18 @@ pub struct Ctx {
     new_files: Vec<(String, String)>,
     /// New file path to the path of the old file it is compared with.
     pairs: HashMap<String, String>,
+    /// The project files of the versions between the old and the new one,
+    /// if each change is marked with the step that made it.
+    steps: Option<Vec<Vec<(String, String)>>>,
 }
 
 impl Ctx {
-    pub fn new(old_files: Vec<(String, String)>, new_files: Vec<(String, String)>, opts: Options) -> Self {
+    pub fn new(
+        old_files: Vec<(String, String)>,
+        new_files: Vec<(String, String)>,
+        steps: Option<Vec<Vec<(String, String)>>>,
+        opts: Options,
+    ) -> Self {
         let union = |files: &[(String, String)], f: fn(&SyntaxNode) -> HashSet<String>| {
             files.iter().flat_map(|(_, s)| f(&parse(s))).collect::<HashSet<_>>()
         };
@@ -59,7 +68,13 @@ impl Ctx {
             pairs: pair_files(&old_files, &new_files),
             old_files,
             new_files,
+            steps,
         }
+    }
+
+    /// The step from the last version before the new one to the new one.
+    fn last_step(&self) -> Option<u8> {
+        self.steps.as_ref().map(|s| s.len() as u8 + 1)
     }
 
     fn entry(&self) -> &str {
@@ -132,6 +147,11 @@ struct File {
     /// Names that deleted code which is not evaluated must not use: defined
     /// in the old file or project but not in the new one.
     removed: HashSet<String>,
+    /// The old and the new file, whose spans the tokens carry.
+    sources: Option<(Source, Source)>,
+    /// For each byte of the new file the step that wrote it, and for each
+    /// byte of the old file the step that removed it (see [`blame`]).
+    blame: Option<(Steps, Steps)>,
 }
 
 struct Writer<'a> {
@@ -232,20 +252,39 @@ impl<'a> Writer<'a> {
         if !entry && old_src == new_src {
             return;
         }
-        let (o, n) = (parse(old_src), parse(new_src));
-        let (mut removed, kept) = (definitions(&o), definitions(&n));
+        // Distinct file ids, so that a span finds its node only in its file.
+        let parsed = |name: &str, src: &str| {
+            let id = RootedPath::new(VirtualRoot::Project, VirtualPath::new(name).unwrap()).intern();
+            Source::new(id, src.into())
+        };
+        let (os, ns) = (parsed("old.typ", old_src), parsed("new.typ", new_src));
+        let (o, n) = (os.root(), ns.root());
+        let (mut removed, kept) = (definitions(o), definitions(n));
         removed.retain(|d| !kept.contains(d));
         removed.extend(ctx.removed_defs.iter().cloned());
+        let blame = ctx.steps.as_ref().map(|steps| {
+            let mut chain = vec![old_src];
+            chain.extend(
+                steps
+                    .iter()
+                    .map(|f| source(f, path).or(source(f, &old_path)).unwrap_or_default()),
+            );
+            chain.push(new_src);
+            blame(&chain)
+        });
+        let children = |r: &SyntaxNode| r.children().cloned().collect::<Vec<_>>();
+        let (odoc, ndoc) = (Doc::new(&children(o)), Doc::new(&children(n)));
         let file = File {
             path: path.into(),
             old_path,
             indent: String::new(),
             removed,
+            sources: Some((os.clone(), ns.clone())),
+            blame,
         };
         let outer = std::mem::replace(&mut self.file, file);
         let out = std::mem::take(&mut self.out);
-        let children = |r: &SyntaxNode| r.children().cloned().collect::<Vec<_>>();
-        self.docs(&Doc::new(&children(&o)), &Doc::new(&children(&n)));
+        self.docs(&odoc, &ndoc);
         let marked = std::mem::replace(&mut self.out, out);
         self.file = outer;
         if entry {
@@ -277,6 +316,17 @@ impl<'a> Writer<'a> {
     /// it. Deleted code sees the old file's definitions, which read the old
     /// version's files, so that it shows what was deleted.
     fn mark(&mut self, kind: ChangeKind, args: &str, body: String, toks: &[Tok]) {
+        let step = self.step(toks, kind);
+        self.emit(kind, args, body, toks, step);
+    }
+
+    /// [`Self::mark`] with the step to show, if any.
+    fn emit(&mut self, kind: ChangeKind, args: &str, body: String, toks: &[Tok], step: Option<u8>) {
+        let args = match step {
+            Some(s) if args.is_empty() => format!("step: {s}"),
+            Some(s) => format!("{args}, step: {s}"),
+            None => args.to_string(),
+        };
         let p = &self.ctx.prefix;
         let call = format!("{p}-{}({args})[{body}]", kind.name());
         let old_scope = kind == ChangeKind::Del
@@ -291,6 +341,80 @@ impl<'a> Writer<'a> {
             self.out.push_str(&format!("#{call};"));
         }
         self.record(kind, body);
+    }
+
+    /// Mark inserted tokens; with steps, each run of tokens that one step
+    /// wrote separately.
+    fn ins(&mut self, args: &str, toks: &[Tok]) {
+        let (Some(last), steps) = (self.ctx.last_step(), self.tok_steps(toks, ChangeKind::Ins)) else {
+            return self.mark(ChangeKind::Ins, args, self.content(toks, ChangeKind::Ins), toks);
+        };
+        let mut i = 0;
+        for run in steps.chunk_by(|a, b| a == b) {
+            let (lead, core, trail) = trim_spaces(&toks[i..i + run.len()]);
+            i += run.len();
+            self.out.push_str(&lead);
+            if !core.is_empty() {
+                let step = if run[0] == 0 { last } else { run[0] };
+                self.emit(
+                    ChangeKind::Ins,
+                    args,
+                    self.content(core, ChangeKind::Ins),
+                    core,
+                    Some(step),
+                );
+            }
+            self.out.push_str(&trail);
+        }
+    }
+
+    /// The step of each token: the one that wrote most of its source, or
+    /// for a deletion removed it. The steps can keep text that the direct
+    /// comparison sees as changed, because they align it differently: such
+    /// a token takes the step that changed text next to it, else the step
+    /// of a neighbouring token; 0 if none has one.
+    fn tok_steps(&self, toks: &[Tok], kind: ChangeKind) -> Vec<u8> {
+        let (Some((os, ns)), Some((wrote, removed))) = (&self.file.sources, &self.file.blame) else {
+            return vec![];
+        };
+        let (src, steps) = if kind == ChangeKind::Del {
+            (os, removed)
+        } else {
+            (ns, wrote)
+        };
+        let text = src.text().as_bytes();
+        let mut out: Vec<u8> = toks
+            .iter()
+            .map(|t| {
+                let Some(node) = src.find(t.at.0) else { return 0 };
+                let start = (node.offset() + t.at.1).min(text.len());
+                let end = (start + t.source_len()).min(text.len());
+                let bytes = || (start..end).filter(|&i| !text[i].is_ascii_whitespace());
+                majority(bytes().map(|i| (steps[i].0, 1)))
+                    .or_else(|| majority(bytes().map(|i| (steps[i].1, 1))))
+                    .unwrap_or(0)
+            })
+            .collect();
+        for i in 1..out.len() {
+            if out[i] == 0 {
+                out[i] = out[i - 1];
+            }
+        }
+        for i in (1..out.len()).rev() {
+            if out[i - 1] == 0 {
+                out[i - 1] = out[i];
+            }
+        }
+        out
+    }
+
+    /// The step a mark of `toks` shows: the one that made most of it, else
+    /// the last.
+    fn step(&self, toks: &[Tok], kind: ChangeKind) -> Option<u8> {
+        let last = self.ctx.last_step()?;
+        let steps = self.tok_steps(toks, kind);
+        let weight = |t: &Tok| if t.kind == TK::Space { 0 } else { t.source_len() };
+        Some(majority(steps.into_iter().zip(toks.iter().map(weight))).unwrap_or(last))
     }
 
     /// Setup code written as in the new version, its change listed.
@@ -613,13 +737,7 @@ impl<'a> Writer<'a> {
         let label = self.section(nb, true);
         let (prefix, nodes, suffix) = nb.parts();
         self.out.push_str(&prefix);
-        let toks = tokenize(&nodes);
-        self.mark(
-            ChangeKind::Ins,
-            "block: true",
-            self.content(&toks, ChangeKind::Ins),
-            &toks,
-        );
+        self.ins("block: true", &tokenize(&nodes));
         self.out.push_str(&suffix);
         self.out.push_str(&label);
     }
@@ -925,6 +1043,7 @@ impl<'a> Writer<'a> {
                 text: text(&nodes),
                 nodes,
                 block: true,
+                at: (x.span(), 0),
             }
         };
         let (ot, nt) = ([tok(o)], [tok(n)]);
@@ -946,12 +1065,7 @@ impl<'a> Writer<'a> {
                 self.out.push('[');
                 self.out.push_str(&lead);
                 if !core.is_empty() {
-                    self.mark(
-                        ChangeKind::Ins,
-                        "block: true",
-                        self.content(core, ChangeKind::Ins),
-                        core,
-                    );
+                    self.ins("block: true", core);
                     found = true;
                 }
                 self.out.push_str(&trail);
@@ -1021,13 +1135,25 @@ impl<'a> Writer<'a> {
                 } else {
                     block_arg(core)
                 };
-                self.mark(ChangeKind::Ins, args, self.content(core, ChangeKind::Ins), core);
+                self.ins(args, core);
             }
             self.out.push_str(&trail);
             self.out.push_str(gap.map_or("", |t| &t.text));
         }
         self.out.push_str(&ntrail);
     }
+}
+
+/// The most voted step other than 0, the later on a tie.
+fn majority(votes: impl Iterator<Item = (u8, usize)>) -> Option<u8> {
+    let mut count = [0usize; 256];
+    for (s, w) in votes {
+        count[s as usize] += w;
+    }
+    (1..256)
+        .max_by_key(|&s| count[s])
+        .filter(|&s| count[s] > 0)
+        .map(|s| s as u8)
 }
 
 /// A changed run that is only display equations or code on their own
