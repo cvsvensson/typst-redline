@@ -456,68 +456,43 @@ fn renamed(old: &Spec, to: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Tried in turn until one compiles: a frame cannot hold content that sets
-/// the page, marks inside code can break functions that inspect their body,
-/// and deleted code can fail (the old version it is evaluated in fails on
-/// its own). The first flag keeps state updates in deleted content, which
-/// some code needs but which can change what reads the state after it; the
-/// second says whether the preamble frames content computed at layout.
-const LADDER: [(Options, bool, bool, &str); 6] = [
-    (
-        Options {
-            eval_deleted: true,
-            content_blocks: true,
-        },
-        false,
-        true,
-        "",
-    ),
-    (
-        Options {
-            eval_deleted: true,
-            content_blocks: true,
-        },
-        true,
-        true,
-        "state updates in deleted content are kept",
-    ),
-    (
-        Options {
-            eval_deleted: true,
-            content_blocks: true,
-        },
-        false,
-        false,
-        "changed content computed at layout is not framed",
-    ),
-    (
-        Options {
-            eval_deleted: false,
-            content_blocks: true,
-        },
-        false,
-        false,
-        "changed content computed at layout is not framed and deleted code is shown by name",
-    ),
-    (
-        Options {
-            eval_deleted: true,
-            content_blocks: false,
-        },
-        false,
-        false,
-        "changed content computed at layout is not framed and changed code is marked whole",
-    ),
-    (
-        Options {
-            eval_deleted: false,
-            content_blocks: false,
-        },
-        false,
-        false,
-        "changed content computed at layout is not framed, deleted code is shown by name and changed code is marked whole",
-    ),
+/// The fallbacks applied, tried in turn until one compiles: a frame cannot
+/// hold content that sets the page, marks inside code can break functions
+/// that inspect their body, and deleted code can fail (the old version it is
+/// evaluated in fails on its own). The preamble reads them from the input
+/// `redline-fallback`, and the summary says what each changes.
+const LADDER: [&[&str]; 6] = [
+    &[],
+    &["states"],
+    &["frames"],
+    &["frames", "names"],
+    &["frames", "whole"],
+    &["frames", "names", "whole"],
 ];
+
+fn fallback_options(fallbacks: &[&str]) -> Options {
+    Options {
+        eval_deleted: !fallbacks.contains(&"names"),
+        content_blocks: !fallbacks.contains(&"whole"),
+    }
+}
+
+/// The note on stderr for the fallbacks applied.
+fn fallback_note(fallbacks: &[&str]) -> String {
+    let parts: Vec<&str> = fallbacks
+        .iter()
+        .map(|f| match *f {
+            "states" => "state updates in deleted content are kept",
+            "frames" => "changed content computed at layout is not framed",
+            "names" => "deleted code is shown by name",
+            _ => "changed code is marked whole",
+        })
+        .collect();
+    match parts.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => parts.join(""),
+    }
+}
 
 /// Make the PDF; `reviewed` is the commit `--since reviewed` stands for.
 fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
@@ -620,7 +595,7 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
     };
 
     let moves = if a.no_moves { Moves::Off } else { Moves::Find };
-    let mut result = redline(&old_v, &new_v, LADDER[0].0, &history, moves);
+    let mut result = redline(&old_v, &new_v, fallback_options(LADDER[0]), &history, moves);
     for w in &result.warnings {
         eprintln!("warning: {w}");
     }
@@ -651,20 +626,20 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         (dir.as_path(), &new.entry, "new", NEW_PDF),
     ];
     let mut a = a;
+    let typst_args = a.typst_args.clone();
     let mut back = None;
-    for (i, (opts, keep_states, frame_computed, note)) in LADDER.into_iter().enumerate() {
+    for (i, fallbacks) in LADDER.into_iter().enumerate() {
         // The side-by-side layout shows no deleted content.
-        if keep_states && a.side_by_side {
+        if fallbacks.contains(&"states") && a.side_by_side {
             continue;
         }
-        let states = format!("redline-states={}", if keep_states { "keep" } else { "drop" });
+        let opts = fallback_options(fallbacks);
         if i > 0 {
             result = redline(&old_v, &new_v, opts, &history, moves);
-            if LADDER[i - 1].2 && !frame_computed {
-                a.typst_args
-                    .extend(["--input".into(), "redline-frame-computed=false".into()]);
-            }
         }
+        a.typst_args = typst_args.clone();
+        a.typst_args
+            .extend(["--input".into(), format!("redline-fallback={}", fallbacks.join(","))]);
         let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
             let input = format!("redline-side={side}");
             typst(
@@ -676,7 +651,7 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         };
         write(dir, &result.files)?;
         let out = if !a.side_by_side {
-            typst(&a, dir, "compile", &[&"--input", &states, &dir.join(&new.entry), &tmp])?
+            typst(&a, dir, "compile", &[&dir.join(&new.entry), &tmp])?
         } else {
             let back_history = History {
                 steps: history.steps.clone(),
@@ -706,7 +681,8 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         stderr = String::from_utf8_lossy(&out.stderr).to_string();
         if out.status.success() {
             eprint!("{stderr}");
-            if !note.is_empty() {
+            if !fallbacks.is_empty() {
+                let note = fallback_note(fallbacks);
                 eprintln!("note: {note}, because the full proof failed to compile ({first_error})");
             }
             if let Some(back) = &back {
@@ -726,9 +702,7 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
                 // Bars are lost only where the document sets both, and asking
                 // where costs another compile. The summary page lists such
                 // pages in any case.
-                let args: [&dyn AsRef<OsStr>; 7] = [
-                    &"--input",
-                    &states,
+                let args: [&dyn AsRef<OsStr>; 5] = [
                     &dir.join(&new.entry),
                     &"<redline-unbarred>",
                     &"--field",

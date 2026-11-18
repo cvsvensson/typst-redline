@@ -735,8 +735,9 @@ impl<'a> Writer<'a> {
                 (_, false) => format!("moves: {moves}, "),
                 _ => format!("moves: {moves}, moved: true, "),
             };
+            let before = if std::ptr::eq(s, &first) { "before: true, " } else { "" };
             entries.push_str(&format!(
-                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, {moved}deleted: {}, new: {}, code: ({code}), marks: ({marks})),\n",
+                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, {moved}{before}deleted: {}, new: {}, code: ({code}), marks: ({marks})),\n",
                 typst_str(&s.file),
                 s.level,
                 s.title,
