@@ -43,6 +43,8 @@ struct Args {
     to: Option<String>,
     output: Option<PathBuf>,
     root: Option<PathBuf>,
+    /// The root comes from `TYPST_ROOT`.
+    root_env: bool,
     preamble: Option<PathBuf>,
     typst: String,
     keep: bool,
@@ -62,6 +64,7 @@ fn parse_args() -> Result<Parsed, String> {
         to: None,
         output: None,
         root: None,
+        root_env: false,
         preamble: None,
         typst: "typst".into(),
         keep: false,
@@ -99,11 +102,12 @@ fn parse_args() -> Result<Parsed, String> {
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
         return Err("--to cannot be combined with a range in --since".into());
     }
-    a.root = a.root.or_else(|| {
-        std::env::var_os("TYPST_ROOT")
+    if a.root.is_none() {
+        a.root = std::env::var_os("TYPST_ROOT")
             .filter(|r| !r.is_empty())
-            .map(PathBuf::from)
-    });
+            .map(PathBuf::from);
+        a.root_env = a.root.is_some();
+    }
     match (a.files.len(), &a.since, &a.to) {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(a)),
         _ => Err("give one file, or two files without --since and --to".into()),
@@ -306,7 +310,10 @@ fn run(a: Args) -> Result<PathBuf, String> {
             a.typst
         ));
     }
-    let (old, new) = specs(&a)?;
+    let (old, new) = specs(&a).map_err(|e| match a.root_env && e.contains("the root") {
+        true => format!("{e} (set by TYPST_ROOT)"),
+        false => e,
+    })?;
     if new.tree.read(&new.entry).is_none() {
         return Err(match new.tree {
             Tree::Dir(_) => format!("{} does not exist", new.file.display()),

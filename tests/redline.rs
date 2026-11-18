@@ -1083,6 +1083,25 @@ fn typst_root_sets_the_root() {
 }
 
 #[test]
+fn root_from_typst_root_is_named_in_errors() {
+    let dir = temp_dir("outside-typst-root");
+    std::fs::create_dir(dir.join("root")).unwrap();
+    std::fs::write(dir.join("old.typ"), "Old.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New.").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+        .current_dir(&*dir)
+        .env("TYPST_ROOT", dir.join("root"))
+        .args(["old.typ", "new.typ"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not inside the root") && stderr.contains("TYPST_ROOT"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn file_outside_the_root_suggests_the_repository_as_root() {
     if !typst_available() {
         return;
