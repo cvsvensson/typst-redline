@@ -22,7 +22,8 @@ with B. With two files, each is a path or REV:PATH (:PATH for the index).
 
 Options:
   -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
-  --root <dir>          Project root (default: the directory of each file)
+  --root <dir>          Project root (default: TYPST_ROOT, else the directory
+                        of each file)
   --preamble <file>     Replace the built-in change styling
   --layout <layout>     inline (default): the new version with changes marked;
                         side-by-side: changed pages of the old and the new
@@ -96,6 +97,11 @@ fn parse_args() -> Result<Parsed, String> {
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
         return Err("--to cannot be combined with a range in --since".into());
     }
+    a.root = a.root.or_else(|| {
+        std::env::var_os("TYPST_ROOT")
+            .filter(|r| !r.is_empty())
+            .map(PathBuf::from)
+    });
     match (a.files.len(), &a.since, &a.to) {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(a)),
         _ => Err("give one file, or two files without --since and --to".into()),
@@ -106,6 +112,7 @@ fn parse_args() -> Result<Parsed, String> {
 /// location is `file`.
 struct Spec {
     tree: Tree,
+    root: PathBuf,
     entry: String,
     file: PathBuf,
     label: String,
@@ -130,7 +137,7 @@ fn spec(file: &Path, rev: Option<&str>, root: Option<&Path>, label: String) -> R
         .collect::<Vec<_>>()
         .join("/");
     let tree = match rev {
-        None => Tree::Dir(root),
+        None => Tree::Dir(root.clone()),
         Some(rev) => {
             let out = output(git(&root).args(["rev-parse", "--show-toplevel", "--show-prefix"]))?;
             if !rev.is_empty() {
@@ -148,6 +155,7 @@ fn spec(file: &Path, rev: Option<&str>, root: Option<&Path>, label: String) -> R
     };
     Ok(Spec {
         tree,
+        root,
         entry,
         file,
         label,
@@ -406,10 +414,16 @@ fn run(a: Args) -> Result<PathBuf, String> {
     if let Some(hint) = version_hint(&a.typst) {
         eprintln!("{hint}");
     }
-    if a.root.is_none() && stderr.contains("file not found") {
+    let not_found = a.root.is_none() && stderr.contains("file not found");
+    if not_found {
         eprintln!(
             "hint: paths starting with / resolve against the directory of the file; set another root with --root"
         );
+    }
+    if (not_found || stderr.contains("project root"))
+        && let Some(top) = repository(&new).filter(|top| !same_dir(top, &new.root))
+    {
+        eprintln!("hint: to use the repository as the root, add --root {}", top.display());
     }
     let hint = if a.keep {
         ""
@@ -417,6 +431,22 @@ fn run(a: Args) -> Result<PathBuf, String> {
         " (rerun with --keep-typ to inspect the generated source)"
     };
     Err(format!("typst compile failed{hint}"))
+}
+
+/// The top level of the git repository that holds a version, if any.
+fn repository(spec: &Spec) -> Option<PathBuf> {
+    match &spec.tree {
+        Tree::Git { repo, .. } => Some(repo.clone()),
+        Tree::Dir(root) => git_text(root, &["rev-parse", "--show-toplevel"])
+            .ok()
+            .map(PathBuf::from),
+    }
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    std::fs::canonicalize(a)
+        .ok()
+        .is_some_and(|a| std::fs::canonicalize(b).ok() == Some(a))
 }
 
 /// The output PDF: `-o`, or `<name>.redline.pdf` next to the new file. It
