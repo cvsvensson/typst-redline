@@ -344,7 +344,9 @@
 #let redline-ins(body, block: false, step: none, move: none) = {
   if move != none {
     let end = move.at("end", default: false)
-    let side = if redline-side != none and not end { redline-side-mark("ins", move.key) }
+    // Both ends, so that the pages a long move spans are shown; the line at
+    // the old place records two changes to match.
+    let side = if redline-side != none { redline-side-mark("ins", move.key) }
     return side + redline-move-tag(if end { "end" } else { "to" }, move.id, step: step, block: move.block)
   }
   let st = redline-step-style(step)
@@ -361,7 +363,8 @@
 // does not have: the page next to it shows it.
 #let redline-del(body, block: false, heading: none, gap: false, step: none, move: none) = {
   let st = redline-step-style(step)
-  if redline-side != none { return redline-side-mark("del", if move != none { move.key } else { body }) }
+  if redline-side != none and move != none { return redline-side-mark("del", move.key) * 2 }
+  if redline-side != none { return redline-side-mark("del", body) }
   if move != none { return redline-move-line(move, body, step) }
   let block = block or heading != none
   let body = redline-neutral(body)
@@ -536,12 +539,20 @@
     if s.page > pg or e.page < pg { continue }
     let y0 = if s.page < pg { top } else { s.y - (if a.value.block { 0.1em } else { 0.8em }).to-absolute() }
     let y1 = if e.page > pg { bottom } else { e.y + (if v.block { 0em } else { 0.3em }).to-absolute() }
-    let (x, right-side) = bar-x(s, e, v.width, v.gutter, 2)
     let stroke = st.move-stroke + redline-move-colour(a.value.step)
+    // A move from one column into the next is bracketed in both.
+    let (xs, xe) = (bar-x(s, s, v.width, v.gutter, 2), bar-x(e, e, v.width, v.gutter, 2))
+    let pieces = if s.page == pg and e.page == pg and xs != xe {
+      ((xs, y0, bottom, true, false), (xe, top, y1, false, true))
+    } else { ((bar-x(s, e, v.width, v.gutter, 2), y0, y1, s.page == pg, e.page == pg),) }
+    for ((x, right-side), from, to, first, last) in pieces {
+      let tick = if right-side { -2.5pt } else { 2.5pt }
+      place(dx: x, dy: from, line(angle: 90deg, length: calc.max(to - from, 0pt), stroke: stroke))
+      if first { place(dx: x, dy: from, line(length: tick, stroke: stroke)) }
+      if last { place(dx: x, dy: to, line(length: tick, stroke: stroke)) }
+    }
+    let ((x, right-side), _, y1, ..) = pieces.first()
     let tick = if right-side { -2.5pt } else { 2.5pt }
-    place(dx: x, dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
-    if s.page == pg { place(dx: x, dy: y0, line(length: tick, stroke: stroke)) }
-    if e.page == pg { place(dx: x, dy: y1, line(length: tick, stroke: stroke)) }
     // On a side of the side-by-side layout the other end is not shown.
     let note = if redline-side != none and a.value.kind == "to" [moved]
     let other = redline-move-find(if a.value.kind == "to" { "from" } else { "to" }, v.id)
