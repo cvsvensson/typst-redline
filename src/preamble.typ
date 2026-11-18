@@ -792,8 +792,14 @@
       }))
     }
   })
+  // The document starts on an odd page, so that two-sided layouts keep
+  // their parity, and its page counter is reset on the page before, where
+  // a header on its first page sees it. `pagebreak(to: "odd")` would leave
+  // no page before to reset it on.
+  [#metadata(none)<redline-summary-end>]
+  context if calc.odd(query(<redline-summary-end>).first().location().page()) { pagebreak() }
+  counter(page).update(0)
   pagebreak()
-  counter(page).update(1)
 }
 
 // The side-by-side layout. `info` is (old, new: (label, pdf: the version
