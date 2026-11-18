@@ -320,8 +320,7 @@ fn run(a: Args) -> Result<PathBuf, String> {
         });
     }
     let pdf = output_path(&a, &old, &new)?;
-    let text = |spec: &Spec, path: &str| String::from_utf8(spec.tree.read(path)?).ok();
-    let (read_old, read_new) = (|p: &str| text(&old, p), |p: &str| text(&new, p));
+    let (read_old, read_new) = (|p: &str| old.tree.read(p), |p: &str| new.tree.read(p));
     let version = |spec: &Spec, read| Version {
         label: spec.label.clone(),
         entry: spec.entry.clone(),
@@ -343,10 +342,7 @@ fn run(a: Args) -> Result<PathBuf, String> {
             old.entry.clone()
         }
     };
-    let step_reads: Vec<_> = step_trees
-        .iter()
-        .map(|t| move |p: &str| String::from_utf8(t.read(p)?).ok())
-        .collect();
+    let step_reads: Vec<_> = step_trees.iter().map(|t| move |p: &str| t.read(p)).collect();
     let history = History {
         steps: a.each_commit.then(|| {
             step_trees

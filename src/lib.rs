@@ -32,7 +32,7 @@ pub const OLD_DIR: &str = ".redline-old";
 pub struct Version<'a> {
     pub label: String,
     pub entry: String,
-    pub read: &'a dyn Fn(&str) -> Option<String>,
+    pub read: &'a dyn Fn(&str) -> Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy)]
@@ -111,7 +111,8 @@ pub fn redline(old: &Version, new: &Version, opts: Options, history: &History) -
     let mut warnings = vec![];
     let old_files = project(old, &mut warnings);
     let new_files = project(new, &mut warnings);
-    let bib = bibliography(old, &old_files, new, &new_files);
+    let mut bib = bibliography(old, &old_files, new, &new_files);
+    bib.files = changed_reads(old, &old_files, new, &new_files);
     let steps = history
         .steps
         .as_ref()
@@ -135,7 +136,7 @@ fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {
         if files.iter().any(|(p, _)| *p == path) {
             continue;
         }
-        let Some(src) = (v.read)(&path).map(|s| normalize(&s)) else {
+        let Some(src) = text(v, &path) else {
             if path == v.entry {
                 warnings.push(format!("{path} does not exist in {}", v.label));
                 files.push((path, String::new()));
@@ -176,14 +177,16 @@ fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {
     files
 }
 
-/// What changed in the bibliography, which the output cannot mark in it:
-/// keys cited only in the new or only in the old version, and keys cited in
-/// the new version whose entry differs.
+/// What changed in the files the document reads, which the output cannot
+/// mark: keys cited only in the new or only in the old version, keys cited
+/// in the new version whose bibliography entry differs, and other files that
+/// both versions read by the same literal path but that differ.
 #[derive(Default)]
 pub struct Bib {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub changed: Vec<String>,
+    pub files: Vec<String>,
 }
 
 impl Bib {
@@ -191,10 +194,11 @@ impl Bib {
     pub(crate) fn to_typst(&self) -> String {
         let keys = |ks: &[String]| format!("({})", ks.iter().map(|k| mark::typst_str(k) + ",").collect::<String>());
         format!(
-            "(added: {}, removed: {}, changed: {})",
+            "(added: {}, removed: {}, changed: {}, files: {})",
             keys(&self.added),
             keys(&self.removed),
-            keys(&self.changed)
+            keys(&self.changed),
+            keys(&self.files)
         )
     }
 }
@@ -239,7 +243,7 @@ fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, ne
     let entries = |v: &Version, paths: &[String]| -> HashMap<String, String> {
         paths
             .iter()
-            .filter_map(|p| Some(bib_entries(p, &(v.read)(p)?)))
+            .filter_map(|p| Some(bib_entries(p, &text(v, p)?)))
             .flatten()
             .collect()
     };
@@ -260,7 +264,52 @@ fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, ne
             .filter(|k| old_entries.get(*k).is_some_and(|e| Some(e) != new_entries.get(*k)))
             .cloned()
             .collect(),
+        files: vec![],
     }
+}
+
+/// The paths that calls such as `image("fig.png")` or `json("data.json")`
+/// read in both versions, whose files differ. A call that only one version
+/// makes is a change of the text and marked there.
+fn changed_reads(
+    old: &Version,
+    old_files: &[(String, String)],
+    new: &Version,
+    new_files: &[(String, String)],
+) -> Vec<String> {
+    const READERS: [&str; 9] = ["image", "read", "json", "csv", "yaml", "toml", "xml", "cbor", "plugin"];
+    let reads = |files: &[(String, String)]| {
+        let mut paths = BTreeSet::new();
+        for (path, src) in files {
+            walk(&parse(src), &mut |n| {
+                if let Some(call) = n.cast::<ast::FuncCall>()
+                    && let ast::Expr::Ident(f) = call.callee()
+                    && READERS.contains(&f.as_str())
+                    && let Some(ast::Arg::Pos(ast::Expr::Str(s))) = call.args().items().next()
+                {
+                    paths.extend(resolve(path, &s.get()));
+                }
+            });
+        }
+        paths
+    };
+    // Git can check out text with other line endings than it stores.
+    let content = |v: &Version, p: &str| {
+        (v.read)(p).map(|b| match String::from_utf8(b) {
+            Ok(s) => normalize(&s).into_bytes(),
+            Err(e) => e.into_bytes(),
+        })
+    };
+    reads(old_files)
+        .intersection(&reads(new_files))
+        .filter(|p| matches!((content(old, p), content(new, p)), (Some(a), Some(b)) if a != b))
+        .cloned()
+        .collect()
+}
+
+/// A file as text with a byte-order mark and CR line endings removed.
+fn text(v: &Version, path: &str) -> Option<String> {
+    String::from_utf8((v.read)(path)?).ok().map(|s| normalize(&s))
 }
 
 /// The entries of a BibTeX or Hayagriva file by key, with whitespace
