@@ -1,11 +1,18 @@
 {
   "name": "typst-redline",
   "displayName": "Typst Redline",
-  "description": "Show the changes in a Typst document since a git commit, as a marked-up PDF",
+  "description": "Show the changes in a Typst document since a git commit, as a marked-up PDF. Needs the typst-redline and typst command-line tools.",
   "version": "0.1.0",
+  "publisher": "cvsvensson",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cvsvensson/typst-redline",
+    "directory": "vscode"
+  },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
+  "keywords": ["typst", "diff", "latexdiff", "git"],
   "main": "./out/extension.js",
   "activationEvents": [],
   "contributes": {
@@ -28,7 +35,8 @@
         "typstRedline.root": {
           "type": "string",
           "default": "",
-          "description": "Project root passed as --root. Empty: the workspace folder of the file."
+          "scope": "resource",
+          "description": "Project root passed as --root, absolute or relative to the workspace folder of the file. Empty: that workspace folder, or the file's directory if it is in none."
         },
         "typstRedline.openInEditor": {
           "type": "boolean",
@@ -39,11 +47,19 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./"
+    "compile": "tsc -p ./",
+    "vscode:prepublish": "npm run compile",
+    "pretest": "npm run compile",
+    "test": "vscode-test",
+    "package": "vsce package"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.0",
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "~1.85.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.0",
+    "@vscode/vsce": "^3.0.0",
     "typescript": "^5.4.0"
   }
 }
