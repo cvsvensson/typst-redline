@@ -441,7 +441,10 @@
           }
         }
         // The number printed on the page, or the page of this PDF.
-        let pg = context if page.numbering == none { query(e.target).first().location().page() } else { counter(page).at(e.target).first() }
+        let pg = context {
+          let loc = query(e.target).first().location()
+          if loc.page-numbering() == none { loc.page() } else { counter(page).at(loc).first() }
+        }
         let new = if e.new [new section, ]
         [#link(e.target, underline[#num#e.title]) (#new#e.count#note)#box(width: 1fr, repeat[#h(0.4em).])#h(0.4em)#link(e.target, pg)]
       }
