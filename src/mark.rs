@@ -398,12 +398,52 @@ impl Seg {
     }
 }
 
-/// Push `s`, merged into the last segment if both are changes.
+/// Push `s`, merged into the last segment if both are changes or both the
+/// same.
 fn push_seg(segs: &mut Vec<Seg>, s: Seg) {
     match segs.last_mut() {
-        Some(last) if !last.equal && !s.equal => last.extend(&s),
+        _ if s.old.is_empty() && s.new.is_empty() => {}
+        Some(last) if last.equal == s.equal => last.extend(&s),
         _ => segs.push(s),
     }
+}
+
+/// [`segments`] of tokens compared by their text; but in a changed run,
+/// code that differs only in markup (the same [`Tok::key`]) is the same,
+/// each new piece with the most similar old one, so that a call is compared
+/// with the one it resembles and not with a neighbour.
+fn token_segments(old: &[Tok], new: &[Tok]) -> Vec<Seg> {
+    let exact = |toks: &[Tok]| -> Vec<String> {
+        toks.iter()
+            .map(|t| if t.kind == TK::Atom { &t.text } else { &t.key }.clone())
+            .collect()
+    };
+    let words_of = |t: &Tok| words(std::slice::from_ref(t));
+    let seg = |old, new, equal| Seg { old, new, equal };
+    let mut segs = vec![];
+    for s in segments(&exact(old), &exact(new)) {
+        if s.equal {
+            push_seg(&mut segs, s);
+            continue;
+        }
+        let (mut p, mut from) = (s.old.start, s.new.start);
+        for n in s.new.clone().filter(|&n| new[n].kind == TK::Atom) {
+            let nw = words_of(&new[n]);
+            // A bounded number of candidates keeps the cost linear.
+            let best = (p..s.old.end)
+                .filter(|&q| old[q].key == new[n].key)
+                .take(32)
+                .map(|q| (q, similarity(&words_of(&old[q]), &nw)))
+                .max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0)));
+            if let Some((q, _)) = best {
+                push_seg(&mut segs, seg(p..q, from..n, false));
+                push_seg(&mut segs, seg(q..q + 1, n..n + 1, true));
+                (p, from) = (q + 1, n + 1);
+            }
+        }
+        push_seg(&mut segs, seg(p..s.old.end, from..s.new.end, false));
+    }
+    segs
 }
 
 impl<'a> Writer<'a> {
@@ -932,27 +972,39 @@ impl<'a> Writer<'a> {
     }
 
     /// The first words of a block, as markup, and whether the block goes on
-    /// after them: of a figure, those of its caption; a display equation
-    /// inline.
+    /// after them: of a figure, those of its caption; of other code, those
+    /// of its content arguments; a display equation inline.
     fn move_note(&self, b: &Block) -> (String, bool) {
-        self.first_words(&b.toks())
+        let toks = b.toks();
+        self.first_words(&toks)
+            .unwrap_or_else(|| match toks.iter().find(|t| t.kind == TK::Atom) {
+                Some(t) => (placeholder(&t.nodes), true),
+                None => (String::new(), false),
+            })
     }
 
-    fn first_words(&self, toks: &[Tok]) -> (String, bool) {
+    /// [`Self::move_note`], if the tokens start with text.
+    fn first_words(&self, toks: &[Tok]) -> Option<(String, bool)> {
         const WORDS: usize = 30;
         let (_, core, _) = trim_spaces(toks);
         if let Some(t) = core.first().filter(|t| t.kind == TK::Atom) {
             let more = core.len() > 1;
-            if let Some(caption) = caption(&t.nodes) {
-                let (words, more) = self.first_words(&tokenize(&caption));
-                return (format!("Figure: {words}"), more);
+            if let Some((words, inner)) = caption(&t.nodes).and_then(|c| self.first_words(&tokenize(&c))) {
+                return Some((format!("Figure: {words}"), more || inner));
             }
             if t.nodes[0].kind() == K::Equation && t.block {
                 let math = self.sanitize(&t.nodes).and_then(|src| {
                     let inner = src.trim().strip_prefix('$')?.strip_suffix('$')?;
                     Some(format!("${}$", collapse_ws(inner)))
                 });
-                return (math.unwrap_or_else(|| placeholder(&t.nodes)), more);
+                return Some((math.unwrap_or_else(|| placeholder(&t.nodes)), more));
+            }
+            if t.nodes[0].kind() == K::Hash
+                && let Some((words, inner)) = content_blocks(&t.nodes)
+                    .iter()
+                    .find_map(|m| self.first_words(&tokenize(m)))
+            {
+                return Some((words, more || inner));
             }
         }
         let (mut end, mut words, mut more) = (0, 0, false);
@@ -977,14 +1029,7 @@ impl<'a> Writer<'a> {
                 _ => t.clone(),
             })
             .collect();
-        let note = match core {
-            [] => toks
-                .iter()
-                .find(|t| t.kind == TK::Atom)
-                .map_or(String::new(), |t| placeholder(&t.nodes)),
-            _ => self.content(&one_line, ChangeKind::Del),
-        };
-        (note, more)
+        (!core.is_empty()).then(|| (self.content(&one_line, ChangeKind::Del), more))
     }
 
     /// The new place of move `r`: its new blocks with the changes against
@@ -1090,7 +1135,14 @@ impl<'a> Writer<'a> {
         let label = self.section(nb, false);
         let (prefix, nbody, suffix) = nb.parts();
         let (_, obody, _) = ob.parts();
-        self.open(nb, &prefix, marks.0);
+        match (ob.term(), nb.term()) {
+            (Some((_, oterm, _)), Some((marker, nterm, colon))) => {
+                self.out.push_str(&marker);
+                self.diff_tokens(&tokenize(&oterm), &tokenize(&nterm));
+                self.open(nb, &colon, marks.0);
+            }
+            _ => self.open(nb, &prefix, marks.0),
+        }
         // Nested items are blocks of their own, so that a change stays
         // inside its item.
         let (ohead, onested) = split_nested(&obody);
@@ -1119,7 +1171,20 @@ impl<'a> Writer<'a> {
         }
         let label = self.section(nb, true);
         let (prefix, nodes, suffix) = nb.parts();
-        self.open(nb, &prefix, marks.0);
+        // A term is marked apart from its description: its colon must stay
+        // outside the marks.
+        match nb.term() {
+            Some((marker, term, colon)) => {
+                let toks = tokenize(&term);
+                let (lead, core, trail) = trim_spaces(&toks);
+                self.out.push_str(&(marker + &lead));
+                if !core.is_empty() {
+                    self.ins("block: true", core);
+                }
+                self.open(nb, &(trail + &colon), marks.0);
+            }
+            None => self.open(nb, &prefix, marks.0),
+        }
         self.ins("block: true", &tokenize(&nodes));
         self.close(nb, marks.1, &(suffix + &label));
     }
@@ -1281,9 +1346,7 @@ impl<'a> Writer<'a> {
     }
 
     fn diff_tokens(&mut self, old: &[Tok], new: &[Tok]) {
-        let ok: Vec<&str> = old.iter().map(|t| t.key.as_str()).collect();
-        let nk: Vec<&str> = new.iter().map(|t| t.key.as_str()).collect();
-        let segs = segments(&ok, &nk);
+        let segs = token_segments(old, new);
         // Absorb a kept run between two changes when it is at most one
         // short word, or much shorter than the changes around it: whole
         // phrases replaced read better than alternating fragments.
@@ -1590,6 +1653,19 @@ fn caption(nodes: &[SyntaxNode]) -> Option<Vec<SyntaxNode>> {
         .last()
         .filter(|v| v.kind() == K::ContentBlock)
         .map(markup)
+}
+
+/// The markup of the content blocks in code, outside other content blocks.
+fn content_blocks(nodes: &[SyntaxNode]) -> Vec<Vec<SyntaxNode>> {
+    fn into(n: &SyntaxNode, out: &mut Vec<Vec<SyntaxNode>>) {
+        match n.kind() {
+            K::ContentBlock => out.push(markup(n)),
+            _ => n.children().for_each(|c| into(c, out)),
+        }
+    }
+    let mut out = vec![];
+    nodes.iter().for_each(|n| into(n, &mut out));
+    out
 }
 
 /// The source of an old file to be evaluated under [`OLD_DIR`]: paths
