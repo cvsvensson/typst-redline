@@ -1213,6 +1213,20 @@ fn each_commit_refuses_more_commits_than_colours() {
 }
 
 #[test]
+fn commits_that_only_touch_other_files_are_not_listed() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("other-files", &["alpha"]);
+    std::fs::write(dir.join("doc/notes.typ"), "Notes.").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "-m", "notes"]);
+    commit(&dir, "doc/main.typ", "beta");
+    let src = marked(&dir, &["doc/main.typ", "--since", "c-alpha"], "main.typ");
+    assert!(src.contains("\"beta\"") && !src.contains("\"notes\""), "{src}");
+}
+
+#[test]
 fn each_commit_needs_the_old_revision_to_be_an_ancestor() {
     let dir = repo("not-ancestor", &["alpha", "beta"]);
     git(&dir, &["checkout", "-q", "-b", "side", "c-alpha"]);

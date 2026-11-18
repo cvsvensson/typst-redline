@@ -8,7 +8,7 @@ use std::process::{Command, ExitCode, Output};
 use tree::{Tree, git, output};
 use typst_redline::{
     Anchor, Commit, History, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version, composite,
-    redline,
+    project_files, redline,
 };
 
 const USAGE: &str = "\
@@ -357,7 +357,8 @@ fn run(a: Args) -> Result<PathBuf, String> {
         read,
     };
     let (old_v, new_v) = (version(&old, &read_old), version(&new, &read_new));
-    let log = log(&old, &new)?;
+    let files = [project_files(&old_v), project_files(&new_v)].concat();
+    let log = log(&old, &new, &files)?;
     let step_trees = match &log {
         Some(log) if a.each_commit => step_trees(log, &old, &new)?,
         _ if a.each_commit => {
@@ -513,10 +514,11 @@ fn repository(spec: &Spec) -> Option<PathBuf> {
     }
 }
 
-/// The commits from the old version to the new one that touch the project,
-/// oldest first, with their full hashes; `None` unless the old version is a
-/// git revision and the new one a later revision, the index or the working
-/// tree of the same project. Merged branches count as their merge commit.
+/// The commits from the old version to the new one that touch the project
+/// `files`, oldest first, with their full hashes; `None` unless the old
+/// version is a git revision and the new one a later revision, the index or
+/// the working tree of the same project. Merged branches count as their
+/// merge commit.
 struct Log {
     /// The new version's revision; HEAD for the index or the working tree.
     to: String,
@@ -524,7 +526,7 @@ struct Log {
     history: History<'static>,
 }
 
-fn log(old: &Spec, new: &Spec) -> Result<Option<Log>, String> {
+fn log(old: &Spec, new: &Spec, files: &[String]) -> Result<Option<Log>, String> {
     let Tree::Git {
         repo,
         prefix,
@@ -533,9 +535,10 @@ fn log(old: &Spec, new: &Spec) -> Result<Option<Log>, String> {
     else {
         return Ok(None);
     };
-    let paths = if prefix.is_empty() { "." } else { prefix.as_str() };
-    let changed =
-        |args: &[&str]| -> Result<bool, String> { Ok(!output(git(repo).args(args).args(["--", paths]))?.is_empty()) };
+    let paths: Vec<String> = files.iter().map(|f| format!("{prefix}{f}")).collect();
+    let changed = |args: &[&str]| -> Result<bool, String> {
+        Ok(!output(git(repo).args(args).arg("--").args(&paths))?.is_empty())
+    };
     let (to, uncommitted) = match &new.tree {
         Tree::Git {
             repo: r,
@@ -550,16 +553,19 @@ fn log(old: &Spec, new: &Spec) -> Result<Option<Log>, String> {
         }
         _ => return Ok(None),
     };
-    let out = output(git(repo).args([
-        "log",
-        "--first-parent",
-        "--reverse",
-        "--date=short",
-        "--format=%H%x1f%h%x1f%ad%x1f%s",
-        &format!("{from}..{to}"),
-        "--",
-        paths,
-    ]))?;
+    let out = output(
+        git(repo)
+            .args([
+                "log",
+                "--first-parent",
+                "--reverse",
+                "--date=short",
+                "--format=%H%x1f%h%x1f%ad%x1f%s",
+                &format!("{from}..{to}"),
+                "--",
+            ])
+            .args(&paths),
+    )?;
     let (mut hashes, mut commits) = (vec![], vec![]);
     for line in String::from_utf8_lossy(&out).lines() {
         let f: Vec<&str> = line.splitn(4, '\x1f').collect();
