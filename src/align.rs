@@ -106,15 +106,14 @@ fn unpaired(old: &[Block], new: &[Block], or: Range<usize>, nidx: &[usize], step
             insert(steps, j);
         }
     }
-    let sections = |kinds: Vec<Kind>, start: usize| -> Vec<Range<usize>> {
-        let mut secs: Vec<Range<usize>> = vec![];
-        for (i, k) in kinds.into_iter().enumerate() {
-            match secs.last_mut() {
-                Some(s) if k != Kind::Heading => s.end = start + i + 1,
-                _ => secs.push(start + i..start + i + 1),
-            }
-        }
-        secs
+    let sections = |kinds: Vec<Kind>, mut start: usize| -> Vec<Range<usize>> {
+        kinds
+            .chunk_by(|_, k| *k != Kind::Heading)
+            .map(|s| {
+                start += s.len();
+                start - s.len()..start
+            })
+            .collect()
     };
     let osecs = sections(ob[oh..].iter().map(|b| b.kind).collect(), or.start + oh);
     let nsecs = sections(nidx[nh..].iter().map(|&j| new[j].kind).collect(), nh);
