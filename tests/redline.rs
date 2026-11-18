@@ -1213,6 +1213,19 @@ fn each_commit_refuses_more_commits_than_colours() {
 }
 
 #[test]
+fn each_commit_needs_the_old_revision_to_be_an_ancestor() {
+    let dir = repo("not-ancestor", &["alpha", "beta"]);
+    git(&dir, &["checkout", "-q", "-b", "side", "c-alpha"]);
+    commit(&dir, "doc/main.typ", "gamma");
+    let out = cli(&dir, &["doc/main.typ", "--since", "main", "--each-commit"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(1) && stderr.contains("--since main..."),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn each_commit_needs_one_file_and_the_inline_layout() {
     let dir = temp_dir("each-commit-usage");
     for args in [
