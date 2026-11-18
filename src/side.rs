@@ -213,8 +213,9 @@ pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history:
     out.push_str("  ),\n  unmarked: (\n");
     for c in changes.iter().filter(|c| c.kind == ChangeKind::Unmarked) {
         out.push_str(&format!(
-            "    (file: {}, text: {}),\n",
+            "    (file: {}, old: {}, new: {}),\n",
             typst_str(&c.file),
+            typst_str(&c.old),
             typst_str(&c.text)
         ));
     }

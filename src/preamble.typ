@@ -21,10 +21,11 @@
 //   ins, del: numbers of changes, moved: number of moves, entries: array of
 //   (file, level, target: label or none, title, count: changed passages,
 //   moves: moves into or out of the section other than its own, deleted,
-//   new, moved, code: array of changed code that is not marked), bib:
-//   (added, removed, changed: arrays of citation keys whose bibliography
-//   entry is new, gone or edited, files: paths of other files that both
-//   versions read and that differ), and if the versions are git revisions,
+//   new, moved, code: array of (old, new): changed code that is not
+//   marked, either empty if inserted or deleted), bib: (added, removed,
+//   changed: arrays of citation keys whose bibliography entry is new, gone
+//   or edited, files: paths of other files that both versions read and
+//   that differ), and if the versions are git revisions,
 //   history: (commits: array of (hash, date, subject), oldest first,
 //   earlier: number of earlier commits left out, uncommitted: whether the
 //   new version has uncommitted changes, steps: whether marks are coloured
@@ -725,10 +726,15 @@
   })
 }
 
-// A line of changed code that is not marked, shortened.
-#let redline-code(text) = {
-  let t = text.clusters()
-  raw(if t.len() > 80 { t.slice(0, 80).join() + "…" } else { text })
+// Changed code that is not marked, (old, new): the old code in the colour
+// of deletions, the new in that of insertions. Text, not raw, so that the
+// document's show rules on raw leave it alone.
+#let redline-code(c) = {
+  let st = redline-style
+  let rows = ((c.old, "−", st.del), (c.new, "+", st.ins)).filter(r => r.first() != "")
+  set text(font: "DejaVu Sans Mono", size: 0.9em, hyphenate: false)
+  set par(justify: false)
+  grid(columns: (auto, 1fr), column-gutter: 0.5em, row-gutter: 0.5em, ..rows.map(((code, sign, fill)) => (text(fill: fill, sign), text(fill: fill, code))).flatten())
 }
 
 #let redline-move-bracket = {
@@ -792,7 +798,7 @@
         }
         block(above: 0.5em, below: 0.5em, pad(left: (e.level - min-level) * 1.5em, {
           line
-          if e.code.len() > 0 { pad(left: 1.5em, text(size: 0.85em, e.code.map(redline-code).join(linebreak()))) }
+          if e.code.len() > 0 { pad(left: 1.5em, text(size: 0.85em, e.code.map(redline-code).join())) }
         }))
       }
     })
@@ -812,8 +818,8 @@
 // bars), pairs: array of (old, new: pages
 // shown next to each other, steps-old, steps-new: pages of earlier steps of
 // the same slide, not shown), unpaired: array of (side, ins, page): changes
-// found in one version only, unmarked: array of (file, text): changed code
-// that is not marked, bib: as for `redline-summary`, moved: whether text
+// found in one version only, unmarked: array of (file, old, new): changed
+// code that is not marked, bib: as for `redline-summary`, moved: whether text
 // moved).
 #let redline-side-by-side(info) = context {
   let st = redline-style
@@ -871,7 +877,7 @@
     }
     if info.unmarked.len() > 0 {
       [Changed code that is not marked:]
-      list(..info.unmarked.map(u => [#redline-code(u.text) in #raw(u.file)]))
+      list(..info.unmarked.map(u => [In #raw(u.file): #redline-code(u)]))
     }
     if bib != none { block(bib) }
     redline-commits(hist, o.label, n.label)

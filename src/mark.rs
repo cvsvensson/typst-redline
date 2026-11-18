@@ -477,7 +477,16 @@ impl<'a> Writer<'a> {
             section: self.current.clone(),
             kind,
             text,
+            old: String::new(),
         });
+    }
+
+    /// Record changed code that is not marked, `old` or `new` empty if it
+    /// was inserted or deleted.
+    fn list(&mut self, old: &str, new: &str) {
+        let (old, new) = differing_lines(old, new);
+        self.record(ChangeKind::Unmarked, new);
+        self.changes.last_mut().unwrap().old = old;
     }
 
     /// Emit `body`, the markup for `toks`, wrapped as a change, and record
@@ -586,11 +595,12 @@ impl<'a> Writer<'a> {
         Some(majority(steps.into_iter().zip(toks.iter().map(weight))).unwrap_or(last))
     }
 
-    /// Setup code written as in the new version, its change listed.
-    fn unmarked(&mut self, b: &Block) {
+    /// Setup code written as in the new version, its change from `old`
+    /// listed.
+    fn unmarked(&mut self, old: &str, b: &Block) {
         self.out.push_str(&b.text());
         if !b.is_import() {
-            self.record(ChangeKind::Unmarked, b.text());
+            self.list(old, &b.text());
         }
     }
 
@@ -690,7 +700,7 @@ impl<'a> Writer<'a> {
                 .changes
                 .iter()
                 .filter(|c| here(c) && c.kind == ChangeKind::Unmarked)
-                .map(|c| typst_str(&c.text) + ",")
+                .map(|c| format!("(old: {}, new: {}),", typst_str(&c.old), typst_str(&c.text)))
                 .collect();
             let target = match &s.target {
                 Some(l) if !s.deleted => format!("<{l}>"),
@@ -1046,8 +1056,8 @@ impl<'a> Writer<'a> {
         self.begin_new(nb);
         if nb.kind == Kind::Setup {
             let (ot, nt) = (ob.toks(), nb.toks());
-            if !(ot.len() == 1 && nt.len() == 1 && self.diff_code(&ot[0], &nt[0])) {
-                self.unmarked(nb);
+            if !(ot.len() == 1 && nt.len() == 1 && self.diff_code(&ot[0], &nt[0], true)) {
+                self.unmarked(&ob.text(), nb);
             }
             self.included(nb);
             return;
@@ -1077,7 +1087,7 @@ impl<'a> Writer<'a> {
             let at = self.out.len();
             if nb.is_import() || !self.ctx.opts.content_blocks || !self.inserted_code(&nb.nodes) {
                 self.out.truncate(at);
-                self.unmarked(nb);
+                self.unmarked("", nb);
             }
             self.included(nb);
             return;
@@ -1108,7 +1118,7 @@ impl<'a> Writer<'a> {
                         list_ends,
                     );
                 }
-                _ if !ob.is_import() => self.record(ChangeKind::Unmarked, ob.text()),
+                _ if !ob.is_import() => self.list(&ob.text(), ""),
                 _ => {}
             }
             return;
@@ -1301,7 +1311,7 @@ impl<'a> Writer<'a> {
             for (ot, nt) in old[s.old].iter().zip(&new[s.new]) {
                 if ot.text == nt.text || nt.kind != TK::Atom {
                     self.out.push_str(&nt.text);
-                } else if !self.diff_code(ot, nt) {
+                } else if !self.diff_code(ot, nt, false) {
                     self.change(std::slice::from_ref(ot), std::slice::from_ref(nt));
                 }
             }
@@ -1309,50 +1319,48 @@ impl<'a> Writer<'a> {
     }
 
     /// Write code `n` with the changes inside its content blocks against
-    /// `o` marked, and a changed argument that is shown as content replaced
-    /// by the old one deleted and the new one inserted. Writes nothing and
-    /// returns false if they differ elsewhere, or if diffing inside code is
-    /// off.
-    fn diff_code(&mut self, o: &Tok, n: &Tok) -> bool {
-        self.ctx.opts.content_blocks && self.diff_code_nodes(&o.nodes, &n.nodes, false)
+    /// `o` marked. Any other change cannot be marked inside the code: the
+    /// call would get marks where it expects a value. With `list`, each
+    /// changed argument of the outermost call, other than content, is
+    /// written as in `n` and listed instead. Otherwise, or if the code
+    /// differs outside the arguments of a call, writes nothing and returns
+    /// false, so that the caller marks or lists the code whole. Also false
+    /// if diffing inside code is off.
+    fn diff_code(&mut self, o: &Tok, n: &Tok, list: bool) -> bool {
+        self.ctx.opts.content_blocks && self.diff_code_nodes(&o.nodes, &n.nodes, list, None)
     }
 
     /// Labels, comments and spaces are written as in `n` and compared only
-    /// for the summary: they do not show. `args` says that the nodes are
-    /// the arguments of a call.
-    fn diff_code_nodes(&mut self, o: &[SyntaxNode], n: &[SyntaxNode], args: bool) -> bool {
+    /// for the summary: they do not show. `call` is the code before the
+    /// nodes if they are the arguments of a call: what is called, or a set
+    /// rule up to its arguments.
+    fn diff_code_nodes(&mut self, o: &[SyntaxNode], n: &[SyntaxNode], list: bool, call: Option<&str>) -> bool {
         let (at, count) = (self.out.len(), self.changes.len());
         let trivia = |x: &&SyntaxNode| matches!(x.kind(), K::Label | K::LineComment | K::BlockComment | K::Space);
-        // A call that takes a content block likely shows its other
-        // positional arguments too: a body, a cell. Others, such as `str`
-        // or `rgb`, would fail on content, and the call is replaced whole.
-        let shows = args
-            && n.iter().any(|x| {
-                x.kind() == K::ContentBlock
-                    || x.kind() == K::Named && x.children().last().is_some_and(|v| v.kind() == K::ContentBlock)
-            });
         let mut rest = o.iter().filter(|x| !trivia(x));
         let mut ok = true;
+        let mut before = String::new();
         for x in n {
             if trivia(&x) {
                 self.out.push_str(&x.full_text());
-                continue;
+            } else {
+                ok = ok
+                    && rest.next().is_some_and(|y| {
+                        self.diff_code_node(y, x, list && call.is_none(), &before)
+                            || list && call.is_some_and(|c| self.listed_arg(c, y, x))
+                    });
             }
-            ok = ok
-                && rest.next().is_some_and(|y| {
-                    self.diff_code_node(y, x)
-                        || shows && matches!(x.kind(), K::FuncCall | K::Equation) && self.replace(y, x)
-                });
+            before.push_str(&x.full_text());
         }
         let ok = ok && rest.next().is_none();
         let labels = |v: &[SyntaxNode]| {
             v.iter()
                 .filter(|x| x.kind() == K::Label)
-                .map(|x| x.full_text())
-                .collect::<Vec<_>>()
+                .map(|x| x.full_text().to_string())
+                .collect::<String>()
         };
         if ok && labels(o) != labels(n) {
-            self.record(ChangeKind::Unmarked, labels(n).concat().to_string());
+            self.list(&labels(o), &labels(n));
         }
         if !ok {
             self.out.truncate(at);
@@ -1361,7 +1369,9 @@ impl<'a> Writer<'a> {
         ok
     }
 
-    fn diff_code_node(&mut self, o: &SyntaxNode, n: &SyntaxNode) -> bool {
+    /// `before` is the code before `n`: the code called if `n` is its
+    /// arguments.
+    fn diff_code_node(&mut self, o: &SyntaxNode, n: &SyntaxNode, list: bool, before: &str) -> bool {
         if o.kind() != n.kind() {
             return false;
         }
@@ -1390,29 +1400,18 @@ impl<'a> Writer<'a> {
             }
             return same;
         }
-        self.diff_code_nodes(&children(o), &children(n), n.kind() == K::Args)
+        let call = (n.kind() == K::Args).then_some(before);
+        self.diff_code_nodes(&children(o), &children(n), list && n.kind() != K::Closure, call)
     }
 
-    /// Write a content argument `n` as `o` deleted and `n` inserted, as
-    /// blocks: the argument is all that its call lays out there, a body or
-    /// a cell.
-    fn replace(&mut self, o: &SyntaxNode, n: &SyntaxNode) -> bool {
-        let tok = |x: &SyntaxNode| {
-            let nodes = vec![SyntaxNode::leaf(K::Hash, "#"), x.clone()];
-            Tok {
-                kind: TK::Atom,
-                key: String::new(),
-                text: text(&nodes),
-                nodes,
-                block: true,
-                at: (x.span(), 0),
-            }
-        };
-        let (ot, nt) = ([tok(o)], [tok(n)]);
-        self.out.push('[');
-        self.mark(ChangeKind::Del, "block: true", self.content(&ot, ChangeKind::Del), &ot);
-        self.mark(ChangeKind::Ins, "block: true", self.content(&nt, ChangeKind::Ins), &nt);
-        self.out.push(']');
+    /// Write the changed argument `n` of a call to `call` and list it with
+    /// the old argument `o`.
+    fn listed_arg(&mut self, call: &str, o: &SyntaxNode, n: &SyntaxNode) -> bool {
+        self.out.push_str(&n.full_text());
+        self.list(
+            &format!("{call}({})", o.full_text()),
+            &format!("{call}({})", n.full_text()),
+        );
         true
     }
 
@@ -1455,7 +1454,7 @@ impl<'a> Writer<'a> {
         {
             let at = self.out.len();
             self.out.push_str(&nlead);
-            if self.diff_code(o, n) {
+            if self.diff_code(o, n, false) {
                 self.out.push_str(&ntrail);
                 return;
             }
@@ -1586,6 +1585,39 @@ fn old_leaf(n: &SyntaxNode) -> String {
         }
         _ => t.to_string(),
     }
+}
+
+/// The lines of `old` and of `new` between those both start and end with,
+/// without the indentation they all share.
+fn differing_lines(old: &str, new: &str) -> (String, String) {
+    let (o, n): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
+    let pre = o.iter().zip(&n).take_while(|(a, b)| a == b).count();
+    let room = o.len().min(n.len()) - pre;
+    let suf = o
+        .iter()
+        .rev()
+        .zip(n.iter().rev())
+        .take(room)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let (o, n) = (&o[pre..o.len() - suf], &n[pre..n.len() - suf]);
+    if o.is_empty() && n.is_empty() {
+        return (old.into(), new.into());
+    }
+    let cut = o
+        .iter()
+        .chain(n)
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    let show = |ls: &[&str]| {
+        ls.iter()
+            .map(|l| l.get(cut..).unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    (show(o), show(n))
 }
 
 /// A Typst string literal holding `s`.

@@ -678,14 +678,32 @@ fn caption_change_does_not_duplicate_the_figure() {
 }
 
 #[test]
-fn changed_code_argument_is_replaced_in_place() {
-    let r = run("changed-argument");
-    assert_eq!(r.body.matches("#grid(").count(), 1, "{}", r.body);
-    assert!(r.body.contains("#redline-del(gap: true)[old];"), "{}", r.body);
+fn changed_argument_that_is_not_content_marks_the_whole_call() {
+    let r = run("argument-not-content");
+    let marks: Vec<_> = r
+        .changes
+        .iter()
+        .map(|c| (c.kind, c.text.starts_with("#tablex(")))
+        .collect();
+    assert_eq!(marks, [(ChangeKind::Del, true), (ChangeKind::Ins, true)], "{}", r.body);
+}
+
+#[test]
+fn changed_template_arguments_are_listed_with_old_and_new_or_marked() {
+    let r = run("template-args");
+    let listed = |old: &str, new: &str| {
+        r.changes
+            .iter()
+            .any(|c| c.kind == ChangeKind::Unmarked && c.old.contains(old) && c.text.contains(new))
+    };
+    assert!(listed("ada@example.com", "ada@example.org"), "{:?}", r.changes);
+    assert!(listed("\"Typesetting\"", "\"Diffing\""), "{:?}", r.changes);
     assert!(
-        r.body.contains("#redline-ins(block: true)[#rect(width: 2cm)]"),
-        "{}",
-        r.body
+        r.changes
+            .iter()
+            .any(|c| c.kind == ChangeKind::Ins && c.text == "several"),
+        "{:?}",
+        r.changes
     );
 }
 
@@ -1075,7 +1093,8 @@ fn code_that_inspects_marked_content_is_marked_whole() {
     std::fs::write(dir.join("new.typ"), doc("beta")).unwrap();
     let out = cli(&dir, &["old.typ", "new.typ"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success() && stderr.contains("marked whole"), "{stderr}");
+    let whole = stderr.contains("marked whole") && !stderr.contains("shown by name");
+    assert!(out.status.success() && whole, "{stderr}");
 }
 
 const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>"#;

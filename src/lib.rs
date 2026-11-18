@@ -112,8 +112,11 @@ pub struct Change {
     /// Label of the enclosing section, `None` before the first section.
     pub section: Option<String>,
     pub kind: ChangeKind,
-    /// Typst markup of the changed content.
+    /// Typst markup of the changed content; for a change that is not
+    /// marked, the new code, empty if it was deleted.
     pub text: String,
+    /// For a change that is not marked, the old code, empty if it is new.
+    pub old: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
