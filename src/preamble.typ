@@ -245,11 +245,15 @@
 // On each side of the side-by-side layout, every change records its kind
 // as a change from the old version to the new one, and an identity, so that
 // the binary can pair the pages of the two sides.
+#let redline-hash(seed, body) = {
+  let h = seed
+  for b in array(bytes(repr(body))) { h = calc.rem(h * 31 + b, 1000000007) }
+  h
+}
+
 #let redline-side-mark(kind, body) = {
   let kind = if redline-side == "old" { if kind == "ins" { "del" } else { "ins" } } else { kind }
-  let h = if kind == "ins" { 1 } else { 2 }
-  for b in array(bytes(repr(body))) { h = calc.rem(h * 31 + b, 1000000007) }
-  [#metadata((kind, h))<redline-change>]
+  [#metadata((kind, redline-hash(if kind == "ins" { 1 } else { 2 }, body)))<redline-change>]
 }
 
 #let redline-ins(body, block: false) = {
@@ -285,14 +289,17 @@
   [#metadata(from)<redline-page>]
   if pg == 1 {
     // For the summary and the binary: the pages with changes but without
-    // bars. For the side-by-side layout also the number of pages, and each
-    // change's identity and page, all as one flat array of integers.
+    // bars. For the side-by-side layout also the number of pages, each
+    // change's kind (0 deleted, 1 inserted), identity and page, and the same
+    // for each heading (kind 2), whose identity is its text, all as one flat
+    // array of integers.
     let drawn = query(<redline-page>).map(m => m.location().page())
     let unbarred = query(<redline-tag>).map(t => t.location().page()).dedup().filter(p => p not in drawn)
     [#metadata(unbarred)<redline-unbarred>]
     if redline-side != none {
       let changes = query(<redline-change>).map(m => (int(m.value.at(0) == "ins"), m.value.at(1), m.location().page()))
-      [#metadata((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, ..changes.flatten()))<redline-layout>]
+      let headings = query(heading).map(h => (2, redline-hash(3, h.body), h.location().page()))
+      [#metadata((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, ..changes.flatten(), ..headings.flatten()))<redline-layout>]
     }
   }
   let tags = query(<redline-tag>)
@@ -503,14 +510,14 @@
       if side.unbarred.len() > 0 { block[Changes on these pages of #name(side) have no bars in the margin, because the document sets its own page foreground and background there: #pages(side.unbarred).] }
     }
   }))))
-  let head(side, pg, s) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]]
+  let head(side, pg, s, ps) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]] else if ps.len() == 0 [Not in #name(side)]
   // A side without a page keeps its width, so that the other stays in place.
   let shot(side, w, pg) = if pg == none { box(width: w) } else { box(stroke: 0.5pt + luma(150), image(side.pdf, page: pg)) }
   for p in info.pairs {
     for r in range(calc.max(p.old.len(), p.new.len())) {
       pagebreak()
       let (po, pn) = (p.old.at(r, default: none), p.new.at(r, default: none))
-      grid(columns: 2, column-gutter: gap, row-gutter: 0.5em, head(o, po, p.steps-old), head(n, pn, p.steps-new), shot(o, wo, po), shot(n, wn, pn))
+      grid(columns: 2, column-gutter: gap, row-gutter: 0.5em, head(o, po, p.steps-old, p.old), head(n, pn, p.steps-new, p.new), shot(o, wo, po), shot(n, wn, pn))
     }
   }
 }
