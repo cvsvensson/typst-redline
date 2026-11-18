@@ -135,9 +135,23 @@ fn spec(file: &Path, rev: Option<&str>, root: Option<&Path>, label: String) -> R
     if rev.is_none() && file.is_dir() {
         return Err(format!("{} is a directory", file.display()));
     }
+    // Through a symbolic link, such as /var to /private/var on macOS, the
+    // root can be written differently from the file's path.
+    let canonical = || {
+        let dir = std::fs::canonicalize(file.parent()?).ok()?;
+        let path = dir.join(file.file_name()?);
+        Some(
+            path.strip_prefix(std::fs::canonicalize(&root).ok()?)
+                .ok()?
+                .to_path_buf(),
+        )
+    };
     let entry = file
         .strip_prefix(&root)
-        .map_err(|_| format!("{} is not inside the root {}", file.display(), root.display()))?
+        .map(Path::to_path_buf)
+        .ok()
+        .or_else(canonical)
+        .ok_or_else(|| format!("{} is not inside the root {}", file.display(), root.display()))?
         .iter()
         .map(|c| c.to_string_lossy())
         .collect::<Vec<_>>()
