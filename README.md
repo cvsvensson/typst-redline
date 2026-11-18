@@ -2,8 +2,11 @@
 
 `typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document: a PDF of the new version with deleted text struck out and new text highlighted. It does for Typst what `latexdiff` does for LaTeX. AI agents wrote this tool.
 
-<img src="docs/example.png" width="480" alt="A paragraph and a formula with changes marked">
+<img src="docs/example.png" width="560" alt="A page with a changed title, sentence, formula and drawing, each marked">
 
+The picture is page 2 of the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). Page 1 is a summary that explains the marks and lists the sections that changed:
+
+<img src="docs/example-summary.png" width="560" alt="The summary page: a legend and the list of changed sections">
 
 ## Install
 
@@ -22,22 +25,40 @@ typst-redline paper.typ --since v1..v2     # changes between two commits
 typst-redline old.typ new.typ              # changes between two files, no git needed
 ```
 
-The result is `paper.redline.pdf` next to your file; `-o out.pdf` puts it elsewhere. Anything git accepts works after `--since`: a commit hash, a tag, a branch name.
+The result is `paper.redline.pdf` next to your file; `-o out.pdf` puts it elsewhere. Anything git accepts works after `--since`: a commit hash, a tag, a branch name. `--since main...feature` shows what a branch changed since it left `main`.
 
-If your document uses files outside its own folder, such as `#import "../macros.typ"`, pass the project folder with `--root`, as you would to `typst compile`. `typst-redline --help` lists the other options.
+If your document uses files outside its own folder, such as `#import "../macros.typ"`, pass the project folder with `--root`, as you would to `typst compile`. The compiler used is the `typst` on your `PATH`; `--typst <path>` picks another one. Arguments after `--` go to `typst compile`, for example `-- --font-path fonts`. `typst-redline --help` lists all options.
 
 ## What is marked
 
-Every change to the text of the document is marked where it appears, also in files the document includes or imports. Formulas are shown whole: the old one struck, the new one highlighted. The first page lists the sections that changed.
+- **Text:** deleted words are struck through in red, new words are highlighted in blue, and a wholly new paragraph is blue. This also works inside headings, list items, captions, bold and emphasized text.
+- **Formulas, figures and drawings** are shown whole: the old one in a dashed red frame, the new one in a blue frame. An old drawing or image is crossed out.
+- **Bars in the margin** point to every changed line, dashed for deletions and solid for insertions.
+- **Several files:** changes in files that the document includes or imports are marked too. With git, the old versions of those files, and of images the old text uses, are taken from the old commit.
+- **Code:** a change to code, such as a function body or a `#set` rule, cannot be shown as a mark. The summary page lists it as *changed code not marked*, so no change goes unreported.
 
-Changes to code, such as a function body or a `#set` rule, cannot be shown as marks. The first page lists them as *not marked*, so no change goes unreported.
+With the deleted parts removed, the marked document has the same text, layout and numbering as the new version.
 
-Known problems:
+## Slides and side-by-side
 
-- A one-word change inside bold or emphasized text marks the whole phrase.
+Deleted content takes room, so a full slide can overflow. `--layout side-by-side` puts each changed page of the old version next to the same page of the new version, and leaves out pages without changes. It works for any document and needs Typst 0.14 or later.
+
+```sh
+typst-redline talk.typ --since HEAD~1 --layout side-by-side
+```
+
+<img src="docs/example-slides.png" width="800" alt="An old slide with deletions struck, next to the new slide with insertions highlighted">
+
+The picture is made from [docs/example-slides/old.typ](docs/example-slides/old.typ) and [docs/example-slides/new.typ](docs/example-slides/new.typ). The first page of that PDF lists which pages are shown and how many were left out.
+
+## Known problems
+
 - Moved text shows as deleted in one place and inserted in another.
-- Deleted code that no longer works in the new document, for example because it uses a definition you removed, is shown as source text instead of its output.
+- Deleted content shifts line and page breaks compared with the new version.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
+- A citation added to or removed from a group such as `@a @b` marks the whole group, because Typst lays the group out as one piece.
+- Entries that appear in, disappear from or change in the bibliography are not marked there. The summary page names them.
+- Pages where your document sets both its own page foreground and background partway through get no margin bars. The summary page lists those pages.
 
 ## Styling
 
