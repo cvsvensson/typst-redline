@@ -48,6 +48,7 @@ pub struct Redline {
     /// [`OLD_DIR`], the old version's other files belong there too.
     pub files: Vec<(String, String)>,
     pub changes: Vec<Change>,
+    pub bib: Bib,
     pub warnings: Vec<String>,
 }
 
@@ -92,6 +93,7 @@ pub fn redline(old: &Version, new: &Version, opts: Options) -> Redline {
     Redline {
         files,
         changes,
+        bib,
         warnings,
     }
 }
@@ -150,10 +152,23 @@ fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {
 /// keys cited only in the new or only in the old version, and keys cited in
 /// the new version whose entry differs.
 #[derive(Default)]
-pub(crate) struct Bib {
+pub struct Bib {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub changed: Vec<String>,
+}
+
+impl Bib {
+    /// The dictionary the preamble takes.
+    pub(crate) fn to_typst(&self) -> String {
+        let keys = |ks: &[String]| format!("({})", ks.iter().map(|k| mark::typst_str(k) + ",").collect::<String>());
+        format!(
+            "(added: {}, removed: {}, changed: {})",
+            keys(&self.added),
+            keys(&self.removed),
+            keys(&self.changed)
+        )
+    }
 }
 
 fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, new_files: &[(String, String)]) -> Bib {

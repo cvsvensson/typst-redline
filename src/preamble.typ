@@ -10,9 +10,9 @@
 //   its pages (`body => body` for nothing).
 // - redline-summary(info): the summary; `info` is (old, new: version labels,
 //   ins, del: numbers of changes, entries: array of (file, level, target:
-//   label or none, title, count, deleted, new, unmarked), bib: (added,
-//   removed, changed: arrays of citation keys whose bibliography entry is
-//   new, gone or edited)).
+//   label or none, title, count, deleted, new, code: array of changed code
+//   that is not marked), bib: (added, removed, changed: arrays of citation
+//   keys whose bibliography entry is new, gone or edited)).
 // With `redline-ins(body, ..args) = body` and `redline-del(..args) = none`
 // the document is the new version unchanged; marks must keep that so.
 // For the side-by-side layout the binary compiles the marked files with
@@ -397,20 +397,29 @@
   body
 }
 
+// The bibliography entries that changed, as a sentence, or none.
+#let redline-bib(bib) = {
+  let bib = (([new], bib.added), ([no longer cited], bib.removed), ([changed], bib.changed)).filter(p => p.at(1).len() > 0)
+  if bib.len() > 0 [Bibliography entries, not marked in the bibliography: #bib.map(p => [#p.at(0): #p.at(1).map(raw).join(", ")]).join("; ").]
+}
+
+// A line of changed code that is not marked, shortened.
+#let redline-code(text) = {
+  let t = text.clusters()
+  raw(if t.len() > 80 { t.slice(0, 80).join() + "…" } else { text })
+}
+
 #let redline-summary(info) = if redline-side == none {
   let st = redline-style
   // One block, so that slide packages keep the summary together.
   block({
     block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
-    let bib = info.at("bib", default: (added: (), removed: (), changed: ()))
-    let bib = (([new], bib.added), ([no longer cited], bib.removed), ([changed], bib.changed)).filter(p => p.at(1).len() > 0)
-    if info.entries.len() == 0 and bib.len() == 0 { [No changes.] } else {
+    let bib = redline-bib(info.at("bib", default: (added: (), removed: (), changed: ())))
+    if info.entries.len() == 0 and bib == none { [No changes.] } else {
       let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
-      [#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Numbers count changed passages.]
+      block(below: 1.5em)[#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Numbers count changed passages.]
     }
-    if bib.len() > 0 {
-      block[Bibliography entries, not marked in the bibliography: #bib.map(p => [#p.at(0): #p.at(1).map(raw).join(", ")]).join("; ").]
-    }
+    if bib != none { block(below: 1.5em, bib) }
     context {
       let unbarred = query(<redline-unbarred>).map(m => m.value).flatten()
       if unbarred.len() > 0 {
@@ -419,7 +428,7 @@
     }
     let min-level = calc.min(..info.entries.map(e => e.level), 9)
     for e in info.entries {
-      let note = if e.unmarked [; changed code not marked]
+      let note = if e.code.len() > 0 [; changed code not marked]
       let line = if e.deleted {
         text(fill: st.del)[#strike(e.title) (deleted section#note)]
       } else if e.target == none {
@@ -431,11 +440,15 @@
             numbering(el.first().numbering, ..counter(heading).at(e.target)) + h(0.5em)
           }
         }
-        let pg = context counter(page).at(e.target).first()
+        // The number printed on the page, or the page of this PDF.
+        let pg = context if page.numbering == none { query(e.target).first().location().page() } else { counter(page).at(e.target).first() }
         let new = if e.new [new section, ]
         [#link(e.target, underline[#num#e.title]) (#new#e.count#note)#box(width: 1fr, repeat[#h(0.4em).])#h(0.4em)#link(e.target, pg)]
       }
-      block(above: 0.5em, below: 0.5em, pad(left: (e.level - min-level) * 1.5em, line))
+      block(above: 0.5em, below: 0.5em, pad(left: (e.level - min-level) * 1.5em, {
+        line
+        if e.code.len() > 0 { pad(left: 1.5em, text(size: 0.85em, e.code.map(redline-code).join(linebreak()))) }
+      }))
     }
   })
   pagebreak()
@@ -448,7 +461,7 @@
 // shown next to each other, steps-old, steps-new: pages of earlier steps of
 // the same slide, not shown), unpaired: array of (side, ins, page): changes
 // found in one version only, unmarked: array of (file, text): changed code
-// that is not marked).
+// that is not marked, bib: as for `redline-summary`).
 #let redline-side-by-side(info) = context {
   let st = redline-style
   let (o, n) = (info.old, info.new)
@@ -501,11 +514,10 @@
     }
     if info.unmarked.len() > 0 {
       [Changed code that is not marked:]
-      list(..info.unmarked.map(u => {
-        let t = u.text.clusters()
-        [#raw(if t.len() > 80 { t.slice(0, 80).join() + "…" } else { u.text }) in #raw(u.file)]
-      }))
+      list(..info.unmarked.map(u => [#redline-code(u.text) in #raw(u.file)]))
     }
+    let bib = redline-bib(info.bib)
+    if bib != none { block(bib) }
     for side in (o, n) {
       if side.unbarred.len() > 0 { block[Changes on these pages of #name(side) have no bars in the margin, because the document sets its own page foreground and background there: #pages(side.unbarred).] }
     }
