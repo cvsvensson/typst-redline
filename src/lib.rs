@@ -58,9 +58,14 @@ pub struct History<'a> {
     pub commits: Vec<Commit>,
     /// The new version has changes beyond the last commit.
     pub uncommitted: bool,
-    /// To mark each change in the colour of the commit that made it: the
-    /// version after each commit, the last one (the new version) left out.
+    /// To mark each change in the colour of the step that made it: the
+    /// version after each step, labelled by its revision, the last one (the
+    /// new version) left out.
     pub steps: Option<Vec<Version<'a>>>,
+    /// If steps group commits: the number of commits in each step, the
+    /// uncommitted changes being part of the last. Empty if each commit, and
+    /// the uncommitted changes, is a step of its own.
+    pub step_commits: Vec<usize>,
     /// The two versions are swapped: the steps lead from the new version to
     /// the old one. Each change still takes the step that made it.
     pub swapped: bool,
@@ -404,13 +409,19 @@ fn normalize(s: &str) -> String {
 
 impl History<'_> {
     /// The dictionary the preamble takes, with the latest commits if there
-    /// are many; `None` without commits or steps.
-    pub(crate) fn to_typst(&self) -> Option<String> {
+    /// are many and steps do not group them; `None` without commits or
+    /// steps. `old` and `new` label the two versions.
+    pub(crate) fn to_typst(&self, old: &str, new: &str) -> Option<String> {
         const SHOWN: usize = 10;
         if self.commits.is_empty() && self.steps.is_none() {
             return None;
         }
-        let earlier = self.commits.len().saturating_sub(SHOWN);
+        let grouped = !self.step_commits.is_empty();
+        let earlier = if grouped {
+            0
+        } else {
+            self.commits.len().saturating_sub(SHOWN)
+        };
         let commits: String = self.commits[earlier..]
             .iter()
             .map(|c| {
@@ -422,8 +433,28 @@ impl History<'_> {
                 )
             })
             .collect();
+        let groups = match &self.steps {
+            Some(steps) if grouped => {
+                let ends: Vec<&str> = steps.iter().map(|v| v.label.as_str()).collect();
+                let froms = [old].into_iter().chain(ends.iter().copied());
+                let tos = ends.iter().copied().chain([new]);
+                let groups: String = froms
+                    .zip(tos)
+                    .zip(&self.step_commits)
+                    .map(|((f, t), n)| {
+                        format!(
+                            "(from: {}, to: {}, commits: {n}),",
+                            mark::typst_str(f),
+                            mark::typst_str(t)
+                        )
+                    })
+                    .collect();
+                format!(", groups: ({groups})")
+            }
+            _ => String::new(),
+        };
         Some(format!(
-            "(commits: ({commits}), earlier: {earlier}, uncommitted: {}, steps: {})",
+            "(commits: ({commits}), earlier: {earlier}, uncommitted: {}, steps: {}{groups})",
             self.uncommitted,
             self.steps.is_some()
         ))

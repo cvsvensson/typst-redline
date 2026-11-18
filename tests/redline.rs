@@ -1346,3 +1346,72 @@ fn each_commit_needs_the_preamble_function() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("does not define redline-step-style"), "{stderr}");
 }
+
+/// A repository whose `doc/main.typ` gains a paragraph per commit: `lines`
+/// of `Commit <i>.` each in commit `i`, tagged `s<i>`.
+fn growing_repo(name: &str, lines: &[usize]) -> TempDir {
+    let dir = repo(name, &["base"]);
+    let mut text = doc("base");
+    for (i, n) in lines.iter().enumerate() {
+        for _ in 0..*n {
+            text.push_str(&format!("\nCommit {}.\n", i + 1));
+        }
+        std::fs::write(dir.join("doc/main.typ"), &text).unwrap();
+        git(&dir, &["commit", "-q", "-am", &format!("commit {}", i + 1)]);
+        git(&dir, &["tag", &format!("s{}", i + 1)]);
+    }
+    dir
+}
+
+/// The step of the first mark that contains `text`.
+fn step_of(src: &str, text: &str) -> Option<u8> {
+    steps_of_marks(src)
+        .into_iter()
+        .find(|(_, b)| b.contains(text))
+        .map(|(s, _)| s)
+}
+
+#[test]
+fn steps_end_at_the_given_revisions() {
+    if !typst_available() {
+        return;
+    }
+    let dir = growing_repo("steps", &[1; 6]);
+    let args = ["doc/main.typ", "--since", "c-base", "--steps", "s2,s4"];
+    let src = marked(&dir, &args, "main.typ");
+    let steps: Vec<_> = (1..=6).map(|i| step_of(&src, &format!("Commit {i}."))).collect();
+    let expected = [1, 1, 2, 2, 3, 3].map(Some);
+    assert_eq!(steps, expected, "{src}");
+}
+
+#[test]
+fn steps_with_a_number_balance_the_changes() {
+    if !typst_available() {
+        return;
+    }
+    // An even split by number of commits would cut after the second.
+    let dir = growing_repo("steps-count", &[12, 1, 1, 1, 1]);
+    let args = ["doc/main.typ", "--since", "c-base", "--steps", "2"];
+    let src = marked(&dir, &args, "main.typ");
+    assert_eq!(step_of(&src, "Commit 1."), Some(1), "{src}");
+    assert_eq!(step_of(&src, "Commit 2."), Some(2), "{src}");
+}
+
+#[test]
+fn step_off_the_first_parent_path_is_an_error() {
+    let dir = repo("steps-off-path", &["alpha", "beta"]);
+    git(&dir, &["checkout", "-q", "-b", "side", "c-alpha"]);
+    commit(&dir, "doc/main.typ", "gamma");
+    git(&dir, &["checkout", "-q", "main"]);
+    commit(&dir, "doc/main.typ", "delta");
+    let out = cli(&dir, &["doc/main.typ", "--since", "c-alpha", "--steps", "c-gamma"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.code() == Some(1) && stderr.contains("c-gamma"), "{stderr}");
+}
+
+#[test]
+fn steps_and_each_commit_together_are_a_usage_error() {
+    let dir = temp_dir("steps-usage");
+    let out = cli(&dir, &["main.typ", "--steps", "3", "--each-commit"]);
+    assert_eq!(out.status.code(), Some(2));
+}
