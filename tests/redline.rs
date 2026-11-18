@@ -811,6 +811,47 @@ fn deleted_footnote_does_not_step_the_counter() {
 }
 
 #[test]
+fn summary_finds_sections_under_headings_inside_calls() {
+    let mut r = run("headings-in-calls");
+    let main = r.files.iter_mut().find(|(p, _)| p == "main.typ").unwrap();
+    let marks = r.changes.len();
+    main.1.push_str(&format!(
+        "
+#import \"/{PREAMBLE_PATH}\": redline-under-headings, redline-plain\n#context [#metadata(redline-under-headings(range({marks}).map(i => (id: i))).map(g => (redline-plain(g.heading.body), g.count)))<probe>]\n"
+    ));
+    let Some(dir) = compile("headings-in-calls", &r.files) else {
+        return;
+    };
+    assert_eq!(query(&dir, "<probe>"), r#"[[["Goals",2],["Status",2]]]"#);
+}
+
+#[test]
+fn summary_says_which_fallbacks_were_applied() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("fallback-note");
+    std::fs::write(dir.join(PREAMBLE_PATH), PREAMBLE).unwrap();
+    std::fs::write(
+        dir.join("main.typ"),
+        format!("#import \"{PREAMBLE_PATH}\": redline-fallback-note, redline-plain\n#metadata(redline-plain(redline-fallback-note))<probe>\n"),
+    )
+    .unwrap();
+    let note = |fallbacks: &str| {
+        let out = Command::new("typst")
+            .args(["query", "--input", &format!("redline-fallback={fallbacks}")])
+            .arg(dir.join("main.typ"))
+            .args(["<probe>", "--field", "value", "--one"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    assert_eq!(note(""), "\"\"");
+    assert!(note("frames,names").contains("by its name"));
+}
+
+#[test]
 fn deleted_state_and_counter_updates_have_no_effect() {
     if let Some(v) = probe("deleted-update") {
         assert_eq!(v, "[[0,1]]");
