@@ -849,7 +849,7 @@ fn side_by_side_pairs_pages_with_the_same_changes() {
         c(false, 3, 4),
         c(false, 3, 5),
     ];
-    let (pairs, unpaired) = pair_pages(&old, &new);
+    let (pairs, unpaired) = pair_pages(&old, &new, (&[], &[]));
     let pair = |old: &[usize], new: &[usize], steps_old: &[usize], steps_new: &[usize]| Pair {
         old: old.to_vec(),
         new: new.to_vec(),
@@ -878,7 +878,7 @@ fn side_by_side_pairs_changes_written_differently() {
         c(false, 2, 4),
         c(false, 3, 5),
     ];
-    let (pairs, unpaired) = pair_pages(&old, &new);
+    let (pairs, unpaired) = pair_pages(&old, &new, (&[], &[]));
     let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone())).collect();
     assert_eq!(
         pages,
@@ -890,6 +890,17 @@ fn side_by_side_pairs_changes_written_differently() {
         ]
     );
     assert!(unpaired.is_empty());
+}
+
+#[test]
+fn side_by_side_shows_an_inserted_page_without_a_counterpart() {
+    let c = |ins, id, page| Placed { ins, id, page };
+    // Page 3 of the new version is inserted; the old version marks its
+    // place at the top of page 3, whose heading is on page 4 of the new.
+    let (old, new) = ([c(true, 7, 3)], [c(true, 7, 3)]);
+    let (pairs, _) = pair_pages(&old, &new, (&[(1, 3)], &[(1, 4)]));
+    let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone())).collect();
+    assert_eq!(pages, [(vec![], vec![3])]);
 }
 
 /// Whether the typst on PATH is older than the side-by-side layout needs.

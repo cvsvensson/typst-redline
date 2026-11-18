@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Output};
 
 use tree::{Tree, git, output};
-use typst_redline::{OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version, composite, redline};
+use typst_redline::{
+    Anchor, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version, composite, redline,
+};
 
 const USAGE: &str = "\
 typst-redline: mark changes between two versions of a Typst document
@@ -578,7 +580,7 @@ fn compose(
     result: &Redline,
     to: &Path,
 ) -> Result<(), String> {
-    type Layout = (usize, Vec<usize>, Vec<Placed>);
+    type Layout = (usize, Vec<usize>, Vec<Placed>, Vec<Anchor>);
     let layout = |(root, entry, side, _): (&Path, &String, &str, &str), label: &str| -> Result<Layout, String> {
         let input = format!("redline-side={side}");
         let entry = root.join(entry);
@@ -601,17 +603,20 @@ fn compose(
         };
         let (unbarred, rest) = rest.split_at((*n).min(rest.len()));
         warn_unbarred(unbarred, label);
-        let changes = rest
-            .chunks(3)
-            .map(|c| Placed {
-                ins: c[0] == 1,
-                id: c[1] as u64,
-                page: c[2],
-            })
-            .collect();
-        Ok((*pages, unbarred.to_vec(), changes))
+        let (mut changes, mut headings) = (vec![], vec![]);
+        for &[kind, id, page] in rest.as_chunks::<3>().0 {
+            match kind {
+                2 => headings.push((id as u64, page)),
+                _ => changes.push(Placed {
+                    ins: kind == 1,
+                    id: id as u64,
+                    page,
+                }),
+            }
+        }
+        Ok((*pages, unbarred.to_vec(), changes, headings))
     };
-    let ((old_pages, old_unbarred, old), (new_pages, new_unbarred, new)) =
+    let ((old_pages, old_unbarred, old, old_headings), (new_pages, new_unbarred, new, new_headings)) =
         (layout(sides[0], labels.0)?, layout(sides[1], labels.1)?);
     let (old_pdf, new_pdf) = (format!("/{OLD_PDF}"), format!("/{NEW_PDF}"));
     let source = composite(
@@ -621,6 +626,7 @@ fn compose(
             pages: old_pages,
             unbarred: &old_unbarred,
             changes: &old,
+            headings: &old_headings,
         },
         &Side {
             label: labels.1,
@@ -628,6 +634,7 @@ fn compose(
             pages: new_pages,
             unbarred: &new_unbarred,
             changes: &new,
+            headings: &new_headings,
         },
         &result.changes,
     );

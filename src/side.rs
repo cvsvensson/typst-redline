@@ -2,7 +2,7 @@
 //! the same changes, and the composite document that puts them next to each
 //! other.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::mark::{segments, typst_str};
 use crate::{Change, ChangeKind, PREAMBLE_PATH};
@@ -35,13 +35,38 @@ pub struct Side<'a> {
     pub pages: usize,
     pub unbarred: &'a [usize],
     pub changes: &'a [Placed],
+    pub headings: &'a [Anchor],
 }
+
+/// A heading as laid out in one version: an identity that is the same in
+/// both versions if its text is, and its page.
+pub type Anchor = (u64, usize);
 
 /// The pages that hold the same changes, in the order of the new version,
 /// and the changes found in one version only (`true` for the old one).
-/// Consecutive pairs with the same changes are steps of one slide; only the
-/// last is kept.
-pub fn pair_pages(old: &[Placed], new: &[Placed]) -> (Vec<Pair>, Vec<(bool, Placed)>) {
+/// A change is on a page of the version that has its content, and on the
+/// other at the place the content would be. That place's page is not a
+/// counterpart if its headings are on other pages in the version with the
+/// content: the content fills pages of its own. Consecutive pairs with the
+/// same changes are steps of one slide; only the last is kept.
+pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor])) -> (Vec<Pair>, Vec<(bool, Placed)>) {
+    let unique = |a: &[Anchor]| {
+        let mut m: HashMap<u64, Option<usize>> = HashMap::new();
+        for &(id, page) in a {
+            m.entry(id).and_modify(|p| *p = None).or_insert(Some(page));
+        }
+        m
+    };
+    let (ua, ub) = (unique(anchors.0), unique(anchors.1));
+    // Old and new pages that show the same headings.
+    let same: Vec<(usize, usize)> = ua.iter().filter_map(|(id, o)| Some(((*o)?, (*ub.get(id)?)?))).collect();
+    let elsewhere = |in_old: bool, page: usize, other: usize| {
+        let there = same
+            .iter()
+            .filter(|(o, n)| if in_old { *o == page } else { *n == page });
+        let mut there = there.map(|(o, n)| if in_old { *n } else { *o }).peekable();
+        there.peek().is_some() && !there.any(|p| p == other)
+    };
     let mut groups: Vec<(BTreeSet<usize>, BTreeSet<usize>)> = vec![];
     let mut unpaired = vec![];
     for ins in [false, true] {
@@ -67,13 +92,42 @@ pub fn pair_pages(old: &[Placed], new: &[Placed]) -> (Vec<Pair>, Vec<(bool, Plac
             for (i, c) in os.iter().enumerate() {
                 for (j, d) in ns.iter().enumerate() {
                     if os.len() != ns.len() || i == j {
-                        join(&mut groups, Some(c.page), Some(d.page));
+                        // An insertion's content is in the new version.
+                        let (absent, real) = if ins { (c.page, d.page) } else { (d.page, c.page) };
+                        let alone = elsewhere(ins, absent, real);
+                        join(
+                            &mut groups,
+                            (!(alone && ins)).then_some(c.page),
+                            (!(alone && !ins)).then_some(d.page),
+                        );
                     }
                 }
             }
         }
     }
-    groups.sort_by_key(|(o, n)| (n.first().copied().unwrap_or(usize::MAX), o.first().copied()));
+    // A group with old pages only goes after the new pages that the old
+    // pages before it are paired with.
+    let known: Vec<(usize, usize)> = groups
+        .iter()
+        .flat_map(|(o, n)| o.iter().flat_map(|&p| n.iter().map(move |&q| (p, q))))
+        .chain(same.iter().copied())
+        .collect();
+    let after = |o: usize| {
+        known
+            .iter()
+            .filter(|(p, _)| *p <= o)
+            .map(|(_, q)| *q)
+            .max()
+            .unwrap_or(0)
+    };
+    groups.sort_by_key(|(o, n)| {
+        let o1 = o.first().copied();
+        (
+            n.first().copied().unwrap_or_else(|| after(o1.unwrap_or(0))),
+            n.is_empty(),
+            o1,
+        )
+    });
 
     let changes = |side: &[Placed], pages: &BTreeSet<usize>| {
         side.iter()
@@ -125,7 +179,7 @@ fn join(groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>, o: Option<usize>, 
 /// `redline-side-by-side` with the paired pages, the changes found in one
 /// version only and the changes that are not marked.
 pub fn composite(old: &Side, new: &Side, changes: &[Change]) -> String {
-    let (pairs, unpaired) = pair_pages(old.changes, new.changes);
+    let (pairs, unpaired) = pair_pages(old.changes, new.changes, (old.headings, new.headings));
     let list = |v: &[usize]| format!("({})", v.iter().map(|p| format!("{p},")).collect::<String>());
     let side = |s: &Side| {
         format!(
