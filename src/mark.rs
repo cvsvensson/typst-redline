@@ -676,7 +676,7 @@ impl<'a> Writer<'a> {
         let others: Vec<Section> = self
             .files
             .iter()
-            .map(|(p, _)| front(p, format!("[Definitions in #raw({}), marked where used]", typst_str(p))))
+            .map(|(p, _)| front(p, format!("[Changes in #raw({}), marked where used]", typst_str(p))))
             .collect();
         // A heading deleted where a heading with the same title remains was
         // changed or moved, not deleted: its changes count with the section

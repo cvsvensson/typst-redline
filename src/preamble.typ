@@ -27,7 +27,8 @@
 //   move: number of the move if it is one, old, new): its marks), bib: (added,
 //   removed, changed: arrays of citation keys whose bibliography entry is
 //   new, gone or edited, files: paths of other files that the document
-//   reads and that differ), and if the versions are git revisions,
+//   reads and that differ, unchecked: whether files read through a computed
+//   path were not checked), and if the versions are git revisions,
 //   history: (commits: array of (hash, date, subject), oldest first,
 //   earlier: number of earlier commits left out, uncommitted: whether the
 //   new version has uncommitted changes, steps: whether marks are coloured
@@ -807,6 +808,7 @@
   let out = ()
   if entries.len() > 0 { out.push[Bibliography entries, not marked in the bibliography: #entries.map(p => [#p.at(0): #p.at(1).map(raw).join(", ")]).join("; ").] }
   if files.len() > 0 { out.push[Changed files that the document reads, not marked: #files.map(raw).join(", ").] }
+  if bib.at("unchecked", default: false) { out.push[Files that the document reads through a computed path were not checked for changes; that needs Typst 0.14 or later.] }
   if out.len() > 0 { out.join(" ") }
 }
 
