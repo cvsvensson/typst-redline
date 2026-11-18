@@ -658,6 +658,42 @@ fn change_that_a_function_drops_is_listed() {
 }
 
 #[test]
+fn change_in_hidden_content_is_listed() {
+    let doc = |w: &str| format!("First line.\n\n#hide[Second line with {w}.]\n");
+    let r = redline_of(&doc("gamma"), &doc("delta"));
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let Some(dir) = compile("hidden-change", &files) else {
+        return;
+    };
+    assert_eq!(query(&dir, "<redline-lost>"), "[[0,1]]");
+}
+
+#[test]
+fn insertion_of_content_that_takes_no_room_adds_no_space() {
+    let doc = |fill: &str| {
+        format!(
+            "First.\n\n#place(top + right, rect(fill: {fill}))\n\nSecond.#context [#metadata(here().position().y)<probe>]\n"
+        )
+    };
+    let r = redline_of(&doc("red"), &doc("blue"));
+    let without_deletions = format!("{PREAMBLE}\n#let redline-del(..args) = none\n#let redline-summary(info) = none\n");
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), without_deletions)]].concat();
+    let Some(marked) = compile("roomless-mark", &files) else {
+        return;
+    };
+    let new = compile("roomless-new", &[("main.typ".into(), doc("blue"))]).unwrap();
+    assert_eq!(query(&marked, "<probe>"), query(&new, "<probe>"));
+}
+
+#[test]
+fn changed_raw_block_is_marked_as_a_block() {
+    let doc = |x: &str| format!("Text.\n\n```py\nx = {x}\n```\n");
+    let r = redline_of(&doc("1"), &doc("2"));
+    let src = without_ids(&r.files.iter().find(|(p, _)| p == "main.typ").unwrap().1);
+    assert!(src.contains("redline-ins(block: true)[```py"), "{src}");
+}
+
+#[test]
 fn output_compiles() {
     // Evaluated, the deleted code of `deleted-code` fails, as it should.
     for name in fixtures().filter(|n| n != "deleted-code") {

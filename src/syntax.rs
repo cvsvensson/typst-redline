@@ -215,7 +215,8 @@ pub struct Tok {
     pub key: String,
     pub text: String,
     pub nodes: Vec<SyntaxNode>,
-    /// Display equation or code alone on its line: laid out as a block.
+    /// Display equation, raw block or code alone on its line: laid out as a
+    /// block.
     pub block: bool,
     /// Where its source starts: a node and an offset into it.
     pub at: (Span, usize),
@@ -308,7 +309,8 @@ pub fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
                 let unit = unit(nodes, &mut i);
                 let line_start = toks.last().is_none_or(|t| t.kind == TK::Space && t.text.contains('\n'));
                 let line_end = nodes.get(i + 1).is_none_or(|c| c.full_text().starts_with('\n'));
-                let display = n.kind() == K::Equation && n.children().nth(1).is_some_and(|c| c.kind() == K::Space);
+                let display = n.kind() == K::Equation && n.children().nth(1).is_some_and(|c| c.kind() == K::Space)
+                    || n.cast::<ast::Raw>().is_some_and(|r| r.block());
                 toks.push(Tok {
                     kind: TK::Atom,
                     key: skeleton(&unit),
