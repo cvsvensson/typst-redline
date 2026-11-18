@@ -306,6 +306,36 @@
   if block { parbreak() } else if gap { h(0.25em) }
 }
 
+// The bars code shadows `bottom` and `left`.
+#let redline-bottom-left = bottom + left
+
+#let redline-swatch(st) = box(width: 0.8em, height: 0.8em, fill: st.ins-fill, stroke: 0.6pt + st.ins)
+
+// With --each-commit, each commit's colour, hash and the start of its
+// subject on one line no wider than `width`; hashes alone if subjects do not
+// fit, none if hashes do not.
+#let redline-legend(hist, width) = {
+  let mono = text.with(font: "DejaVu Sans Mono", size: 0.85em)
+  let items = hist.commits.enumerate().map(p => (hist.earlier + p.at(0) + 1, mono(p.at(1).hash), p.at(1).subject.clusters()))
+  if hist.uncommitted { items.push((hist.earlier + hist.commits.len() + 1, [uncommitted], ())) }
+  let legend(n) = {
+    set text(size: 7pt, fill: luma(90), weight: "regular", style: "normal")
+    items.map(((step, hash, subject)) => {
+      let more = if subject.len() > n { "…" }
+      box[#redline-swatch(redline-step-style(step))#h(0.35em)#hash#if n > 0 and subject.len() > 0 [ #subject.slice(0, calc.min(n, subject.len())).join().trim()#more]]
+    }).join(h(1.2em))
+  }
+  let fits(n) = measure(legend(n)).width <= width
+  let longest = calc.max(0, ..items.map(i => i.at(2).len()))
+  if fits(longest) { return legend(longest) }
+  let (lo, hi) = (0, longest)
+  while lo < hi {
+    let mid = calc.quo(lo + hi + 1, 2)
+    if fits(mid) { lo = mid } else { hi = mid - 1 }
+  }
+  if lo >= 8 { legend(lo) } else if fits(0) { legend(0) }
+}
+
 // The bars of one page, drawn from the page foreground or background
 // (`from`): one query per page instead of introspection per mark.
 #let redline-page-bars(from) = context {
@@ -408,6 +438,22 @@
     let stroke = (paint: paint, thickness: st.bar-width, dash: if ins { none } else { (3pt, 2pt) })
     place(dx: x, dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
   }
+  // The legend goes in the middle of the bottom margin below the footer,
+  // if there is room. A page number is taken to be one line high; in
+  // Typst 0.11 an unset footer reads as none.
+  let hist = query(<redline-history>)
+  let legend = if merged.len() > 0 and hist.len() > 0 { redline-legend(hist.first().value, body) }
+  if legend != none {
+    let margin = side(("bottom",), h)
+    let foot = if page.footer not in (none, auto) { page.footer } else if page.numbering != none and page.number-align.y == redline-bottom-left.y [0]
+    let below = if foot == none { 0pt } else {
+      absolute(page.footer-descent, margin) + measure(block(width: body, foot)).height
+    }
+    let room = margin - below - measure(legend).height
+    if room >= 6pt {
+      place(redline-bottom-left, dx: left, dy: -room / 2, legend)
+    }
+  }
 }
 
 // The rest of the document, with the bars drawn over the page foreground in
@@ -434,10 +480,11 @@
 #let redline-commits(hist, old, new) = if hist != none {
   let row(step, ..cells) = if hist.steps {
     let st = redline-step-style(step)
-    (box(width: 0.8em, height: 0.8em, fill: st.ins-fill, stroke: 0.6pt + st.ins), ..cells.pos().map(text.with(fill: st.ins)))
+    (redline-swatch(st), ..cells.pos().map(text.with(fill: st.ins)))
   } else { cells.pos() }
   let rows = hist.commits.enumerate().map(p => row(hist.earlier + p.at(0) + 1, raw(p.at(1).hash), p.at(1).date, p.at(1).subject))
   if hist.uncommitted { rows.push(row(hist.earlier + hist.commits.len() + 1, [], [], emph[Uncommitted changes])) }
+  if hist.steps [#metadata(hist)<redline-history>]
   block(below: 1.5em, {
     block(below: 0.8em, strong[Commits from #old to #new])
     if hist.earlier > 0 { block(emph[#hist.earlier earlier commits, not listed]) }

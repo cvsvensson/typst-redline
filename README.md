@@ -39,6 +39,16 @@ If your document uses files outside its own folder, such as `#import "../macros.
 
 With the deleted parts removed, the marked document has the same text, layout and numbering as the new version.
 
+## Who changed what
+
+`--each-commit` gives each commit between the two versions its own colour, for up to 6 commits. Deleted text is still struck through and new text still highlighted; the colour tells which commit made the change. The list of commits on the summary page is the legend, and each page with marks repeats it in one small line in the bottom margin when there is room.
+
+```sh
+typst-redline paper.typ --since HEAD~4 --each-commit
+```
+
+Only the first and the last version are compared, so text that one commit added and a later one removed does not appear. A deleted passage, formula or figure that several commits changed takes the colour of the commit that changed most of it. `--each-commit` does not work with two plain files or with `--layout side-by-side`.
+
 ## Slides and side-by-side
 
 Deleted content takes room, so a full slide can overflow. `--layout side-by-side` puts each changed page of the old version next to the same page of the new version, and leaves out pages without changes. It works for any document and needs Typst 0.14 or later.
@@ -63,7 +73,7 @@ The picture is made from [docs/example-slides/old.typ](docs/example-slides/old.t
 
 ## Styling
 
-Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`.
+Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`. The six colours of `--each-commit` are in `redline-style.steps`.
 
 ## VS Code
 
