@@ -12,7 +12,8 @@
 //   ins, del: numbers of changes, entries: array of (file, level, target:
 //   label or none, title, count, deleted, new, code: array of changed code
 //   that is not marked), bib: (added, removed, changed: arrays of citation
-//   keys whose bibliography entry is new, gone or edited), and if the
+//   keys whose bibliography entry is new, gone or edited, files: paths of
+//   other files that both versions read and that differ), and if the
 //   versions are git revisions, history: (commits: array of (hash, date,
 //   subject), oldest first, earlier: number of earlier commits left out,
 //   uncommitted: whether the new version has uncommitted changes, steps:
@@ -470,10 +471,15 @@
   body
 }
 
-// The bibliography entries that changed, as a sentence, or none.
+// The bibliography entries and other files that changed, as sentences, or
+// none.
 #let redline-bib(bib) = {
-  let bib = (([new], bib.added), ([no longer cited], bib.removed), ([changed], bib.changed)).filter(p => p.at(1).len() > 0)
-  if bib.len() > 0 [Bibliography entries, not marked in the bibliography: #bib.map(p => [#p.at(0): #p.at(1).map(raw).join(", ")]).join("; ").]
+  let entries = (([new], bib.added), ([no longer cited], bib.removed), ([changed], bib.changed)).filter(p => p.at(1).len() > 0)
+  let files = bib.at("files", default: ())
+  let out = ()
+  if entries.len() > 0 { out.push[Bibliography entries, not marked in the bibliography: #entries.map(p => [#p.at(0): #p.at(1).map(raw).join(", ")]).join("; ").] }
+  if files.len() > 0 { out.push[Changed files that the document reads, not marked: #files.map(raw).join(", ").] }
+  if out.len() > 0 { out.join(" ") }
 }
 
 // The commits from the old version to the new one, each in the colour of
@@ -588,7 +594,8 @@
   block(width: width + gap, align(center, block(width: calc.min(width + gap, 36 * size), align(left, {
     block(text(size: 1.4em, weight: "bold")[Changes from #o.label to #n.label])
     let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
-    if info.pairs.len() == 0 [No changes.] else [
+    let bib = redline-bib(info.bib)
+    if info.pairs.len() == 0 { if bib == none [No changes.] } else [
       Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the commit that made the change]. Bars in the margin mark the changed lines.
       #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
     ]
@@ -618,7 +625,6 @@
       [Changed code that is not marked:]
       list(..info.unmarked.map(u => [#redline-code(u.text) in #raw(u.file)]))
     }
-    let bib = redline-bib(info.bib)
     if bib != none { block(bib) }
     redline-commits(hist, o.label, n.label)
     for side in (o, n) {

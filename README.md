@@ -36,6 +36,7 @@ If your document uses files outside its own folder, such as `#import "../macros.
 - **Bars in the margin** point to every changed line, dashed for deletions and solid for insertions.
 - **Several files:** changes in files that the document includes or imports are marked too. With git, the old versions of those files, and of images the old text uses, are taken from the old commit.
 - **Code:** a change to code, such as a function body or a `#set` rule, cannot be shown as a mark. The summary page lists it as *changed code not marked*, so no change goes unreported.
+- **Files the document reads:** when an image or data file changes while the call that reads it (`image`, `json`, `csv`, `read` and similar) stays the same, the summary page lists the file as changed. Files read through a computed path are not detected.
 
 With the deleted parts removed, the marked document has the same text, layout and numbering as the new version.
 
@@ -68,6 +69,7 @@ The picture is made from [docs/example-slides/old.typ](docs/example-slides/old.t
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
 - A citation added to or removed from a group such as `@a @b` marks the whole group, because Typst lays the group out as one piece.
 - Entries that appear in, disappear from or change in the bibliography are not marked there. The summary page names them.
+- When a figure's call and its image file both change, the old figure is drawn with the new image file.
 - Pages where your document or its template sets both its own page foreground and background get no margin bars. The summary page lists those pages.
 - In side-by-side, an inserted or deleted page is shown next to an empty one only when the pages have headings; otherwise it can be paired with a neighbouring page.
 

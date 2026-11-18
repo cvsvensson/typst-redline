@@ -70,8 +70,8 @@ fn tree(name: &str, side: &str) -> Vec<(String, String)> {
 
 fn generate(name: &str, preamble: &str, opts: Options) -> Run {
     let (read_old, read_new) = (
-        |p: &str| read_fixture(name, "old", p),
-        |p: &str| read_fixture(name, "new", p),
+        |p: &str| read_fixture(name, "old", p).map(String::into_bytes),
+        |p: &str| read_fixture(name, "new", p).map(String::into_bytes),
     );
     let v = |label: &str, read| Version {
         label: label.into(),
@@ -115,7 +115,7 @@ fn body(name: &str) -> String {
 
 /// The redline of two one-file versions.
 fn redline_of(old: &str, new: &str) -> Redline {
-    let (old, new) = (old.to_string(), new.to_string());
+    let (old, new) = (old.as_bytes().to_vec(), new.as_bytes().to_vec());
     let v = |read| Version {
         label: "v".into(),
         entry: "main.typ".into(),
@@ -589,7 +589,7 @@ fn new_gone_and_edited_bibliography_entries_are_listed() {
     let r = run("bib-entries");
     assert!(
         r.body
-            .contains("bib: (added: (\"c\",), removed: (\"b\",), changed: (\"a\",))"),
+            .contains("bib: (added: (\"c\",), removed: (\"b\",), changed: (\"a\",)"),
         "{}",
         r.body
     );
@@ -606,13 +606,36 @@ fn page_foregrounds_of_the_document_are_kept_with_the_bars() {
 
 #[test]
 fn computed_include_path_is_reported() {
-    let read = |_: &str| Some("#include \"a\" + \".typ\"\n".to_string());
+    let read = |_: &str| Some(b"#include \"a\" + \".typ\"\n".to_vec());
     let v = Version {
         label: "v".into(),
         entry: "main.typ".into(),
         read: &read,
     };
     assert_eq!(redline(&v, &v, FULL, &History::default()).warnings.len(), 1);
+}
+
+#[test]
+fn changed_files_read_by_unchanged_calls_are_listed() {
+    let main = "#image(\"fig.svg\")\n#let d = json(\"/data/d.json\")\n#csv(\"same.csv\")\n";
+    let read = |fig: &str, d: &str| {
+        let (fig, d) = (fig.to_string(), d.to_string());
+        move |p: &str| match p {
+            "main.typ" => Some(main.into()),
+            "fig.svg" => Some(fig.clone().into_bytes()),
+            "data/d.json" => Some(d.clone().into_bytes()),
+            "same.csv" => Some(b"a,b\n".to_vec()),
+            _ => None,
+        }
+    };
+    let (old, new) = (read("<svg/>", "1"), read("<svg></svg>", "2"));
+    let v = |read| Version {
+        label: "v".into(),
+        entry: "main.typ".into(),
+        read,
+    };
+    let r = redline(&v(&old), &v(&new), FULL, &History::default());
+    assert_eq!(r.bib.files, ["data/d.json", "fig.svg"]);
 }
 
 // CLI
@@ -1147,7 +1170,7 @@ fn each_change_is_marked_with_the_commit_that_made_it() {
 /// step, `mid` being the version after the first.
 fn redline_steps(old: &str, mid: &str, new: &str) -> Redline {
     let read = |s: &str| {
-        let s = s.to_string();
+        let s = s.as_bytes().to_vec();
         move |_: &str| Some(s.clone())
     };
     let (old, mid, new) = (read(old), read(mid), read(new));
