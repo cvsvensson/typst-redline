@@ -1,27 +1,25 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use typst_redline::{Change, ChangeKind, Options, PREAMBLE, Version, redline};
+use typst_redline::{Change, ChangeKind, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Version, redline};
 
-const FIXTURES: [&str; 17] = [
-    "inline-math",
-    "display-label",
-    "deleted-label",
-    "crlf",
-    "sections",
-    "nested-list",
-    "literal-underscore",
-    "line-break",
-    "nbsp",
-    "list-first",
-    "list-marker",
-    "enum-deleted",
-    "label-moved",
-    "cjk",
-    "name-collision",
-    "punctuation",
-    "deleted-first",
-];
+const FULL: Options = Options {
+    eval_deleted: true,
+    content_blocks: true,
+};
+
+/// Deleted code shown by name instead of evaluated.
+const BY_NAME: Options = Options {
+    eval_deleted: false,
+    content_blocks: true,
+};
+
+fn fixtures() -> impl Iterator<Item = String> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+}
 
 /// A fixture side: `<side>.typ` as `main.typ`, or the tree `<side>/` with
 /// the entry `main.typ`.
@@ -67,18 +65,7 @@ fn tree(name: &str, side: &str) -> Vec<(String, String)> {
     }
 }
 
-fn run_with(name: &str, eval_deleted: bool, content_blocks: bool) -> Run {
-    generate(
-        name,
-        Options {
-            preamble: PREAMBLE.into(),
-            eval_deleted,
-            content_blocks,
-        },
-    )
-}
-
-fn generate(name: &str, opts: Options) -> Run {
+fn generate(name: &str, preamble: &str, opts: Options) -> Run {
     let (read_old, read_new) = (
         |p: &str| read_fixture(name, "old", p),
         |p: &str| read_fixture(name, "new", p),
@@ -88,15 +75,23 @@ fn generate(name: &str, opts: Options) -> Run {
         entry: "main.typ".into(),
         read,
     };
-    let r = redline(&v("old", &read_old), &v("new", &read_new), &opts);
-    // The new tree, the old-only files, then the overlay.
+    let r = redline(&v("old", &read_old), &v("new", &read_new), opts);
+    // The new tree, the old-only files, the old tree if asked for, then the
+    // overlay.
     let mut files = tree(name, "new");
     for f in tree(name, "old") {
         if !files.iter().any(|(q, _)| *q == f.0) {
             files.push(f);
         }
     }
-    for (p, c) in r.files {
+    if r.files.iter().any(|(p, _)| p.starts_with(OLD_DIR)) {
+        files.extend(
+            tree(name, "old")
+                .into_iter()
+                .map(|(p, c)| (format!("{OLD_DIR}/{p}"), c)),
+        );
+    }
+    for (p, c) in r.files.into_iter().chain([(PREAMBLE_PATH.into(), preamble.into())]) {
         files.retain(|(q, _)| *q != p);
         files.push((p, c));
     }
@@ -108,7 +103,7 @@ fn generate(name: &str, opts: Options) -> Run {
 }
 
 fn run(name: &str) -> Run {
-    run_with(name, true, true)
+    generate(name, PREAMBLE, FULL)
 }
 
 fn body(name: &str) -> String {
@@ -134,7 +129,7 @@ fn deleted_labels_and_refs_are_neutralized() {
     let out = body("deleted-label");
     assert!(!out.contains("<eq-old>"), "{out}");
     assert!(!out.contains(" @eq-old"), "{out}");
-    assert!(out.contains("\\@eq-old"), "{out}");
+    assert!(out.contains("#emph(\"eq-old\")"), "{out}");
     assert!(out.contains("and to @sec-intro"), "{out}");
 }
 
@@ -145,17 +140,11 @@ fn line_endings_are_not_changes() {
 }
 
 #[test]
-fn changes_are_recorded() {
-    let kinds: Vec<ChangeKind> = run("inline-math").changes.iter().map(|c| c.kind).collect();
-    assert!(kinds.contains(&ChangeKind::Ins) && kinds.contains(&ChangeKind::Del));
-}
-
-#[test]
 fn changes_stay_inside_nested_items() {
     let out = body("nested-list");
     assert!(out.contains("\n  - Nested one #redline-ins"), "{out}");
     assert!(
-        out.contains("\n  - Nested two\n    #redline-del(block: true)[Nested gone];\n- Third item"),
+        out.contains("\n  - Nested two\n    #redline-del(block: true)[#sym.bullet Nested gone];\n- Third item"),
         "{out}"
     );
     assert!(out.contains("\n/ Term: A #redline-ins"), "{out}");
@@ -177,7 +166,7 @@ fn summary_comes_first_at_the_top_level() {
 fn spaces_belong_to_the_new_version() {
     let out = body("punctuation");
     assert!(
-        out.contains("The #redline-del()[extension is given in closed form;];#redline-ins()[extension, the Procrustes map,]; see"),
+        out.contains("extension#redline-del()[ is given in closed form;];#redline-ins()[, the Procrustes map,]; see"),
         "{out}"
     );
 }
@@ -185,10 +174,104 @@ fn spaces_belong_to_the_new_version() {
 #[test]
 fn unspaced_scripts_are_compared_by_character() {
     let out = body("cjk");
+    assert!(out.contains("日本語#redline-ins()[の];テキスト"), "{out}");
+}
+
+#[test]
+fn replaced_blocks_alternate_with_their_replacements() {
+    let out = body("interleaved");
+    let at = |s: &str| out.find(s).unwrap();
     assert!(
-        out.contains("日本語#redline-ins()[の];テキスト"),
+        at("First old") < at("One wholly") && at("One wholly") < at("Second old") && at("Second old") < at("Another"),
         "{out}"
     );
+}
+
+#[test]
+fn inserted_figure_is_marked_as_a_block() {
+    let out = body("inserted-figure");
+    assert!(out.contains("#redline-ins(block: true)[#figure("), "{out}");
+}
+
+#[test]
+fn changed_punctuation_is_marked_with_its_word() {
+    let out = body("punctuation-word");
+    assert!(
+        out.contains("#redline-del(gap: true)[holds,];#redline-ins()[holds;]"),
+        "{out}"
+    );
+}
+
+#[test]
+fn numbers_and_hyphenated_words_are_whole_words() {
+    let out = body("tokens");
+    assert!(out.contains("[2.0];#redline-ins()[2.5]"), "{out}");
+    assert!(out.contains("[ground states];#redline-ins()[ground-state]"), "{out}");
+}
+
+#[test]
+fn deleted_punctuation_stays_next_to_its_word() {
+    let out = body("deleted-punctuation");
+    assert!(
+        out.contains("extension#redline-del()[, the map, minimizes a cost]; #redline-ins()[is given"),
+        "{out}"
+    );
+}
+
+#[test]
+fn paragraphs_inserted_inside_a_run_are_marked_as_blocks() {
+    let out = body("inserted-paragraphs");
+    assert!(
+        out.contains("#redline-ins(block: true)[A whole new paragraph.]"),
+        "{out}"
+    );
+}
+
+#[test]
+fn emphasised_text_is_compared_word_by_word() {
+    let out = body("emphasis");
+    assert!(
+        out.contains("_emphasised #redline-del(gap: true)[old];#redline-ins()[new]; words_"),
+        "{out}"
+    );
+}
+
+#[test]
+fn figure_gaining_a_label_is_listed_not_replaced() {
+    let r = run("figure-label");
+    assert!(
+        !r.body.contains("#redline-ins(") && !r.body.contains("#redline-del("),
+        "{}",
+        r.body
+    );
+    assert!(r.changes.iter().all(|c| c.kind == ChangeKind::Unmarked), "{}", r.body);
+}
+
+#[test]
+fn deleted_code_sees_the_old_definitions_and_files() {
+    let Some(dir) = compile("old-definitions-query", &run("old-definitions").files) else {
+        return;
+    };
+    let out = Command::new("typst")
+        .args(["query", "--root"])
+        .arg(&*dir)
+        .arg(dir.join("main.typ"))
+        .args(["metadata", "--field", "value"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"oldold\""), "{out:?}");
+}
+
+#[test]
+fn deleted_code_that_is_not_evaluated_is_shown_by_name() {
+    let out = generate("old-definitions", PREAMBLE, BY_NAME).body;
+    assert!(out.contains("[figure]") && !out.contains("rect(v)"), "{out}");
+}
+
+#[test]
+fn heading_with_a_new_label_is_not_listed_as_deleted() {
+    let out = body("heading-label");
+    assert!(!out.contains("deleted: true"), "{out}");
 }
 
 fn typst_available() -> bool {
@@ -245,6 +328,7 @@ fn compile_to(name: &str, files: &[(String, String)], output: &str) -> Option<Te
     }
     let dir = temp_dir(name);
     for (p, c) in files {
+        std::fs::create_dir_all(dir.join(p).parent().unwrap()).unwrap();
         std::fs::write(dir.join(p), c).unwrap();
     }
     let out = Command::new("typst")
@@ -275,9 +359,15 @@ fn probe(name: &str) -> Option<String> {
 
 #[test]
 fn output_compiles() {
-    for name in FIXTURES {
-        compile(name, &run(name).files);
+    // Evaluated, the deleted code of `deleted-code` fails, as it should.
+    for name in fixtures().filter(|n| n != "deleted-code") {
+        compile(&name, &run(&name).files);
     }
+}
+
+#[test]
+fn deleted_code_that_would_fail_compiles_when_shown_by_name() {
+    compile("deleted-code", &generate("deleted-code", PREAMBLE, BY_NAME).files);
 }
 
 /// Renders insertions as plain content and deletions as nothing.
@@ -289,15 +379,8 @@ const PLAIN: &str = "#let redline-ins(body, ..args) = body
 
 #[test]
 fn proof_without_deletions_is_the_new_document() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    for e in std::fs::read_dir(dir).unwrap() {
-        let name = e.unwrap().file_name().into_string().unwrap();
-        let opts = Options {
-            preamble: PLAIN.into(),
-            eval_deleted: false,
-            content_blocks: true,
-        };
-        let r = generate(&name, opts);
+    for name in fixtures() {
+        let r = generate(&name, PLAIN, BY_NAME);
         assert!(name == "crlf" || !r.changes.is_empty(), "{name}: no change found");
         let Some(proof) = render(&format!("{name}-proof"), &r.files) else {
             return;
@@ -307,30 +390,24 @@ fn proof_without_deletions_is_the_new_document() {
     }
 }
 
-#[test]
-fn deleted_code_shown_as_source_is_not_evaluated() {
-    compile("deleted-code", &run_with("deleted-code", false, true).files);
-}
-
-const WORD_CHANGE: &str = "#redline-del()[alpha";
+const WORD_CHANGE: &str = "#redline-del(gap: true)[alpha";
 
 #[test]
 fn change_inside_included_file_is_marked() {
     let r = run("include-change");
     assert!(r.file("part.typ").contains(WORD_CHANGE), "{}", r.file("part.typ"));
     assert!(r.changes.iter().all(|c| c.file == "part.typ"));
-    compile("include-change", &r.files);
 }
 
 #[test]
 fn deleted_include_is_shown_struck() {
     let r = run("include-deleted");
     assert!(
-        r.body.contains("#redline-del(block: true)[#include \"/gone.typ\"]"),
+        r.body
+            .contains("redline-del(block: true)[#include \"/.redline-old/gone.typ\"]"),
         "{}",
         r.body
     );
-    compile("include-deleted", &r.files);
 }
 
 #[test]
@@ -343,19 +420,13 @@ fn renamed_included_file_gets_word_marks() {
 fn caption_change_does_not_duplicate_the_figure() {
     let r = run("caption");
     assert_eq!(r.body.matches("#figure(").count(), 1, "{}", r.body);
-    assert!(
-        r.body.contains("#redline-del()[red];"),
-        "{}",
-        r.body
-    );
-    compile("caption", &r.files);
+    assert!(r.body.contains("#redline-del(gap: true)[red];"), "{}", r.body);
 }
 
 #[test]
 fn changed_content_variable_in_imported_file_is_marked() {
     let r = run("imported-content");
     assert!(r.file("defs.typ").contains(WORD_CHANGE), "{}", r.file("defs.typ"));
-    compile("imported-content", &r.files);
 }
 
 #[test]
@@ -364,11 +435,6 @@ fn changed_code_in_imported_file_is_listed_as_not_marked() {
     let kinds: Vec<_> = r.changes.iter().map(|c| (c.file.as_str(), c.kind)).collect();
     assert_eq!(kinds, [("defs.typ", ChangeKind::Unmarked)]);
     assert!(r.body.contains("unmarked: true"), "{}", r.body);
-}
-
-#[test]
-fn deleted_labelled_equation_does_not_break_references() {
-    compile("moved-label", &run("moved-label").files);
 }
 
 #[test]
@@ -386,11 +452,6 @@ fn deleted_state_and_counter_updates_have_no_effect() {
 }
 
 #[test]
-fn deleted_content_sees_the_new_definitions() {
-    compile("changed-definition", &run("changed-definition").files);
-}
-
-#[test]
 fn computed_include_path_is_reported() {
     let read = |_: &str| Some("#include \"a\" + \".typ\"\n".to_string());
     let v = Version {
@@ -398,12 +459,7 @@ fn computed_include_path_is_reported() {
         entry: "main.typ".into(),
         read: &read,
     };
-    let opts = Options {
-        preamble: PREAMBLE.into(),
-        eval_deleted: true,
-        content_blocks: true,
-    };
-    assert_eq!(redline(&v, &v, &opts).warnings.len(), 1);
+    assert_eq!(redline(&v, &v, FULL).warnings.len(), 1);
 }
 
 // CLI
@@ -463,14 +519,8 @@ fn commit(dir: &Path, path: &str, word: &str) {
 }
 
 fn assert_compared(src: &str, old: &str, new: &str) {
-    assert!(
-        src.contains(&format!("#redline-del()[{old}")),
-        "{src}"
-    );
-    assert!(
-        src.contains(&format!("#redline-ins()[{new}")),
-        "{src}"
-    );
+    assert!(src.contains(&format!("#redline-del(gap: true)[{old}")), "{src}");
+    assert!(src.contains(&format!("#redline-ins()[{new}")), "{src}");
 }
 
 #[test]
@@ -596,7 +646,7 @@ fn deleted_figure_whose_file_is_gone_is_evaluated() {
     std::fs::write(dir.join("doc/main.typ"), doc("alpha")).unwrap();
     let out = cli(&dir, &["doc/main.typ"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success() && !stderr.contains("shown as source"), "{stderr}");
+    assert!(out.status.success() && !stderr.contains("shown by name"), "{stderr}");
 }
 
 #[test]
@@ -650,6 +700,13 @@ fn unknown_revision_is_reported() {
         stderr.contains("no commit nope") && !stderr.contains("fatal"),
         "{stderr}"
     );
+}
+
+#[test]
+fn to_with_a_range_is_a_usage_error() {
+    let dir = temp_dir("to-range");
+    let out = cli(&dir, &["main.typ", "--since", "a..b", "--to", "c"]);
+    assert_eq!(out.status.code(), Some(2));
 }
 
 #[test]

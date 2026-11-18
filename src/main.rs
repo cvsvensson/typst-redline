@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use tree::{Tree, git, output};
-use typst_redline::{Options, Version, redline};
+use typst_redline::{OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Redline, Version, redline};
 
 const USAGE: &str = "\
 typst-redline: mark changes between two versions of a Typst document
@@ -21,10 +21,10 @@ with B. With two files, each is a path or REV:PATH (:PATH for the index).
 
 Options:
   -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
-  --root <dir>          Project root (default: the directory of the file)
+  --root <dir>          Project root (default: the directory of each file)
   --preamble <file>     Replace the built-in change styling
   --typst <path>        typst executable (default: typst)
-  --keep-typ            Keep the generated project and print its path
+  --keep-typ            Keep the generated project and print its path on stderr
   -V, --version         Print the version
   -h, --help            Print this help
 Arguments after -- are passed to `typst compile`.
@@ -79,6 +79,9 @@ fn parse_args() -> Result<Parsed, String> {
             s if s.starts_with('-') => return Err(format!("unknown option {s}")),
             _ => a.files.push(arg),
         }
+    }
+    if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
+        return Err("--to cannot be combined with a range in --since".into());
     }
     match (a.files.len(), &a.since, &a.to) {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(a)),
@@ -162,7 +165,11 @@ fn spec_arg(arg: &str, root: Option<&Path>) -> Result<Spec, String> {
 fn specs<'a>(a: &'a Args) -> Result<(Spec, Spec), String> {
     let root = a.root.as_deref();
     if a.files.len() == 2 {
-        return Ok((spec_arg(&a.files[0], root)?, spec_arg(&a.files[1], root)?));
+        let (mut old, mut new) = (spec_arg(&a.files[0], root)?, spec_arg(&a.files[1], root)?);
+        if a.files.iter().all(|f| f == &old.label || f == &new.label) {
+            (old.label, new.label) = short_labels(&old.label, &new.label);
+        }
+        return Ok((old, new));
     }
     let file = std::path::absolute(&a.files[0]).map_err(|e| e.to_string())?;
     let file = file.as_path();
@@ -190,6 +197,24 @@ fn specs<'a>(a: &'a Args) -> Result<(Spec, Spec), String> {
     Ok((old, new))
 }
 
+/// Two paths labelled by as many of their last parts as tell them apart.
+fn short_labels(a: &str, b: &str) -> (String, String) {
+    fn parts(l: &str) -> Vec<&str> {
+        l.split(['/', '\\']).filter(|p| !p.is_empty()).rev().collect()
+    }
+    let (a, b) = (parts(a), parts(b));
+    let k = (1..a.len().max(b.len())).find(|&k| a[..k.min(a.len())] != b[..k.min(b.len())]);
+    let short = |p: &[&str]| {
+        p[..k.unwrap_or(p.len()).min(p.len())]
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("/")
+    };
+    (short(&a), short(&b))
+}
+
 /// The path of the old version's entry if git sees it renamed in the new one.
 fn renamed(old: &Spec, to: Option<&str>) -> Option<String> {
     let Tree::Git { repo, prefix, rev } = &old.tree else {
@@ -208,16 +233,32 @@ fn renamed(old: &Spec, to: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Removes the staging directory on drop unless asked to keep it.
-struct Staging(PathBuf, bool);
-
-impl Drop for Staging {
-    fn drop(&mut self) {
-        if !self.1 {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-}
+/// Each level is coarser than the one before: marks inside code can break
+/// functions that inspect their body, and deleted code can fail (the old
+/// version it is evaluated in fails on its own).
+const LADDER: [(Options, &str); 3] = [
+    (
+        Options {
+            eval_deleted: true,
+            content_blocks: true,
+        },
+        "",
+    ),
+    (
+        Options {
+            eval_deleted: false,
+            content_blocks: true,
+        },
+        "deleted code is shown by name",
+    ),
+    (
+        Options {
+            eval_deleted: false,
+            content_blocks: false,
+        },
+        "deleted code is shown by name and changed code is marked whole",
+    ),
+];
 
 fn run(a: Args) -> Result<PathBuf, String> {
     let (old, new) = specs(&a)?;
@@ -227,111 +268,57 @@ fn run(a: Args) -> Result<PathBuf, String> {
             Tree::Git { .. } => format!("{} does not exist in {}", new.entry, new.label),
         });
     }
-    let text = |spec: &Spec, path: &str| String::from_utf8(spec.tree.read(path)?).ok();
-    let (read_old, read_new) = (|p: &str| text(&old, p), |p: &str| text(&new, p));
-    let old_v = Version {
-        label: old.label.clone(),
-        entry: old.entry.clone(),
-        read: &read_old,
-    };
-    let new_v = Version {
-        label: new.label.clone(),
-        entry: new.entry.clone(),
-        read: &read_new,
-    };
     let preamble = match &a.preamble {
         Some(p) => std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?,
-        None => typst_redline::PREAMBLE.to_string(),
+        None => PREAMBLE.to_string(),
     };
-    // Each level is coarser than the one before: marks inside code can
-    // break functions that inspect their body, and deleted code can fail
-    // in the new document (it reads data that has changed).
-    let ladder = [
-        (true, true, ""),
-        (true, false, "deleted code is shown as source"),
-        (
-            false,
-            false,
-            "deleted code is shown as source and changed code is marked whole",
-        ),
-    ];
-    let level = |(content_blocks, eval_deleted, _): (bool, bool, &str)| Options {
-        preamble: preamble.clone(),
-        eval_deleted,
-        content_blocks,
+    let pdf = output_path(&a, &old, &new)?;
+    let text = |spec: &Spec, path: &str| String::from_utf8(spec.tree.read(path)?).ok();
+    let (read_old, read_new) = (|p: &str| text(&old, p), |p: &str| text(&new, p));
+    let version = |spec: &Spec, read| Version {
+        label: spec.label.clone(),
+        entry: spec.entry.clone(),
+        read,
     };
-    let stem = new.file.file_stem().ok_or("bad file name")?.to_string_lossy();
-    let pdf = a
-        .output
-        .clone()
-        .unwrap_or_else(|| new.file.with_file_name(format!("{stem}.redline.pdf")));
-    let pdf = std::path::absolute(&pdf).map_err(|e| e.to_string())?;
-    if !pdf.parent().is_some_and(Path::is_dir) {
-        return Err(format!("the directory of the output {} does not exist", pdf.display()));
-    }
-    let canonical = |p: &Path| std::fs::canonicalize(p).ok();
-    if canonical(&pdf).is_some_and(|p| [&old.file, &new.file].iter().any(|f| canonical(f) == Some(p.clone()))) {
-        return Err(format!("the output {} is an input", pdf.display()));
-    }
+    let (old_v, new_v) = (version(&old, &read_old), version(&new, &read_new));
 
-    let result = redline(&old_v, &new_v, &level(ladder[0]));
+    let mut result = redline(&old_v, &new_v, LADDER[0].0);
     for w in &result.warnings {
         eprintln!("warning: {w}");
     }
-    let dir = std::env::temp_dir().join(format!("typst-redline-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let _staging = Staging(dir.clone(), a.keep);
+    let staging = Staging::new(a.keep);
+    let dir = &staging.dir;
+    stage(dir, &old, &new, &result)?;
+    write(dir, &[(PREAMBLE_PATH.into(), preamble)])?;
     // typst writes next to the staging directory, so that an output that
     // cannot be written is reported as such and is never left half written.
     let tmp = dir.with_extension(pdf.extension().unwrap_or("pdf".as_ref()));
-    // The new version's files, then old-only files so that deleted figures
-    // and includes resolve, then files git does not track, which belong to
-    // every version.
-    let mut have: HashSet<String> = result.files.iter().map(|(p, _)| p.clone()).collect();
-    let (worktree, untracked) = new.tree.untracked()?;
-    for (tree, files) in [
-        (&new.tree, new.tree.list()?),
-        (&old.tree, old.tree.list()?),
-        (&worktree, untracked),
-    ] {
-        let fresh: Vec<&str> = files
-            .iter()
-            .filter(|p| have.insert(p.to_string()))
-            .map(String::as_str)
-            .collect();
-        tree.copy(&fresh, &dir)?;
-    }
-
-    let mut result = Some(result);
-    let mut stderr = String::new();
     let mut first_error = String::new();
-    for step in ladder {
-        let result = result.take().unwrap_or_else(|| redline(&old_v, &new_v, &level(step)));
-        for (path, content) in &result.files {
-            let to = dir.join(path);
-            std::fs::create_dir_all(to.parent().unwrap()).map_err(|e| e.to_string())?;
-            std::fs::write(&to, content).map_err(|e| format!("{}: {e}", to.display()))?;
+    let mut stderr = String::new();
+    for (i, (opts, note)) in LADDER.into_iter().enumerate() {
+        if i > 0 {
+            result = redline(&old_v, &new_v, opts);
         }
+        write(dir, &result.files)?;
         let out = Command::new(&a.typst)
             .arg("compile")
             .arg("--root")
-            .arg(&dir)
+            .arg(dir)
             .args(&a.typst_args)
             .arg(dir.join(&new.entry))
             .arg(&tmp)
             .output()
-            .map_err(|e| format!("cannot run {}: {e}", a.typst))?;
+            .map_err(|e| {
+                format!(
+                    "cannot run {}: {e}; install Typst or give its path with --typst",
+                    a.typst
+                )
+            })?;
         stderr = String::from_utf8_lossy(&out.stderr).to_string();
         if out.status.success() {
             eprint!("{stderr}");
-            if !step.2.is_empty() {
-                eprintln!(
-                    "note: {}, because the full proof failed to compile ({first_error})",
-                    step.2
-                );
-            }
-            if a.keep {
-                eprintln!("kept {}", dir.display());
+            if !note.is_empty() {
+                eprintln!("note: {note}, because the full proof failed to compile ({first_error})");
             }
             let written = std::fs::copy(&tmp, &pdf);
             let _ = std::fs::remove_file(&tmp);
@@ -355,15 +342,109 @@ fn run(a: Args) -> Result<PathBuf, String> {
             "hint: paths starting with / resolve against the directory of the file; set another root with --root"
         );
     }
-    if a.keep {
-        eprintln!("kept {}", dir.display());
-    }
     let hint = if a.keep {
         ""
     } else {
         " (rerun with --keep-typ to inspect the generated source)"
     };
     Err(format!("typst compile failed{hint}"))
+}
+
+/// The output PDF: `-o`, or `<name>.redline.pdf` next to the new file. It
+/// must be in an existing directory and must not be an input.
+fn output_path(a: &Args, old: &Spec, new: &Spec) -> Result<PathBuf, String> {
+    let pdf = match &a.output {
+        Some(o) => o.clone(),
+        None => {
+            let stem = new
+                .file
+                .file_stem()
+                .ok_or(format!("{} has no file name", new.file.display()))?;
+            new.file
+                .with_file_name(format!("{}.redline.pdf", stem.to_string_lossy()))
+        }
+    };
+    let pdf = std::path::absolute(&pdf).map_err(|e| e.to_string())?;
+    if !pdf.parent().is_some_and(Path::is_dir) {
+        return Err(format!("the directory of the output {} does not exist", pdf.display()));
+    }
+    let canonical = |p: &Path| std::fs::canonicalize(p).ok();
+    if canonical(&pdf).is_some_and(|p| [&old.file, &new.file].iter().any(|f| canonical(f) == Some(p.clone()))) {
+        return Err(format!("the output {} is an input", pdf.display()));
+    }
+    Ok(pdf)
+}
+
+/// The staging directory, removed on drop unless it is to be kept.
+struct Staging {
+    dir: PathBuf,
+    keep: bool,
+}
+
+impl Staging {
+    fn new(keep: bool) -> Self {
+        let dir = std::env::temp_dir().join(format!("typst-redline-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        Staging { dir, keep }
+    }
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        if self.keep {
+            eprintln!("kept {}", self.dir.display());
+        } else {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+}
+
+/// Put in `dir` the new version's files, then old-only files so that deleted
+/// figures resolve, then files git does not track, which belong to every
+/// version; and the same with the old version first under [`OLD_DIR`], if
+/// the result uses it. Files the output writes are left out, so that writing
+/// them cannot change a source hard-linked into `dir`.
+fn stage(dir: &Path, old: &Spec, new: &Spec, result: &Redline) -> Result<(), String> {
+    let mut have: HashSet<String> = result.files.iter().map(|(p, _)| p.clone()).collect();
+    have.insert(PREAMBLE_PATH.into());
+    let (worktree, untracked) = new.tree.untracked()?;
+    let (new_files, old_files) = (new.tree.list()?, old.tree.list()?);
+    let mut layers = vec![
+        (&new.tree, &new_files, ""),
+        (&old.tree, &old_files, ""),
+        (&worktree, &untracked, ""),
+    ];
+    if result.files.iter().any(|(p, _)| p.starts_with(OLD_DIR)) {
+        layers.extend([
+            (&old.tree, &old_files, OLD_DIR),
+            (&worktree, &untracked, OLD_DIR),
+            (&new.tree, &new_files, OLD_DIR),
+        ]);
+    }
+    for (tree, files, sub) in layers {
+        let fresh: Vec<&str> = files
+            .iter()
+            .filter(|p| {
+                have.insert(if sub.is_empty() {
+                    p.to_string()
+                } else {
+                    format!("{sub}/{p}")
+                })
+            })
+            .map(String::as_str)
+            .collect();
+        tree.copy(&fresh, &dir.join(sub))?;
+    }
+    Ok(())
+}
+
+fn write(dir: &Path, files: &[(String, String)]) -> Result<(), String> {
+    for (path, content) in files {
+        let to = dir.join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).map_err(|e| format!("{}: {e}", to.display()))?;
+        std::fs::write(&to, content).map_err(|e| format!("{}: {e}", to.display()))?;
+    }
+    Ok(())
 }
 
 /// A hint if the installed typst differs in minor version from the parser.
