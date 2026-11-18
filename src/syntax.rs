@@ -77,6 +77,16 @@ impl Block {
         }
     }
 
+    /// A `#pagebreak()` or `#colbreak()` block.
+    pub fn is_break(&self) -> bool {
+        self.nodes.get(1).is_some_and(|n| {
+            n.kind() == K::FuncCall
+                && n.children()
+                    .next()
+                    .is_some_and(|f| matches!(f.leaf_text().as_str(), "pagebreak" | "colbreak"))
+        })
+    }
+
     /// An `#import` or `#include` block: its changes show in the files it
     /// names, not in the line itself.
     pub fn is_import(&self) -> bool {
