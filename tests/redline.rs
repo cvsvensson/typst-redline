@@ -935,3 +935,45 @@ fn side_by_side_needs_the_preamble_function() {
         "{stderr}"
     );
 }
+
+#[test]
+fn typst_root_sets_the_root() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("typst-root");
+    std::fs::create_dir(dir.join("doc")).unwrap();
+    std::fs::write(dir.join("shared.typ"), "Shared.\n").unwrap();
+    std::fs::write(dir.join("doc/old.typ"), "#include \"/shared.typ\"\nOld.\n").unwrap();
+    std::fs::write(dir.join("doc/new.typ"), "#include \"/shared.typ\"\nNew.\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+        .current_dir(dir.join("doc"))
+        .env("TYPST_ROOT", &*dir)
+        .args(["old.typ", "new.typ"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn file_outside_the_root_suggests_the_repository_as_root() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("outside-root", &["alpha"]);
+    std::fs::write(dir.join("shared.typ"), "Shared.\n").unwrap();
+    std::fs::write(
+        dir.join("doc/main.typ"),
+        format!("#include \"../shared.typ\"\n{}", doc("beta")),
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+        .current_dir(&*dir)
+        .env_remove("TYPST_ROOT")
+        .args(["doc/main.typ"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let top = git(&dir, &["rev-parse", "--show-toplevel"]);
+    assert!(stderr.contains(&format!("--root {top}")), "{stderr}");
+}
