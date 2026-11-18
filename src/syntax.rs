@@ -258,6 +258,17 @@ pub fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
                 atom.nodes.push(n.clone());
                 atom.key = skeleton(&atom.nodes);
             }
+            // Typst lays out citations separated by spaces as one group, in
+            // the style of the first, so they are compared as one token.
+            K::Ref if toks.len() >= 2 && toks[toks.len() - 1].key == " " && is_refs(&toks[toks.len() - 2]) => {
+                let space = toks.pop().unwrap();
+                let refs = toks.last_mut().unwrap();
+                refs.text.push_str(&space.text);
+                refs.text.push_str(&n.full_text());
+                refs.nodes.push(SyntaxNode::leaf(K::Space, space.text));
+                refs.nodes.push(n.clone());
+                refs.key = skeleton(&refs.nodes);
+            }
             _ => {
                 let unit = unit(nodes, &mut i);
                 let line_start = toks.last().is_none_or(|t| t.kind == TK::Space && t.text.contains('\n'));
@@ -275,6 +286,10 @@ pub fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
         i += 1;
     }
     toks
+}
+
+fn is_refs(t: &Tok) -> bool {
+    t.kind == TK::Atom && t.nodes.iter().all(|n| matches!(n.kind(), K::Ref | K::Space))
 }
 
 /// Split text into runs of word characters, runs of whitespace, and single

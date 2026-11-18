@@ -314,7 +314,8 @@ fn compile(name: &str, files: &[(String, String)]) -> Option<TempDir> {
 
 /// The pages of a project rendered as PNG images.
 fn render(name: &str, files: &[(String, String)]) -> Option<Vec<Vec<u8>>> {
-    let dir = compile_to(name, files, "page-{0p}.png")?;
+    // Typst 0.11 knows no other page template than `{n}`.
+    let dir = compile_to(name, files, "page-{n}.png")?;
     let mut pages: Vec<PathBuf> = std::fs::read_dir(&*dir)
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -348,15 +349,20 @@ fn compile_to(name: &str, files: &[(String, String)], output: &str) -> Option<Te
 /// The value of the metadata labelled `<probe>` in a compiled fixture.
 fn probe(name: &str) -> Option<String> {
     let dir = compile(name, &run(name).files)?;
+    Some(query(&dir, "<probe>"))
+}
+
+/// The values of the elements with `label` in the compiled project in `dir`.
+fn query(dir: &Path, label: &str) -> String {
     let out = Command::new("typst")
         .args(["query", "--root"])
-        .arg(&*dir)
+        .arg(dir)
         .arg(dir.join("main.typ"))
-        .args(["<probe>", "--field", "value", "--one"])
+        .args([label, "--field", "value"])
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    Some(String::from_utf8_lossy(&out.stdout).split_whitespace().collect())
+    String::from_utf8_lossy(&out.stdout).split_whitespace().collect()
 }
 
 #[test]
@@ -376,7 +382,7 @@ fn deleted_code_that_would_fail_compiles_when_shown_by_name() {
 const PLAIN: &str = "#let redline-ins(body, ..args) = body
 #let redline-del(..args) = none
 #let redline-summary(info) = none
-#let redline-bars = none
+#let redline-bars(body) = body
 ";
 
 #[test]
@@ -465,15 +471,41 @@ fn changed_code_in_imported_file_is_listed_as_not_marked() {
 #[test]
 fn deleted_footnote_does_not_step_the_counter() {
     if let Some(v) = probe("deleted-footnote") {
-        assert_eq!(v, "1");
+        assert_eq!(v, "[1]");
     }
 }
 
 #[test]
 fn deleted_state_and_counter_updates_have_no_effect() {
     if let Some(v) = probe("deleted-update") {
-        assert_eq!(v, "[0,1]");
+        assert_eq!(v, "[[0,1]]");
     }
+}
+
+#[test]
+fn citation_added_to_a_group_marks_the_group() {
+    let r = run("citation-group");
+    assert!(r.body.contains("#redline-ins()[@a @b]"), "{}", r.body);
+}
+
+#[test]
+fn new_gone_and_edited_bibliography_entries_are_listed() {
+    let r = run("bib-entries");
+    assert!(
+        r.body
+            .contains("bib: (added: (\"c\",), removed: (\"b\",), changed: (\"a\",))"),
+        "{}",
+        r.body
+    );
+}
+
+#[test]
+fn page_foregrounds_of_the_document_are_kept_with_the_bars() {
+    let Some(dir) = compile("page-foreground", &run("page-foreground").files) else {
+        return;
+    };
+    assert!(query(&dir, "<probe>").contains("\"draft\""));
+    assert_eq!(query(&dir, "<redline-unbarred>"), "[[]]");
 }
 
 #[test]

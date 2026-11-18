@@ -9,7 +9,7 @@ use similar::{Algorithm, DiffOp, capture_diff_slices};
 use typst_syntax::{SyntaxKind as K, SyntaxNode, parse};
 
 use crate::syntax::*;
-use crate::{Change, ChangeKind, OLD_DIR, Options, PREAMBLE_PATH, pair_files, resolve};
+use crate::{Bib, Change, ChangeKind, OLD_DIR, Options, PREAMBLE_PATH, pair_files, resolve};
 
 /// Text that closes what comes before it.
 const CLOSING: [char; 13] = [
@@ -84,7 +84,7 @@ fn source<'a>(files: &'a [(String, String)], path: &str) -> Option<&'a str> {
 /// The marked files and the changes: every file the entry includes or
 /// imports that differs from its old file, the entry with the summary, and
 /// the old version's files under [`OLD_DIR`] if deleted content uses them.
-pub fn write(ctx: &Ctx, old_label: &str, new_label: &str) -> (Vec<(String, String)>, Vec<Change>) {
+pub fn write(ctx: &Ctx, old_label: &str, new_label: &str, bib: &Bib) -> (Vec<(String, String)>, Vec<Change>) {
     let mut w = Writer::new(ctx);
     w.file(ctx.entry());
     w.top = false;
@@ -92,7 +92,7 @@ pub fn write(ctx: &Ctx, old_label: &str, new_label: &str) -> (Vec<(String, Strin
     for (path, _) in &ctx.new_files {
         w.file(path);
     }
-    let mut files = vec![(ctx.entry().to_string(), w.finish(old_label, new_label))];
+    let mut files = vec![(ctx.entry().to_string(), w.finish(old_label, new_label, bib))];
     files.append(&mut w.files);
     if w.old_scope {
         files.extend(
@@ -294,15 +294,15 @@ impl<'a> Writer<'a> {
 
     /// The entry's output source: the preamble import and the marked
     /// document with the summary at the place [`Self::summary_here`] chose.
-    fn finish(&self, old_label: &str, new_label: &str) -> String {
+    fn finish(&self, old_label: &str, new_label: &str, bib: &Bib) -> String {
         let at = self.summary_at.unwrap_or(self.entry_out.len());
         let mut out = self.entry_out.clone();
         let newline = if out[..at].ends_with('\n') || at == 0 { "" } else { "\n" };
-        out.insert_str(at, &format!("{newline}{}", self.summary(old_label, new_label)));
+        out.insert_str(at, &format!("{newline}{}", self.summary(old_label, new_label, bib)));
         format!("{}{out}", self.ctx.import())
     }
 
-    fn summary(&self, old_label: &str, new_label: &str) -> String {
+    fn summary(&self, old_label: &str, new_label: &str, bib: &Bib) -> String {
         let count = |f: &dyn Fn(&Change) -> bool| self.changes.iter().filter(|c| f(c)).count();
         let front = |file: &str, title: String| Section {
             file: file.into(),
@@ -342,12 +342,16 @@ impl<'a> Writer<'a> {
             ));
         }
         let p = &self.ctx.prefix;
+        let keys = |ks: &[String]| format!("({})", ks.iter().map(|k| typst_str(k) + ",").collect::<String>());
         format!(
-            "#set page(foreground: {p}-bars)\n#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n))\n",
+            "#show: {p}-bars\n#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n  bib: (added: {}, removed: {}, changed: {}),\n))\n",
             typst_str(old_label),
             typst_str(new_label),
             count(&|c| c.kind == ChangeKind::Ins),
             count(&|c| c.kind == ChangeKind::Del),
+            keys(&bib.added),
+            keys(&bib.removed),
+            keys(&bib.changed),
         )
     }
 

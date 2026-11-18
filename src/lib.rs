@@ -5,13 +5,13 @@ mod mark;
 mod side;
 mod syntax;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-use typst_syntax::{SyntaxNode, ast, parse};
+use typst_syntax::{SyntaxKind, SyntaxNode, ast, parse};
 
 pub use side::{Pair, Placed, Side, composite, pair_pages};
 
-use syntax::{most_similar, similarity, tokenize, walk, words};
+use syntax::{collapse_ws, label_name, most_similar, ref_name, similarity, tokenize, walk, words};
 
 /// The built-in preamble, which defines the functions the marked files
 /// call.
@@ -86,8 +86,9 @@ pub fn redline(old: &Version, new: &Version, opts: Options) -> Redline {
     let mut warnings = vec![];
     let old_files = project(old, &mut warnings);
     let new_files = project(new, &mut warnings);
+    let bib = bibliography(old, &old_files, new, &new_files);
     let ctx = mark::Ctx::new(old_files, new_files, opts);
-    let (files, changes) = mark::write(&ctx, &old.label, &new.label);
+    let (files, changes) = mark::write(&ctx, &old.label, &new.label, &bib);
     Redline {
         files,
         changes,
@@ -143,6 +144,109 @@ fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {
         queue.extend(deps.into_iter().rev());
     }
     files
+}
+
+/// What changed in the bibliography, which the output cannot mark in it:
+/// keys cited only in the new or only in the old version, and keys cited in
+/// the new version whose entry differs.
+#[derive(Default)]
+pub(crate) struct Bib {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub changed: Vec<String>,
+}
+
+fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, new_files: &[(String, String)]) -> Bib {
+    // The bibliography files a version names, and the references in it that
+    // are not to one of its labels. Keys found in no entry are left out,
+    // such as labels that code makes.
+    let scan = |files: &[(String, String)]| {
+        let (mut paths, mut refs, mut labels) = (vec![], BTreeSet::new(), HashSet::new());
+        for (path, src) in files {
+            walk(&parse(src), &mut |n| match n.kind() {
+                SyntaxKind::Ref => drop(refs.insert(ref_name(n))),
+                SyntaxKind::Label => drop(labels.insert(label_name(n))),
+                SyntaxKind::FuncCall
+                    if n.children()
+                        .next()
+                        .is_some_and(|f| f.leaf_text().as_str() == "bibliography") =>
+                {
+                    let args = n.children().filter(|c| c.kind() == SyntaxKind::Args);
+                    for a in args
+                        .flat_map(|a| a.children())
+                        .filter(|a| a.kind() != SyntaxKind::Named)
+                    {
+                        walk(a, &mut |s| {
+                            if let Some(s) = s.cast::<ast::Str>() {
+                                paths.extend(resolve(path, &s.get()));
+                            }
+                        });
+                    }
+                }
+                _ => {}
+            });
+        }
+        refs.retain(|r| !labels.contains(r));
+        (paths, refs)
+    };
+    let ((old_paths, old_keys), (new_paths, new_keys)) = (scan(old_files), scan(new_files));
+    if new_paths.is_empty() {
+        return Bib::default();
+    }
+    let entries = |v: &Version, paths: &[String]| -> HashMap<String, String> {
+        paths
+            .iter()
+            .filter_map(|p| Some(bib_entries(p, &(v.read)(p)?)))
+            .flatten()
+            .collect()
+    };
+    let (old_entries, new_entries) = (entries(old, &old_paths), entries(new, &new_paths));
+    Bib {
+        added: new_keys
+            .difference(&old_keys)
+            .filter(|k| new_entries.contains_key(*k))
+            .cloned()
+            .collect(),
+        removed: old_keys
+            .difference(&new_keys)
+            .filter(|k| old_entries.contains_key(*k))
+            .cloned()
+            .collect(),
+        changed: new_keys
+            .iter()
+            .filter(|k| old_entries.get(*k).is_some_and(|e| Some(e) != new_entries.get(*k)))
+            .cloned()
+            .collect(),
+    }
+}
+
+/// The entries of a BibTeX or Hayagriva file by key, with whitespace
+/// collapsed: a BibTeX entry starts at a line `@type{key,`, a Hayagriva
+/// entry at an unindented line `key:`.
+fn bib_entries(path: &str, src: &str) -> Vec<(String, String)> {
+    let yaml = path.ends_with(".yml") || path.ends_with(".yaml");
+    let mut out: Vec<(String, String)> = vec![];
+    for line in src.lines() {
+        let key = if yaml {
+            Some(line)
+                .filter(|l| !l.starts_with([' ', '\t', '#', '-']))
+                .and_then(|l| l.split_once(':'))
+                .map(|(k, _)| k)
+        } else {
+            line.strip_prefix('@')
+                .and_then(|rest| rest.split_once('{'))
+                .map(|(_, k)| k.split(',').next().unwrap_or(k))
+        };
+        match (key, out.last_mut()) {
+            (Some(k), _) => out.push((k.trim().into(), line.into())),
+            (None, Some((_, text))) => {
+                text.push(' ');
+                text.push_str(line);
+            }
+            _ => {}
+        }
+    }
+    out.into_iter().map(|(k, t)| (k, collapse_ws(&t))).collect()
 }
 
 /// A path relative to the file `from`, or to the root if it starts with

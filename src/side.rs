@@ -27,11 +27,13 @@ pub struct Pair {
 }
 
 /// One version as laid out for the side-by-side layout: `pdf` is its
-/// root-relative path, `pages` its number of pages.
+/// root-relative path, `pages` its number of pages, `unbarred` the pages
+/// with changes but no change bars.
 pub struct Side<'a> {
     pub label: &'a str,
     pub pdf: &'a str,
     pub pages: usize,
+    pub unbarred: &'a [usize],
     pub changes: &'a [Placed],
 }
 
@@ -127,10 +129,11 @@ pub fn composite(old: &Side, new: &Side, changes: &[Change]) -> String {
     let list = |v: &[usize]| format!("({})", v.iter().map(|p| format!("{p},")).collect::<String>());
     let side = |s: &Side| {
         format!(
-            "(label: {}, pdf: {}, pages: {})",
+            "(label: {}, pdf: {}, pages: {}, unbarred: {})",
             typst_str(s.label),
             typst_str(s.pdf),
-            s.pages
+            s.pages,
+            list(s.unbarred)
         )
     };
     let mut out = format!(

@@ -6,10 +6,13 @@
 //   content; `heading` is the level of a deleted heading, `gap` says that an
 //   insertion follows. A deleted block is written as a continuation of the
 //   block before it, so a block deletion must start its own paragraph.
-// - redline-bars: the page foreground (`none` for nothing).
+// - redline-bars(body): the rest of the document, which draws change bars on
+//   its pages (`body => body` for nothing).
 // - redline-summary(info): the summary; `info` is (old, new: version labels,
 //   ins, del: numbers of changes, entries: array of (file, level, target:
-//   label or none, title, count, deleted, new, unmarked)).
+//   label or none, title, count, deleted, new, unmarked), bib: (added,
+//   removed, changed: arrays of citation keys whose bibliography entry is
+//   new, gone or edited)).
 // With `redline-ins(body, ..args) = body` and `redline-del(..args) = none`
 // the document is the new version unchanged; marks must keep that so.
 // For the side-by-side layout the binary compiles the marked files with
@@ -166,14 +169,31 @@
 // the new document lacks as text. Show rules cannot do this, because an
 // element is registered before they run, so the content is rebuilt; styles
 // on the way to such an element are lost.
+// Whether a deleted citation of `key` can be laid out here without changing
+// the new document's bibliography or numbering: the new document cites the
+// key, and cites no other key for the first time between here and its first
+// citation of the key.
+#let redline-cite-safe(key) = {
+  let new(cites) = cites.filter(x => not (x.has("label") and x.label == <redline-deleted-cite>))
+  let all = new(query(cite))
+  let first = all.position(x => x.key == key)
+  if first == none { return false }
+  let i = new(query(selector(cite).before(here()))).len()
+  let seen = all.slice(0, i).map(x => x.key)
+  all.slice(calc.min(i, first), first).all(x => x.key in seen)
+}
+
 #let redline-neutral(c) = {
   if not redline-effect(c) { return c }
   let f = c.func()
   if repr(f) in ("state-update", "counter-update") { return [] }
   if f == footnote { return [ (#redline-neutral(c.body))] }
   if f == ref {
+    let sup = c.at("supplement", default: none)
     // Citations cannot be queried before Typst 0.14.
-    return context if query(c.target).len() > 0 or sys.version >= version(0, 14, 0) and query(cite).any(x => x.key == c.target) { c } else {
+    return context if query(c.target).len() > 0 { c } else if sys.version >= version(0, 14, 0) and redline-cite-safe(c.target) {
+      [#cite(c.target, supplement: if sup == auto { none } else { sup })<redline-deleted-cite>]
+    } else {
       emph(str(c.target))
     }
   }
@@ -251,17 +271,22 @@
   if block { parbreak() } else if gap { h(0.25em) }
 }
 
-// The page foreground: one query per page instead of introspection per mark.
-#let redline-bars = context {
+// The bars of one page, drawn from the page foreground or background
+// (`from`): one query per page instead of introspection per mark.
+#let redline-page-bars(from) = context {
   let st = redline-style
   let pg = here().page()
-  if redline-side != none {
-    // For the binary: the number of pages, and each change's identity and
-    // page, as one flat array of integers.
-    [#metadata(none)<redline-page>]
-    if pg == 1 {
+  [#metadata(from)<redline-page>]
+  if pg == 1 {
+    // For the summary and the binary: the pages with changes but without
+    // bars. For the side-by-side layout also the number of pages, and each
+    // change's identity and page, all as one flat array of integers.
+    let drawn = query(<redline-page>).map(m => m.location().page())
+    let unbarred = query(<redline-tag>).map(t => t.location().page()).dedup().filter(p => p not in drawn)
+    [#metadata(unbarred)<redline-unbarred>]
+    if redline-side != none {
       let changes = query(<redline-change>).map(m => (int(m.value.at(0) == "ins"), m.value.at(1), m.location().page()))
-      [#metadata((query(<redline-page>).len(), ..changes.flatten()))<redline-layout>]
+      [#metadata((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, ..changes.flatten()))<redline-layout>]
     }
   }
   let tags = query(<redline-tag>)
@@ -346,14 +371,38 @@
   }
 }
 
+// The rest of the document, with the bars drawn over the page foreground in
+// effect here. A page whose foreground the document replaces later gets them
+// under its background instead; the page background is drawn below the
+// content, but the bars are in the margin.
+#let redline-bars(body) = context {
+  let (fg, bg) = (page.foreground, page.background)
+  let fallback = context if query(<redline-page>).all(m => m.value != "fg" or m.location().page() != here().page()) {
+    redline-page-bars("bg")
+  }
+  set page(foreground: { fg; redline-page-bars("fg") }, background: { bg; fallback })
+  body
+}
+
 #let redline-summary(info) = if redline-side == none {
   let st = redline-style
   // One block, so that slide packages keep the summary together.
   block({
     block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
-    if info.entries.len() == 0 { [No changes.] } else {
+    let bib = info.at("bib", default: (added: (), removed: (), changed: ()))
+    let bib = (([new], bib.added), ([no longer cited], bib.removed), ([changed], bib.changed)).filter(p => p.at(1).len() > 0)
+    if info.entries.len() == 0 and bib.len() == 0 { [No changes.] } else {
       let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
       [#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Numbers count changed passages.]
+    }
+    if bib.len() > 0 {
+      block[Bibliography entries, not marked in the bibliography: #bib.map(p => [#p.at(0): #p.at(1).map(raw).join(", ")]).join("; ").]
+    }
+    context {
+      let unbarred = query(<redline-unbarred>).map(m => m.value).flatten()
+      if unbarred.len() > 0 {
+        block(text(fill: st.del)[Changes on these pages of this PDF have no bars in the margin, because the document sets its own page foreground and background there: #unbarred.map(str).join(", ").])
+      }
     }
     let min-level = calc.min(..info.entries.map(e => e.level), 9)
     for e in info.entries {
@@ -381,7 +430,8 @@
 }
 
 // The side-by-side layout. `info` is (old, new: (label, pdf: the version
-// compiled with `redline-side`, pages), pairs: array of (old, new: pages
+// compiled with `redline-side`, pages, unbarred: pages with changes but no
+// bars), pairs: array of (old, new: pages
 // shown next to each other, steps-old, steps-new: pages of earlier steps of
 // the same slide, not shown), unpaired: array of (side, ins, page): changes
 // found in one version only, unmarked: array of (file, text): changed code
@@ -442,6 +492,9 @@
         let t = u.text.clusters()
         [#raw(if t.len() > 80 { t.slice(0, 80).join() + "…" } else { u.text }) in #raw(u.file)]
       }))
+    }
+    for side in (o, n) {
+      if side.unbarred.len() > 0 { block[Changes on these pages of #name(side) have no bars in the margin, because the document sets its own page foreground and background there: #pages(side.unbarred).] }
     }
   }))))
   let head(side, pg, s) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]]

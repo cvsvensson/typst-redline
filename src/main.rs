@@ -372,6 +372,22 @@ fn run(a: Args) -> Result<PathBuf, String> {
             }
             if a.side_by_side {
                 compose(&a, dir, sides, (&old.label, &new.label), &result, &tmp)?;
+            } else if ["foreground", "background"]
+                .iter()
+                .all(|w| result.files.iter().any(|(_, s)| s.contains(w)))
+            {
+                // Bars are lost only where the document sets both, and asking
+                // where costs another compile. The summary page lists such
+                // pages in any case.
+                let args: [&dyn AsRef<OsStr>; 5] = [
+                    &dir.join(&new.entry),
+                    &"<redline-unbarred>",
+                    &"--field",
+                    &"value",
+                    &"--one",
+                ];
+                let out = typst(&a, dir, "query", &args)?;
+                warn_unbarred(&ints(&out.stdout).unwrap_or_default(), &pdf.display().to_string());
             }
             let written = std::fs::copy(&tmp, &pdf);
             let _ = std::fs::remove_file(&tmp);
@@ -532,7 +548,8 @@ fn compose(
     result: &Redline,
     to: &Path,
 ) -> Result<(), String> {
-    let layout = |(root, entry, side, _): (&Path, &String, &str, &str)| -> Result<(usize, Vec<Placed>), String> {
+    type Layout = (usize, Vec<usize>, Vec<Placed>);
+    let layout = |(root, entry, side, _): (&Path, &String, &str, &str), label: &str| -> Result<Layout, String> {
         let input = format!("redline-side={side}");
         let entry = root.join(entry);
         let args: [&dyn AsRef<OsStr>; 7] = [
@@ -545,41 +562,41 @@ fn compose(
             &"<redline-layout>",
         ];
         let out = typst(a, root, "query", &args)?;
-        let nums: Option<Vec<u64>> = String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .trim_matches(['[', ']'])
-            .split(',')
-            .map(|s| s.trim().parse().ok())
-            .collect();
-        let Some((&pages, rest)) = nums.as_deref().and_then(<[u64]>::split_first) else {
+        let nums = ints(&out.stdout);
+        let Some([pages, n, rest @ ..]) = nums.as_deref() else {
             return Err(format!(
-                "cannot find the pages of the changes; the side-by-side layout needs the page foreground that the preamble sets\n{}",
+                "cannot find the pages of the changes; the side-by-side layout needs the change bars that the preamble draws\n{}",
                 String::from_utf8_lossy(&out.stderr)
             ));
         };
+        let (unbarred, rest) = rest.split_at((*n).min(rest.len()));
+        warn_unbarred(unbarred, label);
         let changes = rest
             .chunks(3)
             .map(|c| Placed {
                 ins: c[0] == 1,
-                id: c[1],
-                page: c[2] as usize,
+                id: c[1] as u64,
+                page: c[2],
             })
             .collect();
-        Ok((pages as usize, changes))
+        Ok((*pages, unbarred.to_vec(), changes))
     };
-    let ((old_pages, old), (new_pages, new)) = (layout(sides[0])?, layout(sides[1])?);
+    let ((old_pages, old_unbarred, old), (new_pages, new_unbarred, new)) =
+        (layout(sides[0], labels.0)?, layout(sides[1], labels.1)?);
     let (old_pdf, new_pdf) = (format!("/{OLD_PDF}"), format!("/{NEW_PDF}"));
     let source = composite(
         &Side {
             label: labels.0,
             pdf: &old_pdf,
             pages: old_pages,
+            unbarred: &old_unbarred,
             changes: &old,
         },
         &Side {
             label: labels.1,
             pdf: &new_pdf,
             pages: new_pages,
+            unbarred: &new_unbarred,
             changes: &new,
         },
         &result.changes,
@@ -593,6 +610,27 @@ fn compose(
         ));
     }
     Ok(())
+}
+
+/// The output of `typst query --field value --one` for a flat array of
+/// integers.
+fn ints(stdout: &[u8]) -> Option<Vec<usize>> {
+    let s = String::from_utf8_lossy(stdout);
+    let s = s.trim().strip_prefix('[')?.strip_suffix(']')?.trim();
+    if s.is_empty() {
+        return Some(vec![]);
+    }
+    s.split(',').map(|n| n.trim().parse().ok()).collect()
+}
+
+fn warn_unbarred(pages: &[usize], label: &str) {
+    if !pages.is_empty() {
+        let pages: Vec<String> = pages.iter().map(usize::to_string).collect();
+        eprintln!(
+            "warning: changes on these pages of {label} have no change bars, because the document sets its own page foreground and background there: {}",
+            pages.join(", ")
+        );
+    }
 }
 
 /// The version of the typst executable, such as "0.14.2".
