@@ -32,7 +32,8 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     env:
-      # Scanning the system fonts dominates each typst start on Windows; the tests use the embedded fonts.
+      # Each typst start scans the system fonts, which is slow where many are installed;
+      # the tests use the fonts embedded in Typst.
       TYPST_IGNORE_SYSTEM_FONTS: "true"
     steps:
       - uses: actions/checkout@v7
