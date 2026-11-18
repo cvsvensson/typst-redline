@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use typst_redline::{
-    Bib, Change, ChangeKind, History, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Redline, Side, Version,
-    composite, pair_pages, redline,
+    Bib, Change, ChangeKind, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Redline, Side,
+    Version, composite, pair_pages, redline,
 };
 
 const FULL: Options = Options {
@@ -78,7 +78,13 @@ fn generate(name: &str, preamble: &str, opts: Options) -> Run {
         entry: "main.typ".into(),
         read,
     };
-    let r = redline(&v("old", &read_old), &v("new", &read_new), opts, &History::default());
+    let r = redline(
+        &v("old", &read_old),
+        &v("new", &read_new),
+        opts,
+        &History::default(),
+        Moves::Find,
+    );
     // The new tree, the old-only files, the old tree if asked for, then the
     // overlay.
     let mut files = tree(name, "new");
@@ -126,6 +132,7 @@ fn redline_of(old: &str, new: &str) -> Redline {
         &v(&move |_: &str| Some(new.clone())),
         FULL,
         &History::default(),
+        Moves::Find,
     )
 }
 
@@ -670,7 +677,10 @@ fn computed_include_path_is_reported() {
         entry: "main.typ".into(),
         read: &read,
     };
-    assert_eq!(redline(&v, &v, FULL, &History::default()).warnings.len(), 1);
+    assert_eq!(
+        redline(&v, &v, FULL, &History::default(), Moves::Find).warnings.len(),
+        1
+    );
 }
 
 #[test]
@@ -692,7 +702,7 @@ fn changed_files_read_by_unchanged_calls_are_listed() {
         entry: "main.typ".into(),
         read,
     };
-    let r = redline(&v(&old), &v(&new), FULL, &History::default());
+    let r = redline(&v(&old), &v(&new), FULL, &History::default(), Moves::Find);
     assert_eq!(r.bib.files, ["data/d.json", "fig.svg"]);
 }
 
@@ -1331,7 +1341,7 @@ fn redline_steps(old: &str, mid: &str, new: &str) -> Redline {
         steps: Some(vec![v(&mid)]),
         ..History::default()
     };
-    redline(&v(&old), &v(&new), FULL, &history)
+    redline(&v(&old), &v(&new), FULL, &history, Moves::Find)
 }
 
 /// The step and the body of each mark in marked source.
@@ -1379,7 +1389,7 @@ fn move_is_marked_with_the_commit_that_made_it() {
         steps: Some(vec![v(&mid)]),
         ..History::default()
     };
-    let out = &redline(&v(&old), &v(&new), FULL, &history).files[0].1;
+    let out = &redline(&v(&old), &v(&new), FULL, &history, Moves::Find).files[0].1;
     assert_eq!(out.matches("), step: 1)[").count(), 3, "{out}");
     assert!(out.contains("step: 2)[dusk]"), "{out}");
 }
