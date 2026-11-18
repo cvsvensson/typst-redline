@@ -752,6 +752,19 @@ fn deleted_state_and_counter_updates_have_no_effect() {
 }
 
 #[test]
+fn document_pages_keep_their_parity_and_number_after_the_summary() {
+    // Each header records its page's parity and the page number it reads.
+    let Some(marked) = probe("page-parity") else {
+        return;
+    };
+    let new = query(
+        &compile("page-parity-new", &tree("page-parity", "new")).unwrap(),
+        "<probe>",
+    );
+    assert!(marked.ends_with(&new[1..]), "{marked} does not end with {new}");
+}
+
+#[test]
 fn citation_added_to_a_group_marks_the_group() {
     let r = run("citation-group");
     assert!(r.body.contains("#redline-ins()[@a @b]"), "{}", r.body);
@@ -1475,7 +1488,7 @@ fn paragraph_inserted_in_two_steps_keeps_its_lines() {
     };
     let new = render("two-steps-new", &[("main.typ".into(), new)]).unwrap();
     let height = |png: &[u8]| u32::from_be_bytes(png[20..24].try_into().unwrap());
-    assert_eq!(height(&marked[1]), height(&new[0]), "{}", r.files[0].1);
+    assert_eq!(height(marked.last().unwrap()), height(&new[0]), "{}", r.files[0].1);
 }
 
 #[test]

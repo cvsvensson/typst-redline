@@ -351,9 +351,8 @@ struct Writer<'a> {
     /// Writing the top level of a file in reading order: headings are
     /// sections.
     top: bool,
+    /// Where the bars and the summary start.
     summary_at: Option<usize>,
-    /// Where the bars start: at the summary or before a show rule above it.
-    bars_at: Option<usize>,
     sections: Vec<Section>,
     /// Label of the section being written.
     current: Option<String>,
@@ -418,7 +417,6 @@ impl<'a> Writer<'a> {
             done: HashSet::new(),
             top: true,
             summary_at: None,
-            bars_at: None,
             sections: vec![],
             current: None,
             changes: vec![],
@@ -600,18 +598,14 @@ impl<'a> Writer<'a> {
     /// document with the summary at the place [`Self::summary_here`] chose.
     fn finish(&self, old_label: &str, new_label: &str, bib: &Bib, history: &History) -> String {
         let at = self.summary_at.unwrap_or(self.entry_out.len());
-        let bars = self.bars_at.unwrap_or(at);
         let mut out = self.entry_out.clone();
-        let newline = |out: &str, i: usize| if out[..i].ends_with('\n') || i == 0 { "" } else { "\n" };
-        let show = format!("{}#show: {}-bars\n", newline(&out, bars), self.ctx.prefix);
-        out.insert_str(bars, &show);
-        let at = at + show.len();
-        let summary = format!(
-            "{}{}",
-            newline(&out, at),
+        let newline = if out[..at].ends_with('\n') || at == 0 { "" } else { "\n" };
+        let start = format!(
+            "{newline}#show: {}-bars\n{}",
+            self.ctx.prefix,
             self.summary(old_label, new_label, bib, history)
         );
-        out.insert_str(at, &summary);
+        out.insert_str(at, &start);
         format!("{}{out}", self.ctx.import())
     }
 
@@ -735,12 +729,12 @@ impl<'a> Writer<'a> {
         )
     }
 
-    /// The summary goes at the top level of the entry, before anything
-    /// other than the rules and definitions it starts with.
+    /// The summary goes at the top level of the entry, before its first
+    /// show rule and its first content, so that the document's template
+    /// and show rules do not apply to it.
     fn summary_here(&mut self) {
         if self.top && self.file.path == self.ctx.entry() && self.summary_at.is_none() {
             self.summary_at = Some(self.out.len());
-            self.bars_at.get_or_insert(self.out.len());
         }
     }
 
@@ -760,16 +754,11 @@ impl<'a> Writer<'a> {
         }
         self.out.push_str(&b.gap);
         self.after_item = b.kind == Kind::Item;
-        if config
-            && b.nodes[1].kind() == K::ShowRule
-            && self.top
-            && self.file.path == self.ctx.entry()
-            && self.summary_at.is_none()
-        {
+        if config && b.nodes[1].kind() == K::ShowRule {
             // The bars wrap the rest of the document in a context, which
             // must not hide the document's content from a template that a
             // show rule applies, such as a slide package's.
-            self.bars_at.get_or_insert(self.out.len());
+            self.summary_here();
         }
     }
 

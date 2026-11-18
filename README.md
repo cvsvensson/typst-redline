@@ -2,7 +2,7 @@
 
 `typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document: a PDF of the new version with deleted text struck out and new text highlighted. It does for Typst what `latexdiff` does for LaTeX. AI agents wrote this tool.
 
-The two pictures are the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). Page 1 is a summary that explains the marks and lists the sections that changed. When the two versions come from git, it also lists the commits between them.
+The two pictures are the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). Page 1 is a summary that explains the marks and lists the sections that changed. When the two versions come from git, it also lists the commits between them. The summary has the page setup of the document's leading `#set` rules but not its template or show rules. The document follows on an odd page, as in the new version, so that two-sided layouts are not mirrored; a one-page summary is therefore followed by a blank page.
 
 <img src="docs/example-summary.png" width="420" alt="The summary page: a legend and the list of changed sections">
 
