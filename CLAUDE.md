@@ -29,4 +29,5 @@ A CLI that shows what changed between two versions of a Typst document, as a PDF
 - Tests are small old/new fixtures that assert behaviour. A fixed bug gets one test built from its minimal reproduction.
 - To test another Typst version, unpack its release binary into a scratch folder and put that folder first on `PATH` for the test command. Nothing needs installing.
 - For a change that affects output, run the tool on a real document with git history, in a scratch clone and never in the original repository, then render pages to PNG and look at them.
+- For a refactor that should not change the output, build the old and the new binary, run both on every fixture with `--keep-typ`, and diff the kept folders.
 - Extension: `npm run compile` and `npm test` in `vscode/`.
