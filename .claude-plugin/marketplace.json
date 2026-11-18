@@ -1,0 +1,11 @@
+{
+  "name": "typst-redline",
+  "owner": { "name": "cvsvensson" },
+  "plugins": [
+    {
+      "name": "typst-redline",
+      "source": "./claude-plugin",
+      "description": "Compile Typst documents and mark the changes between versions in a PDF."
+    }
+  ]
+}

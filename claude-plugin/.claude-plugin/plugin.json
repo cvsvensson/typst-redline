@@ -1,0 +1,6 @@
+{
+  "name": "typst-redline",
+  "description": "Compile Typst documents and mark the changes between versions in a PDF.",
+  "repository": "https://github.com/cvsvensson/typst-redline",
+  "license": "MIT"
+}
