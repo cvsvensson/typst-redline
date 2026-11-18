@@ -755,19 +755,16 @@ impl<'a> Writer<'a> {
             });
         let mut rest = o.iter().filter(|x| !trivia(x));
         let mut ok = true;
-        let mut line_start = false;
         for x in n {
             if trivia(&x) {
                 self.out.push_str(&x.full_text());
-                line_start = x.full_text().contains('\n');
                 continue;
             }
             ok = ok
                 && rest.next().is_some_and(|y| {
                     self.diff_code_node(y, x)
-                        || shows && matches!(x.kind(), K::FuncCall | K::Equation) && self.replace(y, x, line_start)
+                        || shows && matches!(x.kind(), K::FuncCall | K::Equation) && self.replace(y, x)
                 });
-            line_start = false;
         }
         let ok = ok && rest.next().is_none();
         let labels = |v: &[SyntaxNode]| {
@@ -819,8 +816,9 @@ impl<'a> Writer<'a> {
     }
 
     /// Write a content argument `n` as `o` deleted and `n` inserted, as
-    /// blocks if `n` starts a line.
-    fn replace(&mut self, o: &SyntaxNode, n: &SyntaxNode, block: bool) -> bool {
+    /// blocks: the argument is all that its call lays out there, a body or
+    /// a cell.
+    fn replace(&mut self, o: &SyntaxNode, n: &SyntaxNode) -> bool {
         let tok = |x: &SyntaxNode| {
             let nodes = vec![SyntaxNode::leaf(K::Hash, "#"), x.clone()];
             Tok {
@@ -828,14 +826,13 @@ impl<'a> Writer<'a> {
                 key: String::new(),
                 text: text(&nodes),
                 nodes,
-                block,
+                block: true,
             }
         };
         let (ot, nt) = ([tok(o)], [tok(n)]);
-        let args = block_arg(&nt);
         self.out.push('[');
-        self.mark(ChangeKind::Del, args, self.content(&ot, ChangeKind::Del), &ot);
-        self.mark(ChangeKind::Ins, args, self.content(&nt, ChangeKind::Ins), &nt);
+        self.mark(ChangeKind::Del, "block: true", self.content(&ot, ChangeKind::Del), &ot);
+        self.mark(ChangeKind::Ins, "block: true", self.content(&nt, ChangeKind::Ins), &nt);
         self.out.push(']');
         true
     }
