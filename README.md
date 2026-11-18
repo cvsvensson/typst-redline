@@ -99,6 +99,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 - A citation added to or removed from a group such as `@a @b` marks the whole group, because Typst lays the group out as one piece.
 - Entries that appear in, disappear from or change in the bibliography are not marked there. The summary page names them.
 - When a figure's call and its image file both change, the old figure is drawn with the new image file.
+- A changed element that sets the page from inside a function, such as a slide, cannot be framed. The document is then compiled again with no frames around content computed at layout (calls of functions built on `context` or `layout`, which includes many drawings), and a note on stderr says so. With Typst 0.11, a changed drawing that needs a finite width has the same effect.
 - Pages where your document or its template sets both its own page foreground and background get no margin bars. The summary page lists those pages.
 - A document that is two-sided only through its headers or footers, such as one that tests `calc.odd(here().page())` without `inside` and `outside` margins, has its odd and even pages swapped when the summary has an odd number of pages.
 - In side-by-side, an inserted or deleted page is shown next to an empty one only when the pages have headings; otherwise it can be paired with a neighbouring page.

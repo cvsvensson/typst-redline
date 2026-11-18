@@ -456,18 +456,20 @@ fn renamed(old: &Spec, to: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Tried in turn until one compiles: marks inside code can break
-/// functions that inspect their body, and deleted code can fail (the old
-/// version it is evaluated in fails on its own). The flag keeps state updates
-/// in deleted content, which some code needs but which can change what
-/// reads the state after it.
-const LADDER: [(Options, bool, &str); 5] = [
+/// Tried in turn until one compiles: a frame cannot hold content that sets
+/// the page, marks inside code can break functions that inspect their body,
+/// and deleted code can fail (the old version it is evaluated in fails on
+/// its own). The first flag keeps state updates in deleted content, which
+/// some code needs but which can change what reads the state after it; the
+/// second says whether the preamble frames content computed at layout.
+const LADDER: [(Options, bool, bool, &str); 6] = [
     (
         Options {
             eval_deleted: true,
             content_blocks: true,
         },
         false,
+        true,
         "",
     ),
     (
@@ -476,7 +478,17 @@ const LADDER: [(Options, bool, &str); 5] = [
             content_blocks: true,
         },
         true,
+        true,
         "state updates in deleted content are kept",
+    ),
+    (
+        Options {
+            eval_deleted: true,
+            content_blocks: true,
+        },
+        false,
+        false,
+        "changed content computed at layout is not framed",
     ),
     (
         Options {
@@ -484,7 +496,8 @@ const LADDER: [(Options, bool, &str); 5] = [
             content_blocks: true,
         },
         false,
-        "deleted code is shown by name",
+        false,
+        "changed content computed at layout is not framed and deleted code is shown by name",
     ),
     (
         Options {
@@ -492,7 +505,8 @@ const LADDER: [(Options, bool, &str); 5] = [
             content_blocks: false,
         },
         false,
-        "changed code is marked whole",
+        false,
+        "changed content computed at layout is not framed and changed code is marked whole",
     ),
     (
         Options {
@@ -500,7 +514,8 @@ const LADDER: [(Options, bool, &str); 5] = [
             content_blocks: false,
         },
         false,
-        "deleted code is shown by name and changed code is marked whole",
+        false,
+        "changed content computed at layout is not framed, deleted code is shown by name and changed code is marked whole",
     ),
 ];
 
@@ -635,17 +650,9 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         (old_root.as_path(), &old.entry, "old", OLD_PDF),
         (dir.as_path(), &new.entry, "new", NEW_PDF),
     ];
-    let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
-        let input = format!("redline-side={side}");
-        typst(
-            &a,
-            root,
-            "compile",
-            &[&"--input", &input, &root.join(entry), &dir.join(pdf)],
-        )
-    };
+    let mut a = a;
     let mut back = None;
-    for (i, (opts, keep_states, note)) in LADDER.into_iter().enumerate() {
+    for (i, (opts, keep_states, frame_computed, note)) in LADDER.into_iter().enumerate() {
         // The side-by-side layout shows no deleted content.
         if keep_states && a.side_by_side {
             continue;
@@ -653,7 +660,20 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         let states = format!("redline-states={}", if keep_states { "keep" } else { "drop" });
         if i > 0 {
             result = redline(&old_v, &new_v, opts, &history, moves);
+            if LADDER[i - 1].2 && !frame_computed {
+                a.typst_args
+                    .extend(["--input".into(), "redline-frame-computed=false".into()]);
+            }
         }
+        let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
+            let input = format!("redline-side={side}");
+            typst(
+                &a,
+                root,
+                "compile",
+                &[&"--input", &input, &root.join(entry), &dir.join(pdf)],
+            )
+        };
         write(dir, &result.files)?;
         let out = if !a.side_by_side {
             typst(&a, dir, "compile", &[&"--input", &states, &dir.join(&new.entry), &tmp])?

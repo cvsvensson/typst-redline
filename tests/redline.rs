@@ -1181,6 +1181,44 @@ fn code_that_inspects_marked_content_is_marked_whole() {
     assert!(out.status.success() && whole, "{stderr}");
 }
 
+#[test]
+fn changed_drawing_that_needs_a_finite_width_compiles() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("finite-width");
+    let doc = |w: &str| {
+        format!(
+            "#let chart(n) = layout(s => {{ assert(s.width < 1e4pt); rect(width: s.width)[#n] }})\n\nBefore.\n\n#chart(\"{w}\")\n\nAfter.\n"
+        )
+    };
+    std::fs::write(dir.join("old.typ"), doc("alpha")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc("beta")).unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ", "-o", "out.pdf"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+fn pdf_pages(path: &Path) -> usize {
+    let pdf = String::from_utf8_lossy(&std::fs::read(path).unwrap()).replace("/Type /Page", "/Type/Page");
+    pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count()
+}
+
+#[test]
+fn inserted_content_that_sets_the_page_adds_only_its_own_pages() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("sets-page");
+    let slides = "#let plain(t) = { set page(fill: luma(240)); heading(t) }\n#let computed(t) = context { set page(fill: luma(240)); heading(t) }\n";
+    std::fs::write(dir.join("old.typ"), format!("{slides}#plain[One]\n")).unwrap();
+    let new = format!("{slides}#plain[One]\n\n#plain[Two]\n\n#computed[Three]\n");
+    std::fs::write(dir.join("new.typ"), &new).unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ", "-o", "out.pdf"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    // The summary and the three pages of the new document.
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 4);
+}
+
 const SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>"#;
 
 #[test]
@@ -1441,11 +1479,8 @@ fn side_by_side_shows_changed_pages() {
         return;
     }
     assert!(out.status.success(), "{stderr}");
-    let pdf =
-        String::from_utf8_lossy(&std::fs::read(dir.join("out.pdf")).unwrap()).replace("/Type /Page", "/Type/Page");
-    let pages = pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count();
     // The summary and the one changed pair.
-    assert_eq!(pages, 2);
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
 }
 
 #[test]
