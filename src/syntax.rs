@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
-use typst_syntax::{SyntaxKind as K, SyntaxNode, ast};
+use typst_syntax::{Span, SyntaxKind as K, SyntaxNode, ast};
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum Kind {
@@ -215,16 +215,28 @@ pub struct Tok {
     pub nodes: Vec<SyntaxNode>,
     /// Display equation or code alone on its line: laid out as a block.
     pub block: bool,
+    /// Where its source starts: a node and an offset into it.
+    pub at: (Span, usize),
 }
 
 impl Tok {
-    fn plain(kind: TK, key: &str, text: String) -> Self {
+    fn plain(kind: TK, key: &str, text: String, at: (Span, usize)) -> Self {
         Tok {
             kind,
             key: key.into(),
             text,
             nodes: vec![],
             block: false,
+            at,
+        }
+    }
+
+    /// The length of its source.
+    pub fn source_len(&self) -> usize {
+        if self.kind == TK::Word {
+            self.key.len()
+        } else {
+            self.text.len()
         }
     }
 }
@@ -236,18 +248,22 @@ pub fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
         let n = &nodes[i];
         match n.kind() {
             K::Text => {
-                for piece in split_words(n.leaf_text()) {
+                let text = n.leaf_text();
+                for piece in split_words(text) {
+                    let at = (n.span(), piece.as_ptr() as usize - text.as_ptr() as usize);
                     toks.push(if piece.chars().all(char::is_whitespace) {
-                        Tok::plain(TK::Space, " ", piece.into())
+                        Tok::plain(TK::Space, " ", piece.into(), at)
                     } else {
                         // Literal inside a word, but markup next to a wrapper.
-                        Tok::plain(TK::Word, piece, piece.replace('_', "\\_").replace('*', "\\*"))
+                        Tok::plain(TK::Word, piece, piece.replace('_', "\\_").replace('*', "\\*"), at)
                     });
                 }
             }
-            K::Space => toks.push(Tok::plain(TK::Space, " ", n.full_text().into())),
-            K::Parbreak => toks.push(Tok::plain(TK::Space, "\n\n", n.full_text().into())),
-            K::LineComment | K::BlockComment => toks.push(Tok::plain(TK::Comment, "//", n.full_text().into())),
+            K::Space => toks.push(Tok::plain(TK::Space, " ", n.full_text().into(), (n.span(), 0))),
+            K::Parbreak => toks.push(Tok::plain(TK::Space, "\n\n", n.full_text().into(), (n.span(), 0))),
+            K::LineComment | K::BlockComment => {
+                toks.push(Tok::plain(TK::Comment, "//", n.full_text().into(), (n.span(), 0)))
+            }
             K::Label
                 if toks
                     .iter()
@@ -289,6 +305,7 @@ pub fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
                     key: skeleton(&unit),
                     text: text(&unit),
                     block: display || (n.kind() == K::Hash && line_start && line_end),
+                    at: (n.span(), 0),
                     nodes: unit,
                 });
             }
@@ -304,7 +321,7 @@ fn is_refs(t: &Tok) -> bool {
 
 /// Split text into runs of word characters, runs of whitespace, and single
 /// other characters.
-fn split_words(s: &str) -> Vec<&str> {
+pub fn split_words(s: &str) -> Vec<&str> {
     #[derive(PartialEq, Clone, Copy)]
     enum Class {
         Word,

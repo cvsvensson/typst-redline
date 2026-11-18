@@ -31,6 +31,9 @@ Options:
   --layout <layout>     inline (default): the new version with changes marked;
                         side-by-side: changed pages of the old and the new
                         version next to each other (needs Typst 0.14 or later)
+  --each-commit         Colour each change by the commit that made it, for at
+                        most 6 commits between the two versions (one file
+                        and the inline layout only)
   --typst <path>        typst executable (default: typst)
   --keep-typ            Keep the generated project and print its path on stderr
   -V, --version         Print the version
@@ -50,6 +53,7 @@ struct Args {
     typst: String,
     keep: bool,
     side_by_side: bool,
+    each_commit: bool,
     typst_args: Vec<String>,
 }
 
@@ -70,6 +74,7 @@ fn parse_args() -> Result<Parsed, String> {
         typst: "typst".into(),
         keep: false,
         side_by_side: false,
+        each_commit: false,
         typst_args: vec![],
     };
     let mut it = std::env::args().skip(1);
@@ -88,6 +93,7 @@ fn parse_args() -> Result<Parsed, String> {
             "--preamble" => a.preamble = Some(val()?.into()),
             "--typst" => a.typst = val()?,
             "--keep-typ" => a.keep = true,
+            "--each-commit" => a.each_commit = true,
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
                     "inline" => false,
@@ -108,6 +114,9 @@ fn parse_args() -> Result<Parsed, String> {
             .filter(|r| !r.is_empty())
             .map(PathBuf::from);
         a.root_env = a.root.is_some();
+    }
+    if a.each_commit && (a.files.len() != 1 || a.side_by_side) {
+        return Err("--each-commit needs one file and the inline layout".into());
     }
     match (a.files.len(), &a.since, &a.to) {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(a)),
@@ -306,9 +315,13 @@ fn run(a: Args) -> Result<PathBuf, String> {
     let preamble = match &a.preamble {
         Some(p) => {
             let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
-            if a.side_by_side && !text.contains("redline-side-by-side") {
+            let needs = [
+                (a.side_by_side, "redline-side-by-side", "the side-by-side layout"),
+                (a.each_commit, "redline-step-style", "--each-commit"),
+            ];
+            if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
                 return Err(format!(
-                    "the preamble {} does not define redline-side-by-side, which the side-by-side layout needs",
+                    "the preamble {} does not define {name}, which {what} needs",
                     p.display()
                 ));
             }
@@ -344,7 +357,39 @@ fn run(a: Args) -> Result<PathBuf, String> {
         read,
     };
     let (old_v, new_v) = (version(&old, &read_old), version(&new, &read_new));
-    let history = log(&old, &new)?.unwrap_or_default();
+    let log = log(&old, &new)?;
+    let step_trees = match &log {
+        Some(log) if a.each_commit => step_trees(log, &old, &new)?,
+        _ if a.each_commit => {
+            return Err("--each-commit needs two git revisions, or a revision and the working tree".into());
+        }
+        _ => vec![],
+    };
+    let step_entry = |t: &Tree| {
+        if t.read(&new.entry).is_some() {
+            new.entry.clone()
+        } else {
+            old.entry.clone()
+        }
+    };
+    let step_reads: Vec<_> = step_trees
+        .iter()
+        .map(|t| move |p: &str| String::from_utf8(t.read(p)?).ok())
+        .collect();
+    let history = History {
+        steps: a.each_commit.then(|| {
+            step_trees
+                .iter()
+                .zip(&step_reads)
+                .map(|(t, read)| Version {
+                    label: String::new(),
+                    entry: step_entry(t),
+                    read,
+                })
+                .collect()
+        }),
+        ..log.map(|l| l.history).unwrap_or_default()
+    };
 
     let mut result = redline(&old_v, &new_v, LADDER[0].0, &history);
     for w in &result.warnings {
@@ -469,10 +514,15 @@ fn repository(spec: &Spec) -> Option<PathBuf> {
 }
 
 /// The commits from the old version to the new one that touch the project,
-/// oldest first; `None` unless the old version is a git revision and the new
-/// one a later revision, the index or the working tree of the same project.
-/// Merged branches count as their merge commit.
-fn log(old: &Spec, new: &Spec) -> Result<Option<History>, String> {
+/// oldest first, with their full hashes; `None` unless the old version is a
+/// git revision and the new one a later revision, the index or the working
+/// tree of the same project. Merged branches count as their merge commit.
+struct Log {
+    hashes: Vec<String>,
+    history: History<'static>,
+}
+
+fn log(old: &Spec, new: &Spec) -> Result<Option<Log>, String> {
     let Tree::Git {
         repo,
         prefix,
@@ -503,15 +553,16 @@ fn log(old: &Spec, new: &Spec) -> Result<Option<History>, String> {
         "--first-parent",
         "--reverse",
         "--date=short",
-        "--format=%h%x1f%ad%x1f%s",
+        "--format=%H%x1f%h%x1f%ad%x1f%s",
         &format!("{from}..{to}"),
         "--",
         paths,
     ]))?;
-    let mut commits = vec![];
+    let (mut hashes, mut commits) = (vec![], vec![]);
     for line in String::from_utf8_lossy(&out).lines() {
-        let f: Vec<&str> = line.splitn(3, '\x1f').collect();
-        if let [hash, date, subject] = f[..] {
+        let f: Vec<&str> = line.splitn(4, '\x1f').collect();
+        if let [full, hash, date, subject] = f[..] {
+            hashes.push(full.to_string());
             commits.push(Commit {
                 hash: hash.into(),
                 date: date.into(),
@@ -519,7 +570,53 @@ fn log(old: &Spec, new: &Spec) -> Result<Option<History>, String> {
             });
         }
     }
-    Ok(Some(History { commits, uncommitted }))
+    Ok(Some(Log {
+        hashes,
+        history: History {
+            commits,
+            uncommitted,
+            steps: None,
+        },
+    }))
+}
+
+/// Each change is coloured by its step: a commit, or the uncommitted
+/// changes. The trees after each step but the last, which is the new
+/// version.
+fn step_trees(log: &Log, old: &Spec, new: &Spec) -> Result<Vec<Tree>, String> {
+    const MAX: usize = 6;
+    let h = &log.history;
+    let steps = h.commits.len() + usize::from(h.uncommitted);
+    if steps == 0 {
+        return Err(format!(
+            "no commits from {} to {} change the document, so --each-commit has nothing to colour",
+            old.label, new.label
+        ));
+    }
+    if steps > MAX {
+        return Err(format!(
+            "--each-commit colours at most {MAX} commits, but {steps} commits from {} to {} change the document{}; give a narrower range, such as --since {}",
+            old.label,
+            new.label,
+            if h.uncommitted {
+                " (counting the uncommitted changes)"
+            } else {
+                ""
+            },
+            h.commits[steps - MAX - 1].hash
+        ));
+    }
+    let Tree::Git { repo, prefix, .. } = &old.tree else {
+        unreachable!()
+    };
+    Ok(log.hashes[..steps - 1]
+        .iter()
+        .map(|rev| Tree::Git {
+            repo: repo.clone(),
+            prefix: prefix.clone(),
+            rev: Some(rev.clone()),
+        })
+        .collect())
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {

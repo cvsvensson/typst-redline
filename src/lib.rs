@@ -1,6 +1,7 @@
 //! Produce a Typst project that shows the new version of a document with
 //! the changes against an old version marked.
 
+mod blame;
 mod mark;
 mod side;
 mod syntax;
@@ -51,11 +52,14 @@ pub struct Commit {
 
 /// How the new version came about from the old one, for the summary.
 #[derive(Default)]
-pub struct History {
+pub struct History<'a> {
     /// The commits from the old version to the new one, oldest first.
     pub commits: Vec<Commit>,
     /// The new version has changes beyond the last commit.
     pub uncommitted: bool,
+    /// To mark each change in the colour of the commit that made it: the
+    /// version after each commit, the last one (the new version) left out.
+    pub steps: Option<Vec<Version<'a>>>,
 }
 
 pub struct Redline {
@@ -104,7 +108,11 @@ pub fn redline(old: &Version, new: &Version, opts: Options, history: &History) -
     let old_files = project(old, &mut warnings);
     let new_files = project(new, &mut warnings);
     let bib = bibliography(old, &old_files, new, &new_files);
-    let ctx = mark::Ctx::new(old_files, new_files, opts);
+    let steps = history
+        .steps
+        .as_ref()
+        .map(|vs| vs.iter().map(|v| project(v, &mut vec![])).collect());
+    let ctx = mark::Ctx::new(old_files, new_files, steps, opts);
     let (files, changes) = mark::write(&ctx, &old.label, &new.label, &bib, history);
     Redline {
         files,
@@ -335,7 +343,7 @@ fn normalize(s: &str) -> String {
         .replace('\r', "\n")
 }
 
-impl History {
+impl History<'_> {
     /// The dictionary the preamble takes, with the latest commits if there
     /// are many; `None` if there is nothing to list.
     pub(crate) fn to_typst(&self) -> Option<String> {
@@ -356,8 +364,9 @@ impl History {
             })
             .collect();
         Some(format!(
-            "(commits: ({commits}), earlier: {earlier}, uncommitted: {})",
-            self.uncommitted
+            "(commits: ({commits}), earlier: {earlier}, uncommitted: {}, steps: {})",
+            self.uncommitted,
+            self.steps.is_some()
         ))
     }
 }
