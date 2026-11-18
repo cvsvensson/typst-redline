@@ -322,6 +322,16 @@ fn edit_after_a_deleted_heading_counts_with_the_section_before() {
 }
 
 #[test]
+fn paragraphs_under_a_renamed_heading_are_compared_word_by_word() {
+    let para = |w: &str| format!("The gap closes at the sweet spot of the {w} chain.\n");
+    let r = redline_of(
+        &format!("= Results\n\n{}", para("short")),
+        &format!("= Numerical findings\n\n{}", para("long")),
+    );
+    assert!(r.changes.iter().all(|c| !c.text.contains("gap")), "{:?}", r.changes);
+}
+
+#[test]
 fn section_replacing_another_is_not_compared_with_it() {
     let out = body("replaced-section");
     assert!(
