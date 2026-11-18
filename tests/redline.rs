@@ -436,7 +436,11 @@ fn changed_code_argument_is_replaced_in_place() {
     let r = run("changed-argument");
     assert_eq!(r.body.matches("#grid(").count(), 1, "{}", r.body);
     assert!(r.body.contains("#redline-del(gap: true)[old];"), "{}", r.body);
-    assert!(r.body.contains("#redline-ins()[#rect(width: 2cm)]"), "{}", r.body);
+    assert!(
+        r.body.contains("#redline-ins(block: true)[#rect(width: 2cm)]"),
+        "{}",
+        r.body
+    );
 }
 
 #[test]
@@ -452,6 +456,21 @@ fn frame_of_a_grid_with_fractional_columns_is_as_wide_as_the_text() {
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("283.4"), "{out:?}");
+}
+
+#[test]
+fn frame_of_a_relative_width_element_is_as_wide_as_the_element() {
+    if let Some(v) = probe("relative-frame") {
+        assert!(v.contains("141.7"), "{v}");
+    }
+}
+
+#[test]
+fn changed_shape_in_a_figure_is_crossed_out() {
+    if let Some(v) = probe("changed-shape") {
+        // The two lines of the cross; other lines have no end point.
+        assert_eq!(v.matches("[\"").count(), 2, "{v}");
+    }
 }
 
 #[test]
