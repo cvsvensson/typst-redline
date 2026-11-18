@@ -121,11 +121,15 @@
 // Whether a part of a mark is laid out as a block of its own and gets a
 // frame. An image, a shape or content computed at layout (a drawing) is,
 // when it is all of a block mark. Names, because some shapes exist only in
-// some Typst versions.
+// some Typst versions. Content computed at layout can also set the page,
+// which no frame can hold; when the binary compiles with
+// `--input redline-frame-computed=false` after a failed compile, it is not
+// framed.
 #let redline-framed(c, sole) = (
   c.func() in (figure, block, align, grid, table, stack, pad, columns)
     or c.func() == math.equation and c.block
-    or sole and repr(c.func()) in ("image", "rect", "square", "circle", "ellipse", "polygon", "line", "path", "curve", "context", "layout")
+    or sole and repr(c.func()) in ("image", "rect", "square", "circle", "ellipse", "polygon", "line", "path", "curve")
+    or sole and repr(c.func()) in ("context", "layout") and sys.inputs.at("redline-frame-computed", default: "true") == "true"
 )
 
 // A frame around a block-level element, outside it so that nothing moves;
@@ -134,7 +138,11 @@
 #let redline-frame(it, stroke, cross: false, start: none, end: none, step: none, id: none) = block(width: 100%, layout(size => {
   let st = redline-style
   let eq = it.func() == math.equation
-  let natural = measure(if eq { math.equation(block: true, numbering: none, it.body) } else { it })
+  // Twice the width tells content that fills its width as unbounded room
+  // does, and a drawing that fills its width needs finite room. Typst 0.11
+  // measures only in unbounded room.
+  let room = if sys.version >= version(0, 12, 0) { (width: 2 * size.width) } else { (:) }
+  let natural = measure(if eq { math.equation(block: true, numbering: none, it.body) } else { it }, ..room)
   let h = measure(block(width: size.width, it)).height
   // `measure` cannot resolve a relative width, so it is resolved here. An
   // element whose height depends on the width it gets (fractional columns,
@@ -159,6 +167,12 @@
   }))
 }))
 
+// Content with the end tag appended inside its set rules, which can set the
+// page: after them, the tag would get a page of its own.
+#let redline-end-in(c) = if repr(c.func()) == "styled" {
+  (c.func())(redline-end-in(c.child), c.styles)
+} else { c + redline-tag("end", 0.3em) }
+
 // The parts of a mark with its tags and frames: `style` applied to each run
 // of parts that are not framed, `frame-style` to each framed part that shows
 // text. A drawing or image is drawn as written, with only `plain` applied:
@@ -168,6 +182,7 @@
   let (lead, ch, trail) = redline-parts(body)
   let n = ch.len()
   let framed = ch.map(c => redline-framed(c, block and n == 1))
+  let styled = n > 0 and not framed.last() and repr(ch.last().func()) == "styled"
   let out = ()
   let run = ()
   for (i, c) in ch.enumerate() {
@@ -188,14 +203,18 @@
       run += (text(cl.first()), redline-tag(kind, -0.8em, step: step, id: id), text(cl.slice(1).join()))
     } else {
       if i == 0 { run.push(redline-tag(kind, -0.8em, step: step, id: id)) }
-      run.push(c)
+      run.push(if i == n - 1 and styled { redline-end-in(c) } else { c })
     }
   }
   if run.len() > 0 { out.push(style(run.join())) }
   lead
   if n == 0 { redline-tag(kind, -0.8em, step: step, id: id) }
   out.join()
-  if n == 0 or not framed.last() { redline-tag("end", 0.3em) }
+  // Content computed at layout can set the page, and anything visible after
+  // it would get a page of its own; such a tag has no width of its container.
+  if n == 1 and block and not framed.last() and repr(ch.last().func()) in ("context", "layout") {
+    context redline-tag("end", 0.3em, width: 0pt)
+  } else if n == 0 or not (framed.last() or styled) { redline-tag("end", 0.3em) }
   trail
 }
 
@@ -439,13 +458,13 @@
   if move != none { return redline-move-line(move, body, step) }
   let block = block or heading != none
   let body = redline-neutral(body)
-  let body = if heading != none {
-    text(weight: "bold", size: if heading == 1 { 1.4em } else { 1.2em }, body)
-  } else { body }
   if block { parbreak() }
   let rules = redline-del-rules.with(st: st)
+  let look = if heading == none { rules } else {
+    b => rules(text(weight: "bold", size: if heading == 1 { 1.4em } else { 1.2em }, b))
+  }
   [#metadata(none)<redline-del-start>]
-  redline-mark("del", body, block, rules, st.del-frame, frame-style: rules, plain: redline-del-unlisted, step: step, id: id)
+  redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, step: step, id: id)
   redline-restore
   if block { parbreak() } else if gap { h(0.25em) }
 }
