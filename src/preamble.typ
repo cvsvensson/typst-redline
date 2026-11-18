@@ -414,7 +414,7 @@
     for e in info.entries {
       let note = if e.unmarked [; changed code not marked]
       let line = if e.deleted {
-        text(fill: st.del)[#strike(e.title) (deleted section)]
+        text(fill: st.del)[#strike(e.title) (deleted section#note)]
       } else if e.target == none {
         [#e.title (#e.count#note)]
       } else {
