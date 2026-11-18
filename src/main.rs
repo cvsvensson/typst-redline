@@ -7,8 +7,8 @@ use std::process::{Command, ExitCode, Output};
 
 use tree::{Tree, git, output};
 use typst_redline::{
-    Anchor, Commit, History, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version, composite,
-    project_files, redline,
+    Anchor, ChangeKind, Commit, History, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version,
+    composite, project_files, redline,
 };
 
 const USAGE: &str = "\
@@ -581,6 +581,15 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
     let mut result = redline(&old_v, &new_v, LADDER[0].0, &history);
     for w in &result.warnings {
         eprintln!("warning: {w}");
+    }
+    if let Some(p) = &a.preamble
+        && !preamble.contains("move:")
+        && result.changes.iter().any(|c| c.kind == ChangeKind::Moved)
+    {
+        return Err(format!(
+            "the preamble {} does not take the move argument of redline-ins and redline-del, which moved text needs",
+            p.display()
+        ));
     }
     let staging = Staging::new(a.keep);
     let dir = &staging.dir;

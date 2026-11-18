@@ -22,6 +22,8 @@ pub const MOVE_WORDS: usize = 4;
 pub struct Run {
     pub old: (usize, Range<usize>),
     pub new: (usize, Range<usize>),
+    /// The same number for the move from the new version to the old one.
+    pub key: u64,
 }
 
 /// A block left over as deleted or inserted.
@@ -144,10 +146,35 @@ pub fn find(files: &[(&Doc, &Doc, &[Step])]) -> Vec<Run> {
             _ => runs.push(Run {
                 old: (of, o..o + 1),
                 new: (nf, n..n + 1),
+                key: 0,
             }),
         }
     }
+    for r in &mut runs {
+        let text = |(f, at): &(usize, Range<usize>), side: usize| -> String {
+            let doc = if side == 0 { files[*f].0 } else { files[*f].1 };
+            doc.blocks[at.clone()].iter().map(|b| b.key.as_str()).collect()
+        };
+        let mut texts = [text(&r.old, 0), text(&r.new, 1)];
+        texts.sort();
+        r.key = fnv(texts.concat().as_bytes()) % 1_000_000_007;
+    }
     runs
+}
+
+fn fnv(bytes: &[u8]) -> u64 {
+    bytes
+        .iter()
+        .fold(0xcbf29ce484222325, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+}
+
+/// Put the steps that write the new blocks `new` next to each other, with
+/// the deletions that came between them first.
+pub fn gather(steps: &mut [Step], new: &Range<usize>) {
+    let at = |n: usize| steps.iter().position(|s| *s == Step::Ins(n));
+    if let (Some(a), Some(b)) = (at(new.start), at(new.end - 1)) {
+        steps[a..=b].sort_by_key(|s| !matches!(s, Step::Del(_)));
+    }
 }
 
 #[cfg(test)]
