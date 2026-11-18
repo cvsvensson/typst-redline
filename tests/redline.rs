@@ -84,6 +84,7 @@ fn generate(name: &str, preamble: &str, opts: Options) -> Run {
         opts,
         &History::default(),
         Moves::Find,
+        None,
     );
     // The new tree, the old-only files, the old tree if asked for, then the
     // overlay.
@@ -150,7 +151,22 @@ fn redline_of(old: &str, new: &str) -> Redline {
         FULL,
         &History::default(),
         Moves::Find,
+        None,
     )
+}
+
+#[test]
+fn equation_turned_into_a_display_equation_is_marked() {
+    let r = redline_of("Text $x = 1$ end.\n", "Text $ x = 1 $ end.\n");
+    let out = without_ids(&r.files[0].1);
+    assert!(out.contains("[$x = 1$]};#redline-ins(block: true)[$ x = 1 $]"), "{out}");
+}
+
+#[test]
+fn changed_spacing_in_raw_text_is_marked() {
+    let r = redline_of("See `a b` here.\n", "See `a  b` here.\n");
+    let out = without_ids(&r.files[0].1);
+    assert!(out.contains("#redline-ins()[`a  b`]"), "{out}");
 }
 
 #[test]
@@ -1031,7 +1047,9 @@ fn computed_include_path_is_reported() {
         read: &read,
     };
     assert_eq!(
-        redline(&v, &v, FULL, &History::default(), Moves::Find).warnings.len(),
+        redline(&v, &v, FULL, &History::default(), Moves::Find, None)
+            .warnings
+            .len(),
         1
     );
 }
@@ -1055,7 +1073,7 @@ fn changed_files_read_by_unchanged_calls_are_listed() {
         entry: "main.typ".into(),
         read,
     };
-    let r = redline(&v(&old), &v(&new), FULL, &History::default(), Moves::Find);
+    let r = redline(&v(&old), &v(&new), FULL, &History::default(), Moves::Find, None);
     assert_eq!(r.bib.files, ["data/d.json", "fig.svg"]);
 }
 
@@ -1118,6 +1136,34 @@ fn commit(dir: &Path, path: &str, word: &str) {
 fn assert_compared(src: &str, old: &str, new: &str) {
     assert!(src.contains(&format!("#redline-del(gap: true)[{old}")), "{src}");
     assert!(src.contains(&format!("#redline-ins()[{new}")), "{src}");
+}
+
+#[test]
+fn files_read_through_a_computed_path_are_marked_or_listed() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("computed-path");
+    let main = "#let chapter = \"intro\"\n#let data = json(chapter + \".json\")\n#include chapter + \".typ\"\n\nValue: #data.v\n";
+    for (side, word) in [("o", "old"), ("n", "new")] {
+        std::fs::create_dir(dir.join(side)).unwrap();
+        std::fs::write(dir.join(side).join("main.typ"), main).unwrap();
+        std::fs::write(dir.join(side).join("intro.typ"), format!("The {word} chapter.\n")).unwrap();
+        std::fs::write(dir.join(side).join("intro.json"), format!("{{\"v\": \"{word}\"}}")).unwrap();
+    }
+    let out = cli(&dir, &["o/main.typ", "n/main.typ", "--keep-typ"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    if stderr.contains("the included path is computed") {
+        eprintln!("typst before 0.14 does not tell which files it read, skipping");
+        return;
+    }
+    let kept = Path::new(stderr.lines().find_map(|l| l.strip_prefix("kept ")).unwrap()).to_path_buf();
+    let read = |p: &str| without_ids(&std::fs::read_to_string(kept.join(p)).unwrap());
+    let (intro, entry) = (read("intro.typ"), read("main.typ"));
+    std::fs::remove_dir_all(&kept).unwrap();
+    assert!(intro.contains("#redline-ins()[new]"), "{intro}");
+    assert!(entry.contains("files: (\"intro.json\",)"), "{entry}");
 }
 
 #[test]
@@ -1730,7 +1776,7 @@ fn redline_steps(old: &str, mid: &str, new: &str) -> Redline {
         steps: Some(vec![v(&mid)]),
         ..History::default()
     };
-    redline(&v(&old), &v(&new), FULL, &history, Moves::Find)
+    redline(&v(&old), &v(&new), FULL, &history, Moves::Find, None)
 }
 
 /// The step and the body of each mark in marked source.
@@ -1778,7 +1824,7 @@ fn move_is_marked_with_the_commit_that_made_it() {
         steps: Some(vec![v(&mid)]),
         ..History::default()
     };
-    let out = &without_ids(&redline(&v(&old), &v(&new), FULL, &history, Moves::Find).files[0].1);
+    let out = &without_ids(&redline(&v(&old), &v(&new), FULL, &history, Moves::Find, None).files[0].1);
     let moves: Vec<&str> = out.lines().filter(|l| l.contains("move: (")).collect();
     assert!(
         !moves.is_empty() && moves.iter().all(|l| l.contains("step: 1)")),

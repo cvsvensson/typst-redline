@@ -83,6 +83,9 @@ pub struct Redline {
     pub bib: Bib,
     pub warnings: Vec<String>,
     pub moves: Vec<Move>,
+    /// The files of the new version that the comparison marks, or lists if
+    /// they change.
+    pub checked: Vec<String>,
 }
 
 /// Top-level blocks moved together: the blocks `old.1` of the old file at
@@ -162,17 +165,32 @@ impl ChangeKind {
 
 /// The new version of the project with the changes against the old version
 /// marked in every file the entry includes or imports, and a summary page
-/// in the entry.
-pub fn redline(old: &Version, new: &Version, opts: Options, history: &History, moves: Moves) -> Redline {
+/// in the entry. `reads` are the files the new document read when it was
+/// compiled, if known: the changed ones are listed, or marked if they are
+/// Typst files that a computed path includes or imports.
+pub fn redline(
+    old: &Version,
+    new: &Version,
+    opts: Options,
+    history: &History,
+    moves: Moves,
+    reads: Option<&[String]>,
+) -> Redline {
     let mut warnings = vec![];
-    let old_files = project(old, &mut warnings);
-    let new_files = project(new, &mut warnings);
+    let modules = modules(new, reads);
+    let modules = reads.map(|_| modules.as_slice());
+    let old_files = project(old, &mut warnings, modules);
+    let new_files = project(new, &mut warnings, modules);
+    let reads = reads.unwrap_or_default();
     let mut bib = bibliography(old, &old_files, new, &new_files);
-    bib.files = changed_reads(old, &old_files, new, &new_files);
+    bib.files = changed_reads(old, &old_files, new, &new_files, reads);
+    let mut checked = literal_reads(&new_files);
+    checked.extend(new_files.iter().map(|(p, _)| p.clone()));
+    checked.extend(reads.iter().cloned());
     let steps = history
         .steps
         .as_ref()
-        .map(|vs| vs.iter().map(|v| project(v, &mut vec![])).collect());
+        .map(|vs| vs.iter().map(|v| project(v, &mut vec![], modules)).collect());
     let ctx = mark::Ctx::new(old_files, new_files, steps, history.swapped, opts, moves);
     let (files, changes) = mark::write(&ctx, &old.label, &new.label, &bib, history);
     Redline {
@@ -181,21 +199,54 @@ pub fn redline(old: &Version, new: &Version, opts: Options, history: &History, m
         bib,
         warnings,
         moves: ctx.moves(),
+        checked: checked.into_iter().collect(),
     }
 }
 
 /// The root-relative paths of the entry and the files it includes or
-/// imports by a literal path, directly or not.
-pub fn project_files(v: &Version) -> Vec<String> {
-    project(v, &mut vec![]).into_iter().map(|(p, _)| p).collect()
+/// imports, directly or not, as for [`redline`] with `reads`.
+pub fn project_files(v: &Version, reads: Option<&[String]>) -> Vec<String> {
+    let modules = modules(v, reads);
+    project(v, &mut vec![], reads.map(|_| modules.as_slice()))
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect()
 }
 
-/// The entry and the files it includes or imports by a literal path,
-/// directly or not, with their sources. A missing entry is empty.
-fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {
+/// The Typst files among `reads` that no call reads by a literal path: those
+/// a computed path may include or import.
+fn modules(new: &Version, reads: Option<&[String]>) -> Vec<String> {
+    let Some(reads) = reads.filter(|r| !r.is_empty()) else {
+        return vec![];
+    };
+    let literal = literal_reads(&project(new, &mut vec![], None));
+    reads
+        .iter()
+        .filter(|p| p.ends_with(".typ") && !literal.contains(*p))
+        .cloned()
+        .collect()
+}
+
+/// The entry and the files it includes or imports, directly or not, with
+/// their sources. A missing entry is empty. Files are found by a literal
+/// path, or, if a file includes or imports a computed path, among `modules`:
+/// the Typst files the document is known to read otherwise. If a `read` call
+/// takes a computed path, those may be read as text and are left out.
+/// Without `modules`, a computed include is warned about.
+fn project(v: &Version, warnings: &mut Vec<String>, modules: Option<&[String]>) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = vec![];
     let mut queue = vec![v.entry.clone()];
-    while let Some(path) = queue.pop() {
+    let (mut computed, mut computed_read) = (false, false);
+    loop {
+        let Some(path) = queue.pop() else {
+            match modules {
+                Some(m) if std::mem::take(&mut computed) && !computed_read => {
+                    queue.extend(m.iter().rev().filter(|p| files.iter().all(|(q, _)| q != *p)).cloned());
+                    continue;
+                }
+                _ => break,
+            }
+        };
         if files.iter().any(|(p, _)| *p == path) {
             continue;
         }
@@ -208,6 +259,12 @@ fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {
         };
         let mut deps = vec![];
         walk(&parse(&src), &mut |n| {
+            if let Some(call) = n.cast::<ast::FuncCall>()
+                && let ast::Expr::Ident(f) = call.callee()
+                && f.as_str() == "read"
+            {
+                computed_read |= !matches!(call.args().items().next(), Some(ast::Arg::Pos(ast::Expr::Str(_))));
+            }
             let (source, include) = if let Some(i) = n.cast::<ast::ModuleInclude>() {
                 (i.source(), true)
             } else if let Some(i) = n.cast::<ast::ModuleImport>() {
@@ -224,10 +281,11 @@ fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {
                     }
                     None => Some(format!("{path}: {} is outside the root", s.get())),
                 },
-                _ if include => Some(format!(
-                    "{path}: the included path is computed, so changes inside it are not marked"
-                )),
-                _ => None,
+                _ => {
+                    computed = true;
+                    (include && modules.is_none())
+                        .then(|| format!("{path}: the included path is computed, so changes inside it are not marked"))
+                }
             };
             if let Some(w) = warn.filter(|w| !warnings.contains(w)) {
                 warnings.push(w);
@@ -243,7 +301,7 @@ fn project(v: &Version, warnings: &mut Vec<String>) -> Vec<(String, String)> {
 /// What changed in the files the document reads, which the output cannot
 /// mark: keys cited only in the new or only in the old version, keys cited
 /// in the new version whose bibliography entry differs, and other files that
-/// both versions read by the same literal path but that differ.
+/// the document reads and that differ.
 #[derive(Default)]
 pub struct Bib {
     pub added: Vec<String>,
@@ -332,30 +390,35 @@ fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, ne
 }
 
 /// The paths that calls such as `image("fig.png")` or `json("data.json")`
-/// read in both versions, whose files differ. A call that only one version
-/// makes is a change of the text and marked there.
+/// read.
+fn literal_reads(files: &[(String, String)]) -> BTreeSet<String> {
+    const READERS: [&str; 9] = ["image", "read", "json", "csv", "yaml", "toml", "xml", "cbor", "plugin"];
+    let mut paths = BTreeSet::new();
+    for (path, src) in files {
+        walk(&parse(src), &mut |n| {
+            if let Some(call) = n.cast::<ast::FuncCall>()
+                && let ast::Expr::Ident(f) = call.callee()
+                && READERS.contains(&f.as_str())
+                && let Some(ast::Arg::Pos(ast::Expr::Str(s))) = call.args().items().next()
+            {
+                paths.extend(resolve(path, &s.get()));
+            }
+        });
+    }
+    paths
+}
+
+/// The files that differ between the versions, among those that both
+/// versions read by a literal path and `reads`, leaving out the marked files.
+/// A call that only one version makes is a change of the text and marked
+/// there.
 fn changed_reads(
     old: &Version,
     old_files: &[(String, String)],
     new: &Version,
     new_files: &[(String, String)],
+    reads: &[String],
 ) -> Vec<String> {
-    const READERS: [&str; 9] = ["image", "read", "json", "csv", "yaml", "toml", "xml", "cbor", "plugin"];
-    let reads = |files: &[(String, String)]| {
-        let mut paths = BTreeSet::new();
-        for (path, src) in files {
-            walk(&parse(src), &mut |n| {
-                if let Some(call) = n.cast::<ast::FuncCall>()
-                    && let ast::Expr::Ident(f) = call.callee()
-                    && READERS.contains(&f.as_str())
-                    && let Some(ast::Arg::Pos(ast::Expr::Str(s))) = call.args().items().next()
-                {
-                    paths.extend(resolve(path, &s.get()));
-                }
-            });
-        }
-        paths
-    };
     // Git can check out text with other line endings than it stores.
     let content = |v: &Version, p: &str| {
         (v.read)(p).map(|b| match String::from_utf8(b) {
@@ -363,10 +426,11 @@ fn changed_reads(
             Err(e) => e.into_bytes(),
         })
     };
-    reads(old_files)
-        .intersection(&reads(new_files))
-        .filter(|p| matches!((content(old, p), content(new, p)), (Some(a), Some(b)) if a != b))
-        .cloned()
+    let mut paths = &literal_reads(old_files) & &literal_reads(new_files);
+    paths.extend(reads.iter().cloned());
+    paths
+        .into_iter()
+        .filter(|p| new_files.iter().all(|(q, _)| q != p) && content(old, p) != content(new, p))
         .collect()
 }
 

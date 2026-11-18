@@ -1,7 +1,7 @@
 mod tree;
 
 use std::collections::HashSet;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Output};
 
@@ -411,7 +411,9 @@ fn mark_reviewed(a: &Args) -> Result<String, String> {
     let Tree::Git { repo, prefix, .. } = &spec.tree else {
         unreachable!()
     };
-    let files = project_files(&version).into_iter().map(|f| format!("{prefix}{f}"));
+    let files = project_files(&version, None)
+        .into_iter()
+        .map(|f| format!("{prefix}{f}"));
     let status = ["status", "--porcelain", "--untracked-files=no", "--"];
     if !output(git(repo).args(status).arg(&name).args(files))?.is_empty() {
         eprintln!("note: the document has uncommitted changes, which the mark does not cover");
@@ -494,8 +496,14 @@ fn fallback_note(fallbacks: &[&str]) -> String {
     }
 }
 
-/// Make the PDF; `reviewed` is the commit `--since reviewed` stands for.
-fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
+/// Make the PDF; `reviewed` is the commit `--since reviewed` stands for, and
+/// `reads` the files the new document is known to read. Typst 0.14 and later
+/// tell which files a compile read; if the proof read a file that the
+/// comparison did not check, it is made again with those files.
+fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<PathBuf, String> {
+    let version = typst_version(&a.typst);
+    let deps = version.as_deref().is_some_and(|v| minor(v) >= (0, 14));
+    let reads = reads.or_else(|| deps.then(Vec::new));
     let preamble = match &a.preamble {
         Some(p) => {
             let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -518,7 +526,7 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         None => PREAMBLE.to_string(),
     };
     if a.side_by_side
-        && let Some(v) = typst_version(&a.typst)
+        && let Some(v) = version
         && minor(&v) < (0, 14)
     {
         return Err(format!(
@@ -544,7 +552,11 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         read,
     };
     let (old_v, new_v) = (version(&old, &read_old), version(&new, &read_new));
-    let files = [project_files(&old_v), project_files(&new_v)].concat();
+    let files = [
+        project_files(&old_v, reads.as_deref()),
+        project_files(&new_v, reads.as_deref()),
+    ]
+    .concat();
     let log = log(&old, &new, &files)?;
     let plan = match (&a.steps, &log) {
         (None, _) => Plan::default(),
@@ -595,10 +607,14 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
     };
 
     let moves = if a.no_moves { Moves::Off } else { Moves::Find };
-    let mut result = redline(&old_v, &new_v, fallback_options(LADDER[0]), &history, moves);
-    for w in &result.warnings {
-        eprintln!("warning: {w}");
-    }
+    let mut result = redline(
+        &old_v,
+        &new_v,
+        fallback_options(LADDER[0]),
+        &history,
+        moves,
+        reads.as_deref(),
+    );
     if let Some(p) = &a.preamble
         && !result.moves.is_empty()
         && !preamble_takes_moves(&preamble)
@@ -608,7 +624,7 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
             p.display()
         ));
     }
-    let staging = Staging::new(a.keep);
+    let mut staging = Staging::new(a.keep);
     let dir = &staging.dir;
     stage(dir, &old, &new, &result)?;
     write(dir, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
@@ -635,23 +651,25 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         }
         let opts = fallback_options(fallbacks);
         if i > 0 {
-            result = redline(&old_v, &new_v, opts, &history, moves);
+            result = redline(&old_v, &new_v, opts, &history, moves, reads.as_deref());
         }
         a.typst_args = typst_args.clone();
         a.typst_args
             .extend(["--input".into(), format!("redline-fallback={}", fallbacks.join(","))]);
         let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
             let input = format!("redline-side={side}");
-            typst(
-                &a,
-                root,
-                "compile",
-                &[&"--input", &input, &root.join(entry), &dir.join(pdf)],
-            )
+            let (entry, pdf) = (root.join(entry), dir.join(pdf));
+            let mut args: Vec<&dyn AsRef<OsStr>> = vec![&"--input", &input, &entry, &pdf];
+            let deps_args = deps_args(deps, root);
+            args.extend(deps_args.iter().map(|d| d as &dyn AsRef<OsStr>));
+            typst(&a, root, "compile", &args)
         };
         write(dir, &result.files)?;
         let out = if !a.side_by_side {
-            typst(&a, dir, "compile", &[&dir.join(&new.entry), &tmp])?
+            let (entry, deps_args) = (dir.join(&new.entry), deps_args(deps, dir));
+            let mut args: Vec<&dyn AsRef<OsStr>> = vec![&entry, &tmp];
+            args.extend(deps_args.iter().map(|d| d as &dyn AsRef<OsStr>));
+            typst(&a, dir, "compile", &args)?
         } else {
             let back_history = History {
                 steps: history.steps.clone(),
@@ -665,6 +683,7 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
                 opts,
                 &back_history,
                 Moves::Reverse(&result.moves),
+                reads.as_deref(),
             ));
             if i == 0 {
                 stage(&old_root, &new, &old, back)?;
@@ -680,6 +699,18 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         };
         stderr = String::from_utf8_lossy(&out.stderr).to_string();
         if out.status.success() {
+            if reads.is_some()
+                && let Some(read) = read_deps(dir)
+                && read.iter().any(|p| !result.checked.contains(p))
+            {
+                staging.keep = false;
+                drop(staging);
+                a.typst_args = typst_args;
+                return run(a, reviewed, Some(read));
+            }
+            for w in &result.warnings {
+                eprintln!("warning: {w}");
+            }
             eprint!("{stderr}");
             if !fallbacks.is_empty() {
                 let note = fallback_note(fallbacks);
@@ -724,6 +755,9 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
                 .unwrap_or_default()
                 .into();
         }
+    }
+    for w in &result.warnings {
+        eprintln!("warning: {w}");
     }
     eprint!("{stderr}");
     if let Some(hint) = version_hint(&a.typst) {
@@ -1204,6 +1238,39 @@ const NEW_PDF: &str = ".redline-new.pdf";
 const OLD_PDF: &str = ".redline-old.pdf";
 const COMPOSITE: &str = ".redline-side-by-side.typ";
 const OLD_SIDE: &str = ".redline-old-side";
+const DEPS: &str = ".redline-deps";
+
+/// The arguments that make typst write the files a compile in `root` reads
+/// to [`DEPS`], if it can.
+fn deps_args(deps: bool, root: &Path) -> Vec<OsString> {
+    match deps {
+        true => vec![
+            "--deps".into(),
+            root.join(DEPS).into(),
+            "--deps-format".into(),
+            "zero".into(),
+        ],
+        false => vec![],
+    }
+}
+
+/// The files of the project in `dir` that the last compile there read, other
+/// than the files of the tool.
+fn read_deps(dir: &Path) -> Option<Vec<String>> {
+    let list = std::fs::read(dir.join(DEPS)).ok()?;
+    let root = std::fs::canonicalize(dir).ok()?;
+    let relative = |p: &[u8]| {
+        let path = Path::new(std::str::from_utf8(p).ok()?);
+        let parts: Option<Vec<&str>> = path
+            .strip_prefix(&root)
+            .ok()?
+            .components()
+            .map(|c| c.as_os_str().to_str())
+            .collect();
+        Some(parts?.join("/")).filter(|p| !p.starts_with(".redline"))
+    };
+    Some(list.split(|&b| b == 0).filter_map(relative).collect())
+}
 
 /// Run `typst <cmd>` on the project in `dir` with the user's arguments for
 /// typst, then `args`.
@@ -1392,7 +1459,7 @@ fn main() -> ExitCode {
     } else {
         let file = args.files[0].clone();
         since_reviewed(&args).and_then(|reviewed| {
-            let pdf = run(*args, reviewed.as_deref())?;
+            let pdf = run(*args, reviewed.as_deref(), None)?;
             if reviewed.is_some() {
                 eprintln!("hint: to mark the last commit as reviewed, run: typst-redline {file} --mark-reviewed");
             }

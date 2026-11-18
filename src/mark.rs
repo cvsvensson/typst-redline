@@ -6,7 +6,7 @@ use std::hash::Hash;
 use std::ops::Range;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
-use typst_syntax::{RootedPath, Source, SyntaxKind as K, SyntaxNode, VirtualPath, VirtualRoot, parse};
+use typst_syntax::{RootedPath, Source, SyntaxKind as K, SyntaxNode, VirtualPath, VirtualRoot, ast, parse};
 
 use crate::align::{Step, align};
 use crate::blame::{Steps, blame};
@@ -1466,7 +1466,8 @@ impl<'a> Writer<'a> {
     /// `before` is the code before `n`: the code called if `n` is its
     /// arguments.
     fn diff_code_node(&mut self, o: &SyntaxNode, n: &SyntaxNode, list: bool, before: &str) -> bool {
-        if o.kind() != n.kind() {
+        let block = |m: &SyntaxNode| m.cast::<ast::Equation>().map(|e| e.block());
+        if o.kind() != n.kind() || block(o) != block(n) {
             return false;
         }
         let children = |m: &SyntaxNode| m.children().cloned().collect::<Vec<_>>();
