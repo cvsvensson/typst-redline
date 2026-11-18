@@ -454,6 +454,10 @@
   let st = redline-style
   let pg = here().page()
   [#metadata(from)<redline-page>]
+  let m = page.margin
+  if type(m) == dictionary and ("inside" in m or "outside" in m) or page.binding != auto {
+    [#metadata(pg)<redline-two-sided>]
+  }
   if pg == 1 {
     // For the summary and the binary: the pages with changes but without
     // bars. For the side-by-side layout also the number of pages, each
@@ -473,7 +477,6 @@
   let n = calc.quo(tags.len(), 2)
   if n == 0 and query(<redline-move>).len() == 0 { return }
   let (w, h) = (page.width, page.height)
-  let m = page.margin
   let even = calc.even(pg)
   let absolute(v, full) = if type(v) == length { v.to-absolute() } else if type(v) == ratio { v * full } else {
     v.length.to-absolute() + v.ratio * full
@@ -741,65 +744,67 @@
 
 #let redline-summary(info) = if redline-side == none {
   let st = redline-style
-  // One block, so that slide packages keep the summary together.
-  block({
-    block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
-    let bib = redline-bib(info.at("bib", default: (added: (), removed: (), changed: ())))
-    let steps = info.at("history", default: (steps: false)).steps
-    if info.entries.len() == 0 and bib == none { [No changes.] } else if steps {
-      let st = st + redline-colours(luma(70))
-      let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
-      block(below: 1.5em)[#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the #if "groups" in info.history [step] else [commit] that made the change. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend(st)] Numbers count changed passages.]
-    } else {
-      let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
-      block(below: 1.5em)[#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend(st)] Numbers count changed passages.]
-    }
-    redline-commits(info.at("history", default: none), info.old, info.new)
-    if bib != none { block(below: 1.5em, bib) }
-    context {
-      let unbarred = query(<redline-unbarred>).map(m => m.value).flatten()
-      if unbarred.len() > 0 {
-        block(text(fill: st.del)[Changes on these pages of this PDF have no bars in the margin, because the document sets its own page foreground and background there: #unbarred.map(str).join(", ").])
-      }
-    }
-    let min-level = calc.min(..info.entries.map(e => e.level), 9)
-    for e in info.entries {
-      let note = if e.code.len() > 0 [; changed code not marked]
-      let moves = e.at("moves", default: 0)
-      let what(..label) = (..label.pos(), if e.count > 0 [#e.count], if moves > 0 [#moves moved]).filter(x => x != none).join[, ]
-      let line = if e.deleted {
-        text(fill: st.del)[#strike(e.title) (deleted section#note)]
-      } else if e.target == none {
-        [#e.title (#what()#note)]
+  // Pages of its own, without the document's header, footer and numbers.
+  page(header: none, footer: none, numbering: none, {
+    block({
+      block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
+      let bib = redline-bib(info.at("bib", default: (added: (), removed: (), changed: ())))
+      let steps = info.at("history", default: (steps: false)).steps
+      if info.entries.len() == 0 and bib == none { [No changes.] } else if steps {
+        let st = st + redline-colours(luma(70))
+        let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
+        block(below: 1.5em)[#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the #if "groups" in info.history [step] else [commit] that made the change. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend(st)] Numbers count changed passages.]
       } else {
-        let num = context {
-          let el = query(e.target)
-          if el.len() > 0 and el.first().func() == heading and el.first().numbering != none {
-            numbering(el.first().numbering, ..counter(heading).at(e.target)) + h(0.5em)
-          }
-        }
-        // The number printed on the page, or the page of this PDF.
-        let pg = context {
-          let loc = query(e.target).first().location()
-          if loc.page-numbering() == none { loc.page() } else { counter(page).at(loc).first() }
-        }
-        let new = if e.new { ([new section],) } else if e.at("moved", default: false) { ([moved section],) } else { () }
-        [#link(e.target, underline[#num#e.title]) (#what(..new)#note)#box(width: 1fr, repeat[#h(0.4em).])#h(0.4em)#link(e.target, pg)]
+        let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
+        block(below: 1.5em)[#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend(st)] Numbers count changed passages.]
       }
-      block(above: 0.5em, below: 0.5em, pad(left: (e.level - min-level) * 1.5em, {
-        line
-        if e.code.len() > 0 { pad(left: 1.5em, text(size: 0.85em, e.code.map(redline-code).join(linebreak()))) }
-      }))
-    }
+      redline-commits(info.at("history", default: none), info.old, info.new)
+      if bib != none { block(below: 1.5em, bib) }
+      context {
+        let unbarred = query(<redline-unbarred>).map(m => m.value).flatten()
+        if unbarred.len() > 0 {
+          block(text(fill: st.del)[Changes on these pages of this PDF have no bars in the margin, because the document sets its own page foreground and background there: #unbarred.map(str).join(", ").])
+        }
+      }
+      let min-level = calc.min(..info.entries.map(e => e.level), 9)
+      for e in info.entries {
+        let note = if e.code.len() > 0 [; changed code not marked]
+        let moves = e.at("moves", default: 0)
+        let what(..label) = (..label.pos(), if e.count > 0 [#e.count], if moves > 0 [#moves moved]).filter(x => x != none).join[, ]
+        let line = if e.deleted {
+          text(fill: st.del)[#strike(e.title) (deleted section#note)]
+        } else if e.target == none {
+          [#e.title (#what()#note)]
+        } else {
+          let num = context {
+            let el = query(e.target)
+            if el.len() > 0 and el.first().func() == heading and el.first().numbering != none {
+              numbering(el.first().numbering, ..counter(heading).at(e.target)) + h(0.5em)
+            }
+          }
+          // The number printed on the page, or the page of this PDF.
+          let pg = context {
+            let loc = query(e.target).first().location()
+            if loc.page-numbering() == none { loc.page() } else { counter(page).at(loc).first() }
+          }
+          let new = if e.new { ([new section],) } else if e.at("moved", default: false) { ([moved section],) } else { () }
+          [#link(e.target, underline[#num#e.title]) (#what(..new)#note)#box(width: 1fr, repeat[#h(0.4em).])#h(0.4em)#link(e.target, pg)]
+        }
+        block(above: 0.5em, below: 0.5em, pad(left: (e.level - min-level) * 1.5em, {
+          line
+          if e.code.len() > 0 { pad(left: 1.5em, text(size: 0.85em, e.code.map(redline-code).join(linebreak()))) }
+        }))
+      }
+    })
+    // The page counter is reset on the page before the document, where a
+    // header on its first page sees it.
+    [#metadata(none)<redline-summary-end>]
+    counter(page).update(0)
   })
-  // The document starts on an odd page, so that two-sided layouts keep
-  // their parity, and its page counter is reset on the page before, where
-  // a header on its first page sees it. `pagebreak(to: "odd")` would leave
-  // no page before to reset it on.
-  [#metadata(none)<redline-summary-end>]
-  context if calc.odd(query(<redline-summary-end>).first().location().page()) { pagebreak() }
-  counter(page).update(0)
-  pagebreak()
+  // A two-sided document starts on an odd page, so that it keeps its parity.
+  context if query(<redline-two-sided>).len() > 0 and calc.odd(query(<redline-summary-end>).first().location().page()) {
+    page(header: none, footer: none, numbering: none, counter(page).update(0))
+  }
 }
 
 // The side-by-side layout. `info` is (old, new: (label, pdf: the version
