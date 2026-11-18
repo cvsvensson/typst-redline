@@ -9,6 +9,7 @@ mod side;
 mod syntax;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ops::Range;
 
 use typst_syntax::{SyntaxKind, SyntaxNode, ast, parse};
 
@@ -81,6 +82,28 @@ pub struct Redline {
     pub changes: Vec<Change>,
     pub bib: Bib,
     pub warnings: Vec<String>,
+    pub moves: Vec<Move>,
+}
+
+/// Top-level blocks moved together: the blocks `old.1` of the old file at
+/// path `old.0` became the blocks `new.1` of the new file `new.0`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Move {
+    pub old: (String, Range<usize>),
+    pub new: (String, Range<usize>),
+    /// The same for the move in both directions.
+    pub key: u64,
+}
+
+/// The moves a comparison marks.
+#[derive(Clone, Copy)]
+pub enum Moves<'a> {
+    /// None: moved text is deleted at one place and inserted at the other.
+    Off,
+    Find,
+    /// The moves of the comparison in the other direction, so that both
+    /// show the same moves.
+    Reverse(&'a [Move]),
 }
 
 #[derive(Clone, Debug)]
@@ -99,7 +122,8 @@ pub enum ChangeKind {
     Del,
     /// A change the output does not show.
     Unmarked,
-    /// Moved text, recorded at its old and at its new place.
+    /// Moved text, recorded at its old and at its new place, with the
+    /// number of the move as its text.
     Moved,
 }
 
@@ -117,7 +141,7 @@ impl ChangeKind {
 /// The new version of the project with the changes against the old version
 /// marked in every file the entry includes or imports, and a summary page
 /// in the entry.
-pub fn redline(old: &Version, new: &Version, opts: Options, history: &History) -> Redline {
+pub fn redline(old: &Version, new: &Version, opts: Options, history: &History, moves: Moves) -> Redline {
     let mut warnings = vec![];
     let old_files = project(old, &mut warnings);
     let new_files = project(new, &mut warnings);
@@ -127,13 +151,14 @@ pub fn redline(old: &Version, new: &Version, opts: Options, history: &History) -
         .steps
         .as_ref()
         .map(|vs| vs.iter().map(|v| project(v, &mut vec![])).collect());
-    let ctx = mark::Ctx::new(old_files, new_files, steps, history.swapped, opts);
+    let ctx = mark::Ctx::new(old_files, new_files, steps, history.swapped, opts, moves);
     let (files, changes) = mark::write(&ctx, &old.label, &new.label, &bib, history);
     Redline {
         files,
         changes,
         bib,
         warnings,
+        moves: ctx.moves(),
     }
 }
 
@@ -464,4 +489,27 @@ impl History<'_> {
             self.steps.is_some()
         ))
     }
+}
+
+/// Whether the `redline-ins` and `redline-del` of a preamble take the
+/// `move` argument that moved text needs, by name or in an argument sink.
+pub fn preamble_takes_moves(src: &str) -> bool {
+    let mut takes = HashSet::new();
+    walk(&parse(src), &mut |n| {
+        let Some(binding) = n.cast::<ast::LetBinding>() else {
+            return;
+        };
+        let (ast::LetBindingKind::Closure(name), Some(ast::Expr::Closure(f))) = (binding.kind(), binding.init()) else {
+            return;
+        };
+        let moves = f.params().children().any(|p| match p {
+            ast::Param::Named(a) => a.name().as_str() == "move",
+            ast::Param::Spread(_) => true,
+            ast::Param::Pos(_) => false,
+        });
+        if moves {
+            takes.insert(name.as_str().to_string());
+        }
+    });
+    ["redline-ins", "redline-del"].iter().all(|f| takes.contains(*f))
 }

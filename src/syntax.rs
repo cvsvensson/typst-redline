@@ -15,6 +15,7 @@ pub enum Kind {
     Para,
 }
 
+#[derive(Clone)]
 pub struct Block {
     pub kind: Kind,
     /// Whitespace between the previous block and this one.
@@ -96,6 +97,7 @@ impl Block {
     }
 }
 
+#[derive(Clone)]
 pub struct Doc {
     pub blocks: Vec<Block>,
     pub trailing: String,
@@ -275,6 +277,11 @@ pub fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
                 while toks.last().is_some_and(|t| t.kind == TK::Space) {
                     spaces.push(toks.pop().unwrap());
                 }
+                let line_start = toks
+                    .iter()
+                    .nth_back(1)
+                    .is_none_or(|t| t.kind == TK::Space && t.text.contains('\n'));
+                let line_end = nodes.get(i + 1).is_none_or(|c| c.full_text().starts_with('\n'));
                 let atom = toks.last_mut().unwrap();
                 for s in spaces.into_iter().rev() {
                     atom.text.push_str(&s.text);
@@ -283,6 +290,8 @@ pub fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
                 atom.text.push_str(&n.full_text());
                 atom.nodes.push(n.clone());
                 atom.key = skeleton(&atom.nodes);
+                // Code alone on its line but for its label.
+                atom.block |= atom.nodes[0].kind() == K::Hash && line_start && line_end;
             }
             // Typst lays out citations separated by spaces as one group, in
             // the style of the first, so they are compared as one token.

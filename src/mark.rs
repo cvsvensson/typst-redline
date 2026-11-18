@@ -12,7 +12,7 @@ use crate::align::{Step, align};
 use crate::blame::{Steps, blame};
 use crate::moves::{self, Run};
 use crate::syntax::*;
-use crate::{Bib, Change, ChangeKind, History, OLD_DIR, Options, PREAMBLE_PATH, pair_files, resolve};
+use crate::{Bib, Change, ChangeKind, History, Move, Moves, OLD_DIR, Options, PREAMBLE_PATH, pair_files, resolve};
 
 /// Text that closes what comes before it.
 const CLOSING: [char; 13] = [
@@ -41,6 +41,10 @@ pub struct Ctx {
     aligned: Vec<(String, Aligned)>,
     /// Blocks moved, by index into `aligned`.
     moves: Vec<Run>,
+    /// The move each moved old and new block belongs to, by (index into
+    /// `aligned`, block).
+    moved_from: HashMap<(usize, usize), usize>,
+    moved_to: HashMap<(usize, usize), usize>,
 }
 
 /// A new file and the old file it is compared with, as blocks, and the
@@ -63,6 +67,7 @@ impl Ctx {
         steps: Option<Vec<Vec<(String, String)>>>,
         swapped: bool,
         opts: Options,
+        moves: Moves,
     ) -> Self {
         let union = |files: &[(String, String)], f: fn(&SyntaxNode) -> HashSet<String>| {
             files.iter().flat_map(|(_, s)| f(&parse(s))).collect::<HashSet<_>>()
@@ -96,7 +101,27 @@ impl Ctx {
                 let (os, ns) = (parsed("old", old_src), parsed("new", new_src));
                 let children = |s: &Source| s.root().children().cloned().collect::<Vec<_>>();
                 let docs = (Doc::new(&children(&os)), Doc::new(&children(&ns)));
-                let steps = align(&docs.0, &docs.1);
+                let steps = match moves {
+                    // The comparison back keeps what the forward one kept:
+                    // moved blocks are not matched in place.
+                    Moves::Reverse(given) => {
+                        let apart =
+                            |doc: &Doc, path: &str, ranges: &dyn Fn(&Move) -> &(String, Range<usize>), mark: &str| {
+                                let mut doc = doc.clone();
+                                for (p, r) in given.iter().map(ranges) {
+                                    if p == path {
+                                        r.clone().for_each(|b| doc.blocks[b].key.push_str(mark));
+                                    }
+                                }
+                                doc
+                            };
+                        align(
+                            &apart(&docs.0, &old_path, &|m| &m.new, "\0from"),
+                            &apart(&docs.1, path, &|m| &m.old, "\0to"),
+                        )
+                    }
+                    _ => align(&docs.0, &docs.1),
+                };
                 let blame = history.as_ref().map(|versions| {
                     let (first, last) = if swapped {
                         (new_src.as_str(), old_src)
@@ -124,14 +149,51 @@ impl Ctx {
                 Some((path.clone(), a))
             })
             .collect();
-        let moves = moves::find(
-            &aligned
+        let moves: Vec<Run> = match moves {
+            Moves::Off => vec![],
+            Moves::Find => {
+                // Text in a file that is not read in order may not be shown.
+                let (old_shown, new_shown) = (read_in_order(&old_files), read_in_order(&new_files));
+                let shown: Vec<Vec<Step>> = aligned
+                    .iter()
+                    .map(|(path, a)| {
+                        let shown = |s: &&Step| match s {
+                            Step::Del(_) => old_shown.contains(&a.old_path),
+                            Step::Ins(_) => new_shown.contains(path),
+                            _ => true,
+                        };
+                        a.steps.iter().filter(shown).copied().collect()
+                    })
+                    .collect();
+                moves::find(
+                    &aligned
+                        .iter()
+                        .zip(&shown)
+                        .map(|((_, a), s)| (&a.docs.0, &a.docs.1, &s[..]))
+                        .collect::<Vec<_>>(),
+                )
+            }
+            Moves::Reverse(given) => given
                 .iter()
-                .map(|(_, a)| (&a.docs.0, &a.docs.1, &a.steps[..]))
-                .collect::<Vec<_>>(),
-        );
-        for r in &moves {
+                .filter_map(|m| {
+                    let old = aligned.iter().position(|(_, a)| a.old_path == m.new.0)?;
+                    let new = aligned.iter().position(|(p, _)| *p == m.old.0)?;
+                    let all = |f: usize, blocks: &Range<usize>, step: fn(usize) -> Step| {
+                        blocks.clone().all(|b| aligned[f].1.steps.contains(&step(b)))
+                    };
+                    (all(old, &m.new.1, Step::Del) && all(new, &m.old.1, Step::Ins)).then(|| Run {
+                        old: (old, m.new.1.clone()),
+                        new: (new, m.old.1.clone()),
+                        key: m.key,
+                    })
+                })
+                .collect(),
+        };
+        let (mut moved_from, mut moved_to) = (HashMap::new(), HashMap::new());
+        for (i, r) in moves.iter().enumerate() {
             moves::gather(&mut aligned[r.new.0].1.steps, &r.new.1);
+            moved_from.extend(r.old.1.clone().map(|b| ((r.old.0, b), i)));
+            moved_to.extend(r.new.1.clone().map(|b| ((r.new.0, b), i)));
         }
         Ctx {
             prefix,
@@ -147,7 +209,21 @@ impl Ctx {
             steps,
             aligned,
             moves,
+            moved_from,
+            moved_to,
         }
+    }
+
+    /// The moves, by file path.
+    pub fn moves(&self) -> Vec<Move> {
+        self.moves
+            .iter()
+            .map(|r| Move {
+                old: (self.aligned[r.old.0].1.old_path.clone(), r.old.1.clone()),
+                new: (self.aligned[r.new.0].0.clone(), r.new.1.clone()),
+                key: r.key,
+            })
+            .collect()
     }
 
     /// The step from the last version before the new one to the new one.
@@ -188,6 +264,23 @@ impl Ctx {
 
 fn source<'a>(files: &'a [(String, String)], path: &str) -> Option<&'a str> {
     files.iter().find(|(p, _)| p == path).map(|(_, s)| s.as_str())
+}
+
+/// The entry and, recursively, the files that the top-level `#include`
+/// blocks of these files name: the files whose text is shown in order.
+fn read_in_order(files: &[(String, String)]) -> HashSet<String> {
+    let mut seen = HashSet::new();
+    let mut queue = vec![files[0].0.clone()];
+    while let Some(path) = queue.pop() {
+        let Some(src) = source(files, &path) else { continue };
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let doc = Doc::new(&parse(src).children().cloned().collect::<Vec<_>>());
+        let included = doc.blocks.iter().filter_map(|b| resolve(&path, &b.include_target()?));
+        queue.extend(included.collect::<Vec<_>>());
+    }
+    seen
 }
 
 /// The marked files and the changes: every file the entry includes or
@@ -267,6 +360,10 @@ struct Writer<'a> {
     changes: Vec<Change>,
     /// Deleted content imports the old version.
     old_scope: bool,
+    /// The last new block written is an item.
+    after_item: bool,
+    /// The moves whose new place is written.
+    arrived: HashSet<usize>,
 }
 
 /// A run of tokens that is the same in both versions or changed.
@@ -326,6 +423,8 @@ impl<'a> Writer<'a> {
             current: None,
             changes: vec![],
             old_scope: false,
+            after_item: false,
+            arrived: HashSet::new(),
         }
     }
 
@@ -559,10 +658,20 @@ impl<'a> Writer<'a> {
                     .iter()
                     .any(|p| c.section == p.target && (p.target.is_some() || c.file == p.file))
             };
-            let n = count(&here);
-            if n == 0 && !s.deleted {
+            // A move is counted apart from edits, once in each section it
+            // left or reached; a moved section's own move is its label.
+            let n = count(&|c| here(c) && c.kind != ChangeKind::Moved);
+            let moves = self
+                .changes
+                .iter()
+                .filter(|c| here(c) && c.kind == ChangeKind::Moved)
+                .map(|c| &c.text)
+                .collect::<HashSet<_>>()
+                .len();
+            if n == 0 && moves == 0 && !s.deleted {
                 continue;
             }
+            let moves = moves - usize::from(s.moved && moves > 0);
             let code: String = self
                 .changes
                 .iter()
@@ -573,14 +682,19 @@ impl<'a> Writer<'a> {
                 Some(l) if !s.deleted => format!("<{l}>"),
                 _ => "none".into(),
             };
+            // Moves are listed only where there are some.
+            let moved = match (moves, s.moved) {
+                (0, false) => String::new(),
+                (_, false) => format!("moves: {moves}, "),
+                _ => format!("moves: {moves}, moved: true, "),
+            };
             entries.push_str(&format!(
-                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, deleted: {}, new: {}, moved: {}, code: ({code})),\n",
+                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, {moved}deleted: {}, new: {}, code: ({code})),\n",
                 typst_str(&s.file),
                 s.level,
                 s.title,
                 s.deleted,
                 s.new,
-                s.moved,
             ));
         }
         let p = &self.ctx.prefix;
@@ -588,11 +702,15 @@ impl<'a> Writer<'a> {
             .to_typst(old_label, new_label)
             .map_or(String::new(), |h| format!("  history: {h},\n"));
         format!(
-            "#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n  bib: {},\n{history}))\n",
+            "#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},{}\n  entries: (\n{entries}  ),\n  bib: {},\n{history}))\n",
             typst_str(old_label),
             typst_str(new_label),
             count(&|c| c.kind == ChangeKind::Ins),
             count(&|c| c.kind == ChangeKind::Del),
+            match self.ctx.moves.len() {
+                0 => String::new(),
+                n => format!(" moved: {n},"),
+            },
             bib.to_typst(),
         )
     }
@@ -621,6 +739,7 @@ impl<'a> Writer<'a> {
             self.out.push('\n');
         }
         self.out.push_str(&b.gap);
+        self.after_item = b.kind == Kind::Item;
         if config
             && b.nodes[1].kind() == K::ShowRule
             && self.top
@@ -674,10 +793,11 @@ impl<'a> Writer<'a> {
     /// that moved are written as moves.
     fn write_steps(&mut self, old: &Doc, new: &Doc, steps: &[Step], top: bool) {
         let ctx = self.ctx;
-        let f = self.file.index;
+        let file = self.file.index;
+        let moved = |map: &'a HashMap<(usize, usize), usize>, b: usize| map.get(&(file, b)).filter(|_| top);
         // Only a deleted section's own blocks count with it.
         let mut outer = None;
-        for &s in steps {
+        for (k, &s) in steps.iter().enumerate() {
             match s {
                 Step::Del(o) if old.blocks[o].kind == Kind::Heading => {
                     outer.get_or_insert_with(|| self.current.clone());
@@ -690,31 +810,43 @@ impl<'a> Writer<'a> {
                 }
             }
             match s {
-                Step::Keep(n) => self.kept(&new.blocks[n]),
-                Step::Pair(o, n) => self.pair(&old.blocks[o], &new.blocks[n]),
-                Step::Del(o) => match ctx
-                    .moves
-                    .iter()
-                    .position(|r| top && r.old.0 == f && r.old.1.contains(&o))
-                {
-                    Some(r) if ctx.moves[r].old.1.start == o => self.moved_from(r),
+                Step::Del(o) => {
+                    // A list that ends here in the new version ends before
+                    // a deleted block that is not an item.
+                    let next = steps[k + 1..].iter().find_map(|s| match *s {
+                        Step::Keep(n) | Step::Pair(_, n) | Step::Ins(n) => Some(&new.blocks[n]),
+                        Step::Del(_) => None,
+                    });
+                    let list_ends = self.after_item && next.is_none_or(|b| b.kind != Kind::Item);
+                    match moved(&ctx.moved_from, o) {
+                        Some(&r) if ctx.moves[r].old.1.start == o => self.moved_from(r, list_ends),
+                        Some(_) => {}
+                        None => self.deleted(&old.blocks[o], list_ends),
+                    }
+                }
+                Step::Ins(n) => match moved(&ctx.moved_to, n) {
+                    Some(&r) if ctx.moves[r].new.1.start == n => self.moved_to(r),
                     Some(_) => {}
-                    None => self.deleted(&old.blocks[o]),
+                    None => self.write_new(old, new, s, ("", "")),
                 },
-                Step::Ins(n) => match ctx
-                    .moves
-                    .iter()
-                    .position(|r| top && r.new.0 == f && r.new.1.contains(&n))
-                {
-                    Some(r) => self.moved_to(r, n),
-                    None => self.inserted(&new.blocks[n]),
-                },
+                _ => self.write_new(old, new, s, ("", "")),
             }
         }
         if let Some(c) = outer {
             self.current = c;
         }
         self.out.push_str(&new.trailing);
+    }
+
+    /// A step with `marks` at the start and the end of the new block's
+    /// body; a deletion inside a passage that goes on after it.
+    fn write_new(&mut self, old: &Doc, new: &Doc, s: Step, marks: (&str, &str)) {
+        match s {
+            Step::Keep(n) => self.kept(&new.blocks[n], marks),
+            Step::Pair(o, n) => self.pair(&old.blocks[o], &new.blocks[n], marks),
+            Step::Ins(n) => self.inserted(&new.blocks[n], marks),
+            Step::Del(o) => self.deleted(&old.blocks[o], false),
+        }
     }
 
     /// The step of the commit that made move `r`, with the steps shown.
@@ -737,24 +869,51 @@ impl<'a> Writer<'a> {
 
     /// The old place of move `r`: one line that names the start of what
     /// moved and links to its new place.
-    fn moved_from(&mut self, r: usize) {
+    fn moved_from(&mut self, r: usize, list_ends: bool) {
         let run = &self.ctx.moves[r];
-        let ob = &self.ctx.aligned[run.old.0].1.docs.0.blocks[run.old.1.start];
-        let note = self.move_note(ob);
-        let heading = ob.kind == Kind::Heading;
+        let blocks = &self.ctx.aligned[run.old.0].1.docs.0.blocks[run.old.1.clone()];
+        let ob = &blocks[0];
+        let (note, more) = self.move_note(ob);
+        let count = |k: Kind| blocks.iter().filter(|b| b.kind == k).count();
+        let args = format!(
+            "heading: {}, down: {}, more: {more}, paragraphs: {}, items: {}",
+            ob.kind == Kind::Heading,
+            !self.arrived.contains(&r),
+            count(Kind::Para),
+            count(Kind::Item)
+        );
         self.summary_here();
-        self.out.push_str(&format!("\n{}  ", self.file.indent));
-        self.out
-            .push_str(&self.move_call("del", r, &format!("heading: {heading}"), &note));
-        self.record(ChangeKind::Moved, note);
+        self.out.push_str(&self.continuation(ob, list_ends));
+        self.out.push_str(&self.move_call("del", r, &args, &note));
+        self.record(ChangeKind::Moved, r.to_string());
     }
 
-    /// The first words of a block, as markup.
-    fn move_note(&self, b: &Block) -> String {
-        const WORDS: usize = 10;
-        let toks = b.toks();
+    /// The first words of a block, as markup, and whether the block goes on
+    /// after them: of a figure, those of its caption; a display equation
+    /// inline.
+    fn move_note(&self, b: &Block) -> (String, bool) {
+        self.first_words(&b.toks())
+    }
+
+    fn first_words(&self, toks: &[Tok]) -> (String, bool) {
+        const WORDS: usize = 30;
+        let (_, core, _) = trim_spaces(toks);
+        if let Some(t) = core.first().filter(|t| t.kind == TK::Atom) {
+            let more = core.len() > 1;
+            if let Some(caption) = caption(&t.nodes) {
+                let (words, more) = self.first_words(&tokenize(&caption));
+                return (format!("Figure: {words}"), more);
+            }
+            if t.nodes[0].kind() == K::Equation && t.block {
+                let math = self.sanitize(&t.nodes).and_then(|src| {
+                    let inner = src.trim().strip_prefix('$')?.strip_suffix('$')?;
+                    Some(format!("${}$", collapse_ws(inner)))
+                });
+                return (math.unwrap_or_else(|| placeholder(&t.nodes)), more);
+            }
+        }
         let (mut end, mut words, mut more) = (0, 0, false);
-        for t in &toks {
+        for t in toks {
             let code = t.kind == TK::Atom && (t.block || t.nodes[0].kind() == K::Hash);
             let word = t.kind == TK::Atom || t.kind == TK::Word && t.text.chars().any(char::is_alphanumeric);
             if code || word && words == WORDS {
@@ -782,72 +941,98 @@ impl<'a> Writer<'a> {
                 .map_or(String::new(), |t| placeholder(&t.nodes)),
             _ => self.content(&one_line, ChangeKind::Del),
         };
-        if more { format!("{note} …") } else { note }
+        (note, more)
     }
 
-    /// New block `n` of move `r`: written as it is, or with the changes
-    /// against its old block marked; the first and the last carry the
-    /// markers of the new place.
-    fn moved_to(&mut self, r: usize, n: usize) {
+    /// The new place of move `r`: its new blocks with the changes against
+    /// its old blocks marked, between the markers of the new place.
+    fn moved_to(&mut self, r: usize) {
         let ctx = self.ctx;
         let run = &ctx.moves[r];
-        let (of, ref old) = run.old;
-        let ob = &ctx.aligned[of].1.docs.0.blocks[old.start + n - run.new.1.start];
-        let nb = &ctx.aligned[run.new.0].1.docs.1.blocks[n];
-        let toks = nb.toks();
-        let block = |t: Option<&Tok>| t.is_some_and(|t| t.block);
-        let solid = |t: &&Tok| !matches!(t.kind, TK::Space | TK::Comment);
-        let start = (n == run.new.1.start)
-            .then(|| self.move_call("ins", r, &format!("block: {}", block(toks.iter().find(solid))), ""));
-        let end = (n + 1 == run.new.1.end).then(|| {
-            let last = toks.iter().rev().find(solid);
-            self.move_call("ins", r, &format!("end: true, block: {}", block(last)), "")
-        });
-        let marks = (start.as_deref().unwrap_or(""), end.as_deref().unwrap_or(""));
+        let (of, nf) = (&ctx.aligned[run.old.0].1, &ctx.aligned[run.new.0].1);
+        let part = |d: &Doc, blocks: &Range<usize>| Doc {
+            blocks: d.blocks[blocks.clone()].to_vec(),
+            trailing: String::new(),
+        };
+        let (old, new) = (part(&of.docs.0, &run.old.1), part(&nf.docs.1, &run.new.1));
+        let steps = align(&old, &new);
+        let writes = |s: &Step| !matches!(s, Step::Del(_));
+        let (first, last) = (
+            steps.iter().position(writes).unwrap(),
+            steps.iter().rposition(writes).unwrap(),
+        );
+        // A marker next to a block-level element or on a line of its own
+        // must not be boxed, which would add a line.
+        let block = |b: &Block, end: bool| {
+            let toks = b.toks();
+            let mut solid = toks.iter().filter(|t| !matches!(t.kind, TK::Space | TK::Comment));
+            b.kind == Kind::Heading || if end { solid.next_back() } else { solid.next() }.is_some_and(|t| t.block)
+        };
+        let start = self.move_call("ins", r, &format!("block: {}", block(&new.blocks[0], false)), "");
+        let end = self.move_call(
+            "ins",
+            r,
+            &format!("end: true, block: {}", block(new.blocks.last().unwrap(), true)),
+            "",
+        );
+        self.arrived.insert(r);
         let sections = self.sections.len();
-        if ob.key == nb.key {
-            self.kept_marked(nb, marks);
-        } else {
-            // Deleted code is evaluated with the definitions of its own file.
-            let path = std::mem::replace(&mut self.file.old_path, ctx.aligned[of].1.old_path.clone());
-            self.pair_marked(ob, nb, marks);
-            self.file.old_path = path;
+        // Deleted code is evaluated with the definitions of its own file.
+        let path = std::mem::replace(&mut self.file.old_path, of.old_path.clone());
+        for (k, &s) in steps.iter().enumerate() {
+            let marks = (
+                if k == first { start.as_str() } else { "" },
+                if k == last { end.as_str() } else { "" },
+            );
+            self.write_new(&old, &new, s, marks);
+            if k == first {
+                self.record(ChangeKind::Moved, r.to_string());
+            }
         }
-        if self.sections.len() > sections {
-            self.sections.last_mut().unwrap().moved = true;
-        }
-        if start.is_some() {
-            self.record(ChangeKind::Moved, self.move_note(nb));
+        self.file.old_path = path;
+        for s in &mut self.sections[sections..] {
+            s.moved = true;
         }
     }
 
-    fn kept(&mut self, b: &Block) {
-        self.kept_marked(b, ("", ""));
+    /// The text before a block's body and a move's start marker: after it,
+    /// but before a heading on a line of its own, because outlines and
+    /// running headers copy a heading's body.
+    fn open(&mut self, b: &Block, prefix: &str, mark: &str) {
+        if b.kind == Kind::Heading && !mark.is_empty() {
+            self.out.push_str(&format!("{mark}\n{prefix}"));
+        } else {
+            self.out.push_str(prefix);
+            self.out.push_str(mark);
+        }
+    }
+
+    /// A move's end marker and the text after a block's body, as in
+    /// [`Self::open`].
+    fn close(&mut self, b: &Block, mark: &str, suffix: &str) {
+        if b.kind == Kind::Heading && !mark.is_empty() {
+            self.out.push_str(&format!("{suffix}\n{mark}"));
+        } else {
+            self.out.push_str(mark);
+            self.out.push_str(suffix);
+        }
     }
 
     /// A kept block with `marks` written at the start and the end of its
     /// body.
-    fn kept_marked(&mut self, b: &Block, marks: (&str, &str)) {
+    fn kept(&mut self, b: &Block, marks: (&str, &str)) {
         self.begin_new(b);
         let label = self.section(b, false);
-        if marks == ("", "") {
-            self.out.push_str(&b.text());
-        } else {
-            let (prefix, body, suffix) = b.parts();
-            self.out
-                .push_str(&format!("{prefix}{}{}{}{suffix}", marks.0, text(&body), marks.1));
-        }
-        self.out.push_str(&label);
+        let (prefix, body, suffix) = b.parts();
+        self.open(b, &prefix, marks.0);
+        self.out.push_str(&text(&body));
+        self.close(b, marks.1, &(suffix + &label));
         self.included(b);
     }
 
-    fn pair(&mut self, ob: &Block, nb: &Block) {
-        self.pair_marked(ob, nb, ("", ""));
-    }
-
     /// A changed block and the old block it replaces, with `marks` as in
-    /// [`Self::kept_marked`].
-    fn pair_marked(&mut self, ob: &Block, nb: &Block, marks: (&str, &str)) {
+    /// [`Self::kept`].
+    fn pair(&mut self, ob: &Block, nb: &Block, marks: (&str, &str)) {
         self.begin_new(nb);
         if nb.kind == Kind::Setup {
             let (ot, nt) = (ob.toks(), nb.toks());
@@ -860,8 +1045,7 @@ impl<'a> Writer<'a> {
         let label = self.section(nb, false);
         let (prefix, nbody, suffix) = nb.parts();
         let (_, obody, _) = ob.parts();
-        self.out.push_str(&prefix);
-        self.out.push_str(marks.0);
+        self.open(nb, &prefix, marks.0);
         // Nested items are blocks of their own, so that a change stays
         // inside its item.
         let (ohead, onested) = split_nested(&obody);
@@ -873,12 +1057,11 @@ impl<'a> Writer<'a> {
         let outer = std::mem::replace(&mut self.file.indent, indent);
         self.docs(&odoc, &ndoc);
         self.file.indent = outer;
-        self.out.push_str(marks.1);
-        self.out.push_str(&suffix);
-        self.out.push_str(&label);
+        self.close(nb, marks.1, &(suffix + &label));
     }
 
-    fn inserted(&mut self, nb: &Block) {
+    /// An inserted block, with `marks` as in [`Self::kept`].
+    fn inserted(&mut self, nb: &Block, marks: (&str, &str)) {
         self.begin_new(nb);
         if nb.kind == Kind::Setup {
             let at = self.out.len();
@@ -891,13 +1074,12 @@ impl<'a> Writer<'a> {
         }
         let label = self.section(nb, true);
         let (prefix, nodes, suffix) = nb.parts();
-        self.out.push_str(&prefix);
+        self.open(nb, &prefix, marks.0);
         self.ins("block: true", &tokenize(&nodes));
-        self.out.push_str(&suffix);
-        self.out.push_str(&label);
+        self.close(nb, marks.1, &(suffix + &label));
     }
 
-    fn deleted(&mut self, ob: &Block) {
+    fn deleted(&mut self, ob: &Block, list_ends: bool) {
         if ob.kind == Kind::Setup {
             // A deleted include of a file that is gone shows its content,
             // through a root-relative path.
@@ -906,12 +1088,15 @@ impl<'a> Writer<'a> {
                 Some(p) if !self.ctx.pairs.values().any(|o| *o == p) && source(&self.ctx.old_files, &p).is_some() => {
                     self.old_scope = true;
                     let root = parse(&format!("#include {}", typst_str(&format!("/{OLD_DIR}/{p}"))));
-                    self.deleted(&Block {
-                        kind: Kind::Para,
-                        gap: String::new(),
-                        nodes: root.children().cloned().collect(),
-                        key: String::new(),
-                    });
+                    self.deleted(
+                        &Block {
+                            kind: Kind::Para,
+                            gap: String::new(),
+                            nodes: root.children().cloned().collect(),
+                            key: String::new(),
+                        },
+                        list_ends,
+                    );
                 }
                 _ if !ob.is_import() => self.record(ChangeKind::Unmarked, ob.text()),
                 _ => {}
@@ -950,11 +1135,22 @@ impl<'a> Writer<'a> {
             args = format!("heading: {level}");
         }
         self.summary_here();
-        // An indented continuation line, not a block or item of its own: it
-        // must not end a list, number an item or add a paragraph break that
-        // the new version lacks.
-        self.out.push_str(&format!("\n{}  ", self.file.indent));
+        self.out.push_str(&self.continuation(ob, list_ends));
         self.mark(ChangeKind::Del, &args, body, &toks);
+    }
+
+    /// The start of the line of deleted block `ob`: an indented
+    /// continuation line, not a block or item of its own, that must not
+    /// end a list, number an item or add a paragraph break that the new
+    /// version lacks; but unindented after a list that ends here, so that
+    /// a block that is not an item is not part of the last item.
+    fn continuation(&self, ob: &Block, list_ends: bool) -> String {
+        let indent = &self.file.indent;
+        if list_ends && ob.kind != Kind::Item {
+            format!("\n{indent}")
+        } else {
+            format!("\n{indent}  ")
+        }
     }
 
     /// Markup for tokens placed inside a wrapper's content block.
@@ -1337,6 +1533,23 @@ fn placeholder(nodes: &[SyntaxNode]) -> String {
         name.unwrap_or("code".into())
     };
     format!("#emph({});", typst_str(&format!("[{name}]")))
+}
+
+/// The markup of the caption of a `#figure` call.
+fn caption(nodes: &[SyntaxNode]) -> Option<Vec<SyntaxNode>> {
+    let call = nodes.get(1).filter(|n| n.kind() == K::FuncCall)?;
+    if call.children().next()?.leaf_text() != "figure" {
+        return None;
+    }
+    let args = call.children().find(|c| c.kind() == K::Args)?;
+    let caption = args
+        .children()
+        .find(|a| a.kind() == K::Named && a.children().next().is_some_and(|n| n.leaf_text() == "caption"))?;
+    caption
+        .children()
+        .last()
+        .filter(|v| v.kind() == K::ContentBlock)
+        .map(markup)
 }
 
 /// The source of an old file to be evaluated under [`OLD_DIR`]: paths

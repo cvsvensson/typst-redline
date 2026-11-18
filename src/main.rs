@@ -7,8 +7,8 @@ use std::process::{Command, ExitCode, Output};
 
 use tree::{Tree, git, output};
 use typst_redline::{
-    Anchor, ChangeKind, Commit, History, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version,
-    composite, project_files, redline,
+    Anchor, Commit, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version,
+    composite, preamble_takes_moves, project_files, redline,
 };
 
 const USAGE: &str = "\
@@ -45,6 +45,8 @@ Options:
                         tool splits the commits, and then the uncommitted
                         changes, into n steps that change about the same
                         amount of the document (one file only)
+  --no-moves            Show moved text as deleted at its old place and
+                        inserted at its new place
   --typst <path>        typst executable (default: typst)
   --mark-reviewed       Record HEAD as reviewed for the file (see above)
   --keep-typ            Keep the generated project and print its path on stderr
@@ -67,6 +69,7 @@ struct Args {
     side_by_side: bool,
     steps: Option<StepArg>,
     mark_reviewed: bool,
+    no_moves: bool,
     typst_args: Vec<String>,
 }
 
@@ -127,6 +130,7 @@ fn parse_args() -> Result<Parsed, String> {
         side_by_side: false,
         steps: None,
         mark_reviewed: false,
+        no_moves: false,
         typst_args: vec![],
     };
     let mut it = std::env::args().skip(1);
@@ -155,6 +159,7 @@ fn parse_args() -> Result<Parsed, String> {
                 });
             }
             "--mark-reviewed" => a.mark_reviewed = true,
+            "--no-moves" => a.no_moves = true,
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
                     "inline" => false,
@@ -578,13 +583,14 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
         ..log.map(|l| l.history).unwrap_or_default()
     };
 
-    let mut result = redline(&old_v, &new_v, LADDER[0].0, &history);
+    let moves = if a.no_moves { Moves::Off } else { Moves::Find };
+    let mut result = redline(&old_v, &new_v, LADDER[0].0, &history, moves);
     for w in &result.warnings {
         eprintln!("warning: {w}");
     }
     if let Some(p) = &a.preamble
-        && !preamble.contains("move:")
-        && result.changes.iter().any(|c| c.kind == ChangeKind::Moved)
+        && !result.moves.is_empty()
+        && !preamble_takes_moves(&preamble)
     {
         return Err(format!(
             "the preamble {} does not take the move argument of redline-ins and redline-del, which moved text needs",
@@ -619,7 +625,7 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
     };
     for (i, (opts, note)) in LADDER.into_iter().enumerate() {
         if i > 0 {
-            result = redline(&old_v, &new_v, opts, &history);
+            result = redline(&old_v, &new_v, opts, &history, moves);
         }
         write(dir, &result.files)?;
         let out = if !a.side_by_side {
@@ -631,7 +637,7 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
                 swapped: true,
                 ..History::default()
             };
-            let back = redline(&new_v, &old_v, opts, &back_history);
+            let back = redline(&new_v, &old_v, opts, &back_history, Moves::Reverse(&result.moves));
             if i == 0 {
                 stage(&old_root, &new, &old, &back)?;
                 write(&old_root, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
