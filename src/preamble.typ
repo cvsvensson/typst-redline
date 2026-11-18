@@ -15,7 +15,11 @@
 //   keys whose bibliography entry is new, gone or edited), and if the
 //   versions are git revisions, history: (commits: array of (hash, date,
 //   subject), oldest first, earlier: number of earlier commits left out,
-//   uncommitted: whether the new version has uncommitted changes)).
+//   uncommitted: whether the new version has uncommitted changes, steps:
+//   whether marks are coloured by commit)).
+// With --each-commit, marks take `step: n`: the change is from the n-th
+// commit of the history, or from the uncommitted changes after the last.
+// redline-step-style(n) gives the style of its marks.
 // With `redline-ins(body, ..args) = body` and `redline-del(..args) = none`
 // the document is the new version unchanged; marks must keep that so.
 // For the side-by-side layout the binary compiles the marked files with
@@ -41,7 +45,26 @@
     bar-gap: 0.5cm,
     bar-width: 2pt,
     lane: 3.5pt,
+    // With --each-commit, the colour of each commit: Okabe–Ito hues, darkened
+    // where needed to read as text on white.
+    steps: (rgb("#0072b2"), rgb("#d55e00"), rgb("#007a5a"), rgb("#a8508a"), rgb("#9a6800"), rgb("#2f8fce")),
   )
+}
+
+// The colours of marks in one colour.
+#let redline-colours(c) = (
+  ins: c,
+  ins-fill: c.lighten(80%),
+  del: c,
+  strike: 0.7pt + c,
+  ins-frame: 0.6pt + c,
+  del-frame: (paint: c, thickness: 0.6pt, dash: "dashed"),
+)
+
+// The style of the marks of a step, or the plain style for none.
+#let redline-step-style(step) = if step == none { redline-style } else {
+  let cs = redline-style.steps
+  redline-style + redline-colours(cs.at(calc.rem(step - 1, cs.len())))
 }
 
 // Each mark is bracketed by two of these; `redline-bars` draws a bar in the
@@ -49,8 +72,8 @@
 // records the width of the column, cell or other container it is in and the
 // column gutter in effect; the word joiner keeps a line break from
 // separating it from the mark.
-#let redline-tag(kind, dy, width: none) = if kind != "end" or width != none {
-  [#metadata((kind, dy, width, if width != none { columns.gutter }))<redline-tag>]
+#let redline-tag(kind, dy, width: none, step: none) = if kind != "end" or width != none {
+  [#metadata((kind, dy, width, if width != none { columns.gutter }, step))<redline-tag>]
 } else [\u{2060}#box(layout(size => redline-tag(kind, dy, width: size.width)))]
 
 // Spaces at the edges of a mark go outside it: a struck space looks like a
@@ -85,7 +108,7 @@
 // A frame around a block-level element, outside it so that nothing moves;
 // as wide as the element. It carries the mark's tags when the element
 // starts or ends the mark, so that the bar spans the frame.
-#let redline-frame(it, stroke, cross: false, start: none, end: none) = block(width: 100%, layout(size => {
+#let redline-frame(it, stroke, cross: false, start: none, end: none, step: none) = block(width: 100%, layout(size => {
   let st = redline-style
   let eq = it.func() == math.equation
   let natural = measure(if eq { math.equation(block: true, numbering: none, it.body) } else { it })
@@ -108,7 +131,7 @@
       place(line(start: (0pt, 0pt), end: (w, h), stroke: s))
       place(line(start: (0pt, h), end: (w, 0pt), stroke: s))
     }
-    place(top + left, if start != none { redline-tag(start, -st.outset) })
+    place(top + left, if start != none { redline-tag(start, -st.outset, step: step) })
     place(bottom + left, if end != none { redline-tag("end", st.outset, width: size.width) })
   }))
 }))
@@ -118,7 +141,7 @@
 // text. A drawing or image is drawn as written, with only `plain` applied:
 // its frame (crossed, if deleted) is the mark, and a colour would reach its
 // labels but not its lines. A figure's caption is styled all the same.
-#let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x) = {
+#let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, step: none) = {
   let (lead, ch, trail) = redline-parts(body)
   let n = ch.len()
   let framed = ch.map(c => redline-framed(c, block and n == 1))
@@ -130,7 +153,7 @@
       run = ()
       let start = if i == 0 { kind }
       let drawing = not redline-textual(if c.func() == figure { c.body } else { c })
-      let f = redline-frame(c, stroke, cross: kind == "del" and drawing, start: start, end: if i == n - 1 { "end" })
+      let f = redline-frame(c, stroke, cross: kind == "del" and drawing, start: start, end: if i == n - 1 { "end" }, step: step)
       out.push(if not drawing { frame-style(f) } else if c.func() == figure {
         show figure.caption: frame-style
         plain(f)
@@ -139,15 +162,15 @@
       // After the first character, so that the bar of a mark starting a
       // line is not drawn on the line before.
       let cl = c.text.clusters()
-      run += (text(cl.first()), redline-tag(kind, -0.8em), text(cl.slice(1).join()))
+      run += (text(cl.first()), redline-tag(kind, -0.8em, step: step), text(cl.slice(1).join()))
     } else {
-      if i == 0 { run.push(redline-tag(kind, -0.8em)) }
+      if i == 0 { run.push(redline-tag(kind, -0.8em, step: step)) }
       run.push(c)
     }
   }
   if run.len() > 0 { out.push(style(run.join())) }
   lead
-  if n == 0 { redline-tag(kind, -0.8em) }
+  if n == 0 { redline-tag(kind, -0.8em, step: step) }
   out.join()
   if n == 0 or not framed.last() { redline-tag("end", 0.3em) }
   trail
@@ -155,8 +178,7 @@
 
 // Whole new blocks are coloured; new words inside a kept block are also
 // filled and underlined, which stays visible in greyscale.
-#let redline-ins-rules(body, block) = {
-  let st = redline-style
+#let redline-ins-rules(body, block, st: redline-style) = {
   if block { return text(fill: st.ins, body) }
   set text(fill: st.ins)
   // A box keeps a fill behind math but stops it from breaking across lines.
@@ -226,8 +248,7 @@
   body
 }
 
-#let redline-del-look(body) = {
-  let st = redline-style
+#let redline-del-look(body, st: redline-style) = {
   show math.equation.where(block: false): it => context {
     let s = measure(it)
     box({
@@ -240,7 +261,7 @@
   text(fill: st.del, strike(stroke: st.strike, body))
 }
 
-#let redline-del-rules(body) = redline-del-counters(redline-del-look(body))
+#let redline-del-rules(body, st: redline-style) = redline-del-counters(redline-del-look(body, st: st))
 
 // The version laid out for the side-by-side layout, or none.
 #let redline-side = sys.inputs.at("redline-side", default: none)
@@ -259,20 +280,20 @@
   [#metadata((kind, redline-hash(if kind == "ins" { 1 } else { 2 }, body)))<redline-change>]
 }
 
-#let redline-ins(body, block: false) = {
-  let st = redline-style
+#let redline-ins(body, block: false, step: none) = {
+  let st = redline-step-style(step)
   if redline-side != none { redline-side-mark("ins", body) }
   if redline-side == "old" {
     redline-mark("del", body, block, redline-del-look, st.del-frame, frame-style: redline-del-look)
   } else {
-    redline-mark("ins", body, block, b => redline-ins-rules(b, block), st.ins-frame, frame-style: text.with(fill: st.ins))
+    redline-mark("ins", body, block, b => redline-ins-rules(b, block, st: st), st.ins-frame, frame-style: text.with(fill: st.ins), step: step)
   }
 }
 
 // On a side of the side-by-side layout, a deletion is content the version
 // does not have: the page next to it shows it.
-#let redline-del(body, block: false, heading: none, gap: false) = {
-  let st = redline-style
+#let redline-del(body, block: false, heading: none, gap: false, step: none) = {
+  let st = redline-step-style(step)
   if redline-side != none { return redline-side-mark("del", body) }
   let block = block or heading != none
   let body = redline-neutral(body)
@@ -280,7 +301,8 @@
     text(weight: "bold", size: if heading == 1 { 1.4em } else { 1.2em }, body)
   } else { body }
   if block { parbreak() }
-  redline-mark("del", body, block, redline-del-rules, st.del-frame, frame-style: redline-del-rules, plain: redline-del-counters)
+  let rules = redline-del-rules.with(st: st)
+  redline-mark("del", body, block, rules, st.del-frame, frame-style: rules, plain: redline-del-counters, step: step)
   if block { parbreak() } else if gap { h(0.25em) }
 }
 
@@ -368,21 +390,22 @@
       } else {
         calc.max(left - calc.min(st.bar-gap, left / 2) - out, st.bar-width / 2)
       }
-      bars.push((x, y0 + 1pt, y1 - 1pt, ins))
+      let sst = redline-step-style(a.value.at(4, default: none))
+      bars.push((x, y0 + 1pt, y1 - 1pt, ins, if ins { sst.ins } else { sst.del }))
     }
     i += 1
   }
-  // Overlapping bars of one kind in one place are drawn as one, so that
-  // dashes do not overlap.
+  // Overlapping bars of one kind and colour in one place are drawn as one,
+  // so that dashes do not overlap.
   let merged = ()
   for bar in bars.sorted(key: b => (b.at(0).pt(), b.at(1).pt())) {
     let last = if merged.len() > 0 { merged.last() }
-    if last != none and last.at(0) == bar.at(0) and last.at(3) == bar.at(3) and bar.at(1) <= last.at(2) + 2pt {
+    if last != none and last.at(0) == bar.at(0) and last.slice(3) == bar.slice(3) and bar.at(1) <= last.at(2) + 2pt {
       merged.last().at(2) = calc.max(last.at(2), bar.at(2))
     } else { merged.push(bar) }
   }
-  for (x, y0, y1, ins) in merged {
-    let stroke = (paint: if ins { st.ins } else { st.del }, thickness: st.bar-width, dash: if ins { none } else { (3pt, 2pt) })
+  for (x, y0, y1, ins, paint) in merged {
+    let stroke = (paint: paint, thickness: st.bar-width, dash: if ins { none } else { (3pt, 2pt) })
     place(dx: x, dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
   }
 }
@@ -406,15 +429,19 @@
   if bib.len() > 0 [Bibliography entries, not marked in the bibliography: #bib.map(p => [#p.at(0): #p.at(1).map(raw).join(", ")]).join("; ").]
 }
 
-// The commits from the old version to the new one; none without a
-// history.
+// The commits from the old version to the new one, each in the colour of
+// its marks if marks are coloured by commit; none without a history.
 #let redline-commits(hist, old, new) = if hist != none {
-  let rows = hist.commits.map(c => (raw(c.hash), c.date, c.subject))
-  if hist.uncommitted { rows.push(([], [], emph[Uncommitted changes])) }
+  let row(step, ..cells) = if hist.steps {
+    let st = redline-step-style(step)
+    (box(width: 0.8em, height: 0.8em, fill: st.ins-fill, stroke: 0.6pt + st.ins), ..cells.pos().map(text.with(fill: st.ins)))
+  } else { cells.pos() }
+  let rows = hist.commits.enumerate().map(p => row(hist.earlier + p.at(0) + 1, raw(p.at(1).hash), p.at(1).date, p.at(1).subject))
+  if hist.uncommitted { rows.push(row(hist.earlier + hist.commits.len() + 1, [], [], emph[Uncommitted changes])) }
   block(below: 1.5em, {
     block(below: 0.8em, strong[Commits from #old to #new])
     if hist.earlier > 0 { block(emph[#hist.earlier earlier commits, not listed]) }
-    grid(columns: (auto, auto, 1fr), column-gutter: 0.6em, row-gutter: 0.6em, ..rows.flatten())
+    grid(columns: if hist.steps { (auto, auto, auto, 1fr) } else { (auto, auto, 1fr) }, column-gutter: 0.6em, row-gutter: 0.6em, ..rows.flatten())
   })
 }
 
@@ -430,7 +457,12 @@
   block({
     block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
     let bib = redline-bib(info.at("bib", default: (added: (), removed: (), changed: ())))
-    if info.entries.len() == 0 and bib == none { [No changes.] } else {
+    let steps = info.at("history", default: (steps: false)).steps
+    if info.entries.len() == 0 and bib == none { [No changes.] } else if steps {
+      let st = st + redline-colours(luma(70))
+      let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
+      block(below: 1.5em)[#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the commit that made the change. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Numbers count changed passages.]
+    } else {
       let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
       block(below: 1.5em)[#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Numbers count changed passages.]
     }
