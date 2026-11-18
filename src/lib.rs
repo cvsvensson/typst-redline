@@ -99,6 +99,8 @@ pub enum ChangeKind {
     Del,
     /// A change the output does not show.
     Unmarked,
+    /// Moved text, recorded at its old and at its new place.
+    Moved,
 }
 
 impl ChangeKind {
@@ -107,6 +109,7 @@ impl ChangeKind {
             ChangeKind::Ins => "ins",
             ChangeKind::Del => "del",
             ChangeKind::Unmarked => "unmarked",
+            ChangeKind::Moved => "moved",
         }
     }
 }

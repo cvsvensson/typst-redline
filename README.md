@@ -43,6 +43,7 @@ If your document uses files outside its own folder, such as `#import "../macros.
 - **Formulas, figures and drawings** are shown whole: the old one in a dashed red frame, the new one in a blue frame. An old drawing, image or empty shape is crossed out.
 - **Bars in the margin** point to every changed line, dashed for deletions and solid for insertions.
 - **Several files:** changes in files that the document includes or imports are marked too. With git, the old versions of those files, and of images the old text uses, are taken from the old commit.
+- **Moved text:** a paragraph, heading, list item or section moved elsewhere, also into another file, is not struck and highlighted again. A grey bracket in the margin marks its new place, and a grey line at its old place links to it. Edits made while moving are marked as usual.
 - **Code:** a change to code, such as a function body or a `#set` rule, cannot be shown as a mark. The summary page lists it as *changed code not marked*, so no change goes unreported.
 - **Files the document reads:** when an image or data file changes while the call that reads it (`image`, `json`, `csv`, `read` and similar) stays the same, the summary page lists the file as changed. Files read through a computed path are not detected.
 
@@ -86,7 +87,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 
 ## Known problems
 
-- Moved text shows as deleted in one place and inserted in another.
+- Some moved text still shows as deleted in one place and inserted in another: a sentence moved within or between paragraphs, a nested list item moved on its own, text inside a call's content block such as `#slide[...]`, text moved out of a file the new version no longer includes, a passage rewritten so much that it shares less than about 60% of its words with the old one, and moved setup code such as `#set` and `#let`.
 - Deleted content shifts line and page breaks compared with the new version.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
 - A citation added to or removed from a group such as `@a @b` marks the whole group, because Typst lays the group out as one piece.

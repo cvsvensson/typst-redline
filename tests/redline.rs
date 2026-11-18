@@ -344,6 +344,64 @@ fn section_replacing_another_is_not_compared_with_it() {
     );
 }
 
+const MOVED_FROM: &str = "#redline-del(move: (";
+const MOVED_TO: &str = "#redline-ins(move: (";
+
+#[test]
+fn moved_paragraph_is_marked_at_both_places_not_struck() {
+    let out = body("moved-paragraph");
+    assert_eq!(out.matches(MOVED_FROM).count(), 1, "{out}");
+    assert_eq!(out.matches(MOVED_TO).count(), 2, "{out}");
+    assert!(!out.contains("block: true)[Herons"), "{out}");
+}
+
+#[test]
+fn edits_inside_moved_text_are_marked() {
+    let out = body("moved-edited");
+    assert!(out.contains(MOVED_FROM) && out.contains(MOVED_TO), "{out}");
+    assert!(
+        out.contains("#redline-del(gap: true)[dawn];#redline-ins()[dusk]"),
+        "{out}"
+    );
+}
+
+#[test]
+fn moved_section_is_one_move() {
+    let out = body("moved-section");
+    assert_eq!(out.matches(MOVED_FROM).count(), 1, "{out}");
+    assert!(out.contains("moved: true"), "{out}");
+}
+
+#[test]
+fn moved_list_item_is_marked_inside_its_item() {
+    let out = body("moved-item");
+    assert!(out.contains(&format!("- {MOVED_TO}")), "{out}");
+    assert_eq!(out.matches(MOVED_FROM).count(), 1, "{out}");
+}
+
+#[test]
+fn text_moved_into_an_included_file_is_marked_in_both_files() {
+    let r = run("moved-include");
+    assert!(r.body.contains(MOVED_FROM), "{}", r.body);
+    assert!(r.file("part.typ").contains(MOVED_TO), "{}", r.file("part.typ"));
+}
+
+#[test]
+fn moved_text_needs_the_preamble_support() {
+    let dir = temp_dir("move-preamble");
+    for side in ["old", "new"] {
+        let src = read_fixture("moved-paragraph", side, "main.typ").unwrap();
+        std::fs::write(dir.join(format!("{side}.typ")), src).unwrap();
+    }
+    std::fs::write(dir.join("p.typ"), PREAMBLE.replace("move:", "other:")).unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ", "--preamble", "p.typ"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(1) && stderr.contains("moved text"),
+        "{stderr}"
+    );
+}
+
 fn typst_available() -> bool {
     let ok = Command::new("typst").arg("--version").output().is_ok();
     if !ok {
