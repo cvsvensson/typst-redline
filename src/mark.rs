@@ -34,6 +34,8 @@ pub struct Ctx {
     /// The project files of the versions between the old and the new one,
     /// if each change is marked with the step that made it.
     steps: Option<Vec<Vec<(String, String)>>>,
+    /// The steps lead from the new version to the old one.
+    swapped: bool,
 }
 
 impl Ctx {
@@ -41,6 +43,7 @@ impl Ctx {
         old_files: Vec<(String, String)>,
         new_files: Vec<(String, String)>,
         steps: Option<Vec<Vec<(String, String)>>>,
+        swapped: bool,
         opts: Options,
     ) -> Self {
         let union = |files: &[(String, String)], f: fn(&SyntaxNode) -> HashSet<String>| {
@@ -69,6 +72,7 @@ impl Ctx {
             old_files,
             new_files,
             steps,
+            swapped,
         }
     }
 
@@ -263,14 +267,25 @@ impl<'a> Writer<'a> {
         removed.retain(|d| !kept.contains(d));
         removed.extend(ctx.removed_defs.iter().cloned());
         let blame = ctx.steps.as_ref().map(|steps| {
-            let mut chain = vec![old_src];
+            let (first, last) = if ctx.swapped {
+                (new_src, old_src)
+            } else {
+                (old_src, new_src)
+            };
+            let mut chain = vec![first];
             chain.extend(
                 steps
                     .iter()
                     .map(|f| source(f, path).or(source(f, &old_path)).unwrap_or_default()),
             );
-            chain.push(new_src);
-            blame(&chain)
+            chain.push(last);
+            let (wrote, removed) = blame(&chain);
+            // Swapped, what this run inserts the steps removed.
+            if ctx.swapped {
+                (removed, wrote)
+            } else {
+                (wrote, removed)
+            }
         });
         let children = |r: &SyntaxNode| r.children().cloned().collect::<Vec<_>>();
         let (odoc, ndoc) = (Doc::new(&children(o)), Doc::new(&children(n)));

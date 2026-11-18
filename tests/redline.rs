@@ -1075,14 +1075,37 @@ fn each_commit_refuses_more_commits_than_colours() {
 }
 
 #[test]
-fn each_commit_needs_one_file_and_the_inline_layout() {
+fn each_commit_needs_one_file() {
     let dir = temp_dir("each-commit-usage");
-    for args in [
-        &["old.typ", "new.typ", "--each-commit"][..],
-        &["main.typ", "--each-commit", "--layout", "side-by-side"],
-    ] {
-        assert_eq!(cli(&dir, args).status.code(), Some(2), "{args:?}");
+    let out = cli(&dir, &["old.typ", "new.typ", "--each-commit"]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn each_commit_side_by_side_colours_both_sides_by_commit() {
+    if !typst_available() || typst_before_0_14() {
+        return;
     }
+    let dir = repo("each-commit-side", &["alpha", "beta", "gamma"]);
+    let args = [
+        "doc/main.typ",
+        "--since",
+        "c-alpha",
+        "--each-commit",
+        "--layout",
+        "side-by-side",
+        "--keep-typ",
+    ];
+    let out = cli(&dir, &args);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let kept = Path::new(stderr.lines().find_map(|l| l.strip_prefix("kept ")).unwrap());
+    let read = |p: &str| std::fs::read_to_string(kept.join(p)).unwrap();
+    let (old, new) = (read(".redline-old-side/main.typ"), read("main.typ"));
+    std::fs::remove_dir_all(kept).unwrap();
+    // beta replaced alpha, gamma replaced beta.
+    assert!(old.contains("step: 1)[alpha"), "{old}");
+    assert!(new.contains("step: 2)[gamma"), "{new}");
 }
 
 #[test]
