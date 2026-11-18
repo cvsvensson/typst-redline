@@ -719,25 +719,43 @@ impl<'a> Writer<'a> {
     }
 
     /// Write code `n` with the changes inside its content blocks against
-    /// `o` marked. Writes nothing and returns false if they differ outside
-    /// content blocks, or if diffing inside code is off.
+    /// `o` marked, and a changed argument that is shown as content replaced
+    /// by the old one deleted and the new one inserted. Writes nothing and
+    /// returns false if they differ elsewhere, or if diffing inside code is
+    /// off.
     fn diff_code(&mut self, o: &Tok, n: &Tok) -> bool {
-        self.ctx.opts.content_blocks && o.key == n.key && self.diff_code_nodes(&o.nodes, &n.nodes)
+        self.ctx.opts.content_blocks && self.diff_code_nodes(&o.nodes, &n.nodes, false)
     }
 
     /// Labels, comments and spaces are written as in `n` and compared only
-    /// for the summary: they do not show.
-    fn diff_code_nodes(&mut self, o: &[SyntaxNode], n: &[SyntaxNode]) -> bool {
+    /// for the summary: they do not show. `args` says that the nodes are
+    /// the arguments of a call.
+    fn diff_code_nodes(&mut self, o: &[SyntaxNode], n: &[SyntaxNode], args: bool) -> bool {
         let (at, count) = (self.out.len(), self.changes.len());
         let trivia = |x: &&SyntaxNode| matches!(x.kind(), K::Label | K::LineComment | K::BlockComment | K::Space);
+        // A call that takes a content block likely shows its other
+        // positional arguments too: a body, a cell. Others, such as `str`
+        // or `rgb`, would fail on content, and the call is replaced whole.
+        let shows = args
+            && n.iter().any(|x| {
+                x.kind() == K::ContentBlock
+                    || x.kind() == K::Named && x.children().last().is_some_and(|v| v.kind() == K::ContentBlock)
+            });
         let mut rest = o.iter().filter(|x| !trivia(x));
         let mut ok = true;
+        let mut line_start = false;
         for x in n {
             if trivia(&x) {
                 self.out.push_str(&x.full_text());
-            } else {
-                ok = ok && rest.next().is_some_and(|y| self.diff_code_node(y, x));
+                line_start = x.full_text().contains('\n');
+                continue;
             }
+            ok = ok
+                && rest.next().is_some_and(|y| {
+                    self.diff_code_node(y, x)
+                        || shows && matches!(x.kind(), K::FuncCall | K::Equation) && self.replace(y, x, line_start)
+                });
+            line_start = false;
         }
         let ok = ok && rest.next().is_none();
         let labels = |v: &[SyntaxNode]| {
@@ -785,7 +803,29 @@ impl<'a> Writer<'a> {
             }
             return same;
         }
-        self.diff_code_nodes(&children(o), &children(n))
+        self.diff_code_nodes(&children(o), &children(n), n.kind() == K::Args)
+    }
+
+    /// Write a content argument `n` as `o` deleted and `n` inserted, as
+    /// blocks if `n` starts a line.
+    fn replace(&mut self, o: &SyntaxNode, n: &SyntaxNode, block: bool) -> bool {
+        let tok = |x: &SyntaxNode| {
+            let nodes = vec![SyntaxNode::leaf(K::Hash, "#"), x.clone()];
+            Tok {
+                kind: TK::Atom,
+                key: String::new(),
+                text: text(&nodes),
+                nodes,
+                block,
+            }
+        };
+        let (ot, nt) = ([tok(o)], [tok(n)]);
+        let args = block_arg(&nt);
+        self.out.push('[');
+        self.mark(ChangeKind::Del, args, self.content(&ot, ChangeKind::Del), &ot);
+        self.mark(ChangeKind::Ins, args, self.content(&nt, ChangeKind::Ins), &nt);
+        self.out.push(']');
+        true
     }
 
     /// Write new code with the markup of its content blocks marked
@@ -826,6 +866,18 @@ impl<'a> Writer<'a> {
     fn change(&mut self, old: &[Tok], new: &[Tok]) {
         let (olead, ocore, otrail) = trim_spaces(old);
         let (nlead, ncore, ntrail) = trim_spaces(new);
+        if let ([o], [n]) = (ocore, ncore)
+            && o.kind == TK::Atom
+            && n.kind == TK::Atom
+        {
+            let at = self.out.len();
+            self.out.push_str(&nlead);
+            if self.diff_code(o, n) {
+                self.out.push_str(&ntrail);
+                return;
+            }
+            self.out.truncate(at);
+        }
         let before = !olead.is_empty() || ocore.is_empty();
         if before {
             self.out.push_str(&nlead);

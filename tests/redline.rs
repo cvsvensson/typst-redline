@@ -424,6 +424,29 @@ fn caption_change_does_not_duplicate_the_figure() {
 }
 
 #[test]
+fn changed_code_argument_is_replaced_in_place() {
+    let r = run("changed-argument");
+    assert_eq!(r.body.matches("#grid(").count(), 1, "{}", r.body);
+    assert!(r.body.contains("#redline-del(gap: true)[old];"), "{}", r.body);
+    assert!(r.body.contains("#redline-ins()[#rect(width: 2cm)]"), "{}", r.body);
+}
+
+#[test]
+fn frame_of_a_grid_with_fractional_columns_is_as_wide_as_the_text() {
+    let Some(dir) = compile("grid-frame", &run("grid-frame").files) else {
+        return;
+    };
+    let out = Command::new("typst")
+        .args(["query", "--root"])
+        .arg(&*dir)
+        .arg(dir.join("main.typ"))
+        .args(["<probe>", "--field", "value"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("283.4"), "{out:?}");
+}
+
+#[test]
 fn changed_content_variable_in_imported_file_is_marked() {
     let r = run("imported-content");
     assert!(r.file("defs.typ").contains(WORD_CHANGE), "{}", r.file("defs.typ"));

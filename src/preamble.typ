@@ -34,8 +34,12 @@
 }
 
 // Each mark is bracketed by two of these; `redline-bars` draws a bar in the
-// margin from the start of one to its end, `dy` beyond the tags.
-#let redline-tag(kind, dy) = [#metadata((kind, dy))<redline-tag>]
+// margin from the start of one to its end, `dy` beyond the tags. The end tag
+// records the width of the column, cell or other container it is in; the
+// word joiner keeps a line break from separating it from the mark.
+#let redline-tag(kind, dy, width: none) = if kind != "end" or width != none {
+  [#metadata((kind, dy, width))<redline-tag>]
+} else [\u{2060}#box(layout(size => redline-tag(kind, dy, width: size.width)))]
 
 // Spaces at the edges of a mark go outside it: a struck space looks like a
 // hyphen, and a line break at it would put the bar on the line before.
@@ -49,19 +53,20 @@
   (lead.join(), ch, trail.join())
 }
 
-// Whether a part of a mark is laid out as a block of its own and gets a
-// frame. Content computed at layout is, when it is all of a block mark.
-#let redline-framed(c, sole) = (
-  c.func() in (figure, block, align, grid, table, stack, pad, columns)
-    or c.func() == math.equation and c.block
-    or sole and repr(c.func()) in ("context", "layout")
-)
-
 // Whether content shows text that a colour or strike reaches; content
 // computed at layout (a drawing) counts as not.
 #let redline-textual(c) = type(c) == content and (
   c.func() in (text, math.equation, raw)
     or c.fields().values().any(v => redline-textual(v) or type(v) == array and v.any(redline-textual))
+)
+
+// Whether a part of a mark is laid out as a block of its own and gets a
+// frame. An image or content computed at layout (a drawing) is, when it is
+// all of a block mark.
+#let redline-framed(c, sole) = (
+  c.func() in (figure, block, align, grid, table, stack, pad, columns)
+    or c.func() == math.equation and c.block
+    or sole and (c.func() == image or repr(c.func()) in ("context", "layout"))
 )
 
 // A frame around a block-level element, outside it so that nothing moves;
@@ -70,9 +75,11 @@
 #let redline-frame(it, stroke, cross: false, start: none, end: none) = block(width: 100%, layout(size => {
   let st = redline-style
   let eq = it.func() == math.equation
-  let w = measure(if eq { math.equation(block: true, numbering: none, it.body) } else { it }).width
-  let w = if w == 0pt or w > size.width { size.width } else { w }
+  let natural = measure(if eq { math.equation(block: true, numbering: none, it.body) } else { it })
   let h = measure(block(width: size.width, it)).height
+  // An element whose height depends on the width it gets (fractional
+  // columns, wrapped text) fills the width.
+  let w = if natural.width == 0pt or natural.width > size.width or calc.abs((natural.height - h).to-absolute()) > 0.1pt { size.width } else { natural.width }
   let a = if it.func() == align { it.alignment } else if eq or it.func() == figure { center } else { align.alignment }
   let a = if a.axis() == "horizontal" { a } else if a.axis() == none { a.x } else { start }
   it
@@ -84,7 +91,7 @@
       place(line(start: (0pt, h), end: (w, 0pt), stroke: s))
     }
     place(top + left, if start != none { redline-tag(start, -st.outset) })
-    place(bottom + left, if end != none { redline-tag("end", st.outset) })
+    place(bottom + left, if end != none { redline-tag("end", st.outset, width: size.width) })
   }))
 }))
 
@@ -205,8 +212,7 @@
   if block { parbreak() } else if gap { h(0.25em) }
 }
 
-// The page foreground: one query per page instead of introspection per mark,
-// so that marks cost no extra layout.
+// The page foreground: one query per page instead of introspection per mark.
 #let redline-bars = context {
   let st = redline-style
   let tags = query(<redline-tag>)
@@ -227,11 +233,7 @@
   let right = side(if even { ("right", "inside") } else { ("right", "outside") }, w)
   let top = side(("top",), h)
   let bottom = if h == auto { 1e4pt } else { h - side(("bottom",), h) }
-  let (cols, g, body) = (page.columns, columns.gutter, w - left - right)
-  let gap = if type(g) == length { g.to-absolute() } else if type(g) == ratio { g * body } else {
-    g.length.to-absolute() + g.ratio * body
-  }
-  let col = (body - (cols - 1) * gap) / cols
+  let body = w - left - right
   // Tags come in document order, so the first pair ending on this page is
   // found by bisection.
   let (lo, hi) = (0, n)
@@ -239,6 +241,7 @@
     let mid = calc.quo(lo + hi, 2)
     if tags.at(2 * mid + 1).location().page() < pg { lo = mid + 1 } else { hi = mid }
   }
+  let bars = ()
   let i = lo
   while i < n {
     let (a, b) = (tags.at(2 * i), tags.at(2 * i + 1))
@@ -249,20 +252,40 @@
       let y0 = if s.page == pg { calc.max(s.y + a.value.at(1).to-absolute(), top - 1em.to-absolute()) } else { top }
       let y1 = if e.page == pg { e.y + b.value.at(1).to-absolute() } else { bottom }
       let ins = a.value.at(0) == "ins"
-      let out = if ins { 0pt } else { st.lane }
-      // In the margin beside the first and last column, else in the gutter
-      // just before the column.
-      let k = calc.clamp(calc.floor((s.x - left) / (col + gap)), 0, cols - 1)
-      let x = if cols > 1 and k == cols - 1 { w - right + calc.min(st.bar-gap, right / 2) + out } else if k == 0 {
-        left - calc.min(st.bar-gap, left / 2) - out
-      } else { left + k * (col + gap) - calc.min(st.bar-gap, gap / 3) - out }
-      let (y0, y1) = (y0 + 1pt, y1 - 1pt)
-      let stroke = (paint: if ins { st.ins } else { st.del }, thickness: st.bar-width, dash: if ins { none } else {
-        (3pt, 2pt)
-      })
-      place(dx: calc.max(x, st.bar-width / 2), dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
+      // The mark is in one of `cols` containers of width `cw` side by side
+      // across the text area, as many as fit. Its bar goes just left of its
+      // container: in the margin, or in the gutter, with the lanes narrowed
+      // to fit it. Deletions are one lane further out.
+      let cw = b.value.at(2, default: none)
+      let cw = if cw == none or cw <= 0pt or cw > body { body } else { cw }
+      let cols = calc.max(calc.floor(body / cw + 0.01), 1)
+      let gap = if cols > 1 { (body - cols * cw) / (cols - 1) } else { 0pt }
+      let at = s.x - left
+      let k = calc.clamp(calc.max(calc.floor(at / (cw + gap)), calc.ceil((at - cw) / (cw + gap))), 0, cols - 1)
+      let x = if k == 0 {
+        let x = left - calc.min(st.bar-gap, left / 2)
+        if ins { x } else { x - st.lane }
+      } else {
+        let lane = calc.max(0pt, calc.min(st.lane, (gap - st.bar-width) / 2))
+        let x = left + k * (cw + gap) - calc.min(st.bar-gap, gap / 2) + lane / 2
+        if ins { x } else { x - lane }
+      }
+      bars.push((calc.max(x, st.bar-width / 2), y0 + 1pt, y1 - 1pt, ins))
     }
     i += 1
+  }
+  // Overlapping bars of one kind in one place are drawn as one, so that
+  // dashes do not overlap.
+  let merged = ()
+  for bar in bars.sorted(key: b => (b.at(0).pt(), b.at(1).pt())) {
+    let last = if merged.len() > 0 { merged.last() }
+    if last != none and last.at(0) == bar.at(0) and last.at(3) == bar.at(3) and bar.at(1) <= last.at(2) + 2pt {
+      merged.last().at(2) = calc.max(last.at(2), bar.at(2))
+    } else { merged.push(bar) }
+  }
+  for (x, y0, y1, ins) in merged {
+    let stroke = (paint: if ins { st.ins } else { st.del }, thickness: st.bar-width, dash: if ins { none } else { (3pt, 2pt) })
+    place(dx: x, dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
   }
 }
 
