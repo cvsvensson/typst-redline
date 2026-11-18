@@ -140,6 +140,8 @@ struct Writer<'a> {
     /// sections.
     top: bool,
     summary_at: Option<usize>,
+    /// Where the bars start: at the summary or before a show rule above it.
+    bars_at: Option<usize>,
     sections: Vec<Section>,
     /// Label of the section being written.
     current: Option<String>,
@@ -200,6 +202,7 @@ impl<'a> Writer<'a> {
             done: HashSet::new(),
             top: true,
             summary_at: None,
+            bars_at: None,
             sections: vec![],
             current: None,
             changes: vec![],
@@ -296,9 +299,14 @@ impl<'a> Writer<'a> {
     /// document with the summary at the place [`Self::summary_here`] chose.
     fn finish(&self, old_label: &str, new_label: &str, bib: &Bib) -> String {
         let at = self.summary_at.unwrap_or(self.entry_out.len());
+        let bars = self.bars_at.unwrap_or(at);
         let mut out = self.entry_out.clone();
-        let newline = if out[..at].ends_with('\n') || at == 0 { "" } else { "\n" };
-        out.insert_str(at, &format!("{newline}{}", self.summary(old_label, new_label, bib)));
+        let newline = |out: &str, i: usize| if out[..i].ends_with('\n') || i == 0 { "" } else { "\n" };
+        let show = format!("{}#show: {}-bars\n", newline(&out, bars), self.ctx.prefix);
+        out.insert_str(bars, &show);
+        let at = at + show.len();
+        let summary = format!("{}{}", newline(&out, at), self.summary(old_label, new_label, bib));
+        out.insert_str(at, &summary);
         format!("{}{out}", self.ctx.import())
     }
 
@@ -365,7 +373,7 @@ impl<'a> Writer<'a> {
         let p = &self.ctx.prefix;
         let keys = |ks: &[String]| format!("({})", ks.iter().map(|k| typst_str(k) + ",").collect::<String>());
         format!(
-            "#show: {p}-bars\n#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n  bib: (added: {}, removed: {}, changed: {}),\n))\n",
+            "#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},\n  entries: (\n{entries}  ),\n  bib: (added: {}, removed: {}, changed: {}),\n))\n",
             typst_str(old_label),
             typst_str(new_label),
             count(&|c| c.kind == ChangeKind::Ins),
@@ -381,6 +389,7 @@ impl<'a> Writer<'a> {
     fn summary_here(&mut self) {
         if self.top && self.file.path == self.ctx.entry() && self.summary_at.is_none() {
             self.summary_at = Some(self.out.len());
+            self.bars_at.get_or_insert(self.out.len());
         }
     }
 
@@ -399,6 +408,17 @@ impl<'a> Writer<'a> {
             self.out.push('\n');
         }
         self.out.push_str(&b.gap);
+        if config
+            && b.nodes[1].kind() == K::ShowRule
+            && self.top
+            && self.file.path == self.ctx.entry()
+            && self.summary_at.is_none()
+        {
+            // The bars wrap the rest of the document in a context, which
+            // must not hide the document's content from a template that a
+            // show rule applies, such as a slide package's.
+            self.bars_at.get_or_insert(self.out.len());
+        }
     }
 
     /// If `b` is a heading the summary lists, start its section; returns the
