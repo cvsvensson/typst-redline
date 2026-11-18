@@ -470,6 +470,24 @@ fn moved_section_is_one_move() {
 }
 
 #[test]
+fn moved_section_moved_in_parts_counts_once() {
+    let (forest, lake) = (
+        "Old beech trees shade the forest floor.\n\n",
+        "Herons wade along the shallow lake.\n\n",
+    );
+    let (bread, coast) = (
+        "Fresh bread needs a long slow rise.\n\n",
+        "The night train reaches the coast.\n\n",
+    );
+    let gulls = "Gulls circle above the harbour.\n\nSalt spray coats the windows.\n";
+    let old = format!("= Forest\n\n{forest}{lake}{bread}= Coast\n\n{coast}{gulls}\n");
+    let new = format!("= Coast\n\n{coast}{lake}{gulls}\n= Forest\n\n{forest}{bread}");
+    let out = &redline_of(&old, &new).files[0].1;
+    let forest = out.lines().find(|l| l.contains("title: [Forest]")).unwrap();
+    assert!(forest.contains("moves: 0, moved: true"), "{out}");
+}
+
+#[test]
 fn moved_list_item_is_marked_inside_its_item() {
     let out = body("moved-item");
     assert!(out.contains(&format!("- {MOVED_TO}")), "{out}");

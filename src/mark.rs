@@ -321,8 +321,8 @@ struct Section {
     deleted: bool,
     /// Inserted heading.
     new: bool,
-    /// Heading moved here.
-    moved: bool,
+    /// The move that brought the heading here.
+    moved: Option<usize>,
 }
 
 /// The file being written.
@@ -362,8 +362,8 @@ struct Writer<'a> {
     old_scope: bool,
     /// The last new block written is an item.
     after_item: bool,
-    /// The moves whose new place is written.
-    arrived: HashSet<usize>,
+    /// The moves whose new place is written, with the section it is in.
+    arrived: HashMap<usize, Option<String>>,
 }
 
 /// A run of tokens that is the same in both versions or changed.
@@ -424,7 +424,7 @@ impl<'a> Writer<'a> {
             changes: vec![],
             old_scope: false,
             after_item: false,
-            arrived: HashSet::new(),
+            arrived: HashMap::new(),
         }
     }
 
@@ -624,7 +624,7 @@ impl<'a> Writer<'a> {
             title,
             deleted: false,
             new: false,
-            moved: false,
+            moved: None,
         };
         // Changes outside sections: before the entry's first heading, and in
         // files that are not read in order (imported, or included by code).
@@ -651,6 +651,26 @@ impl<'a> Writer<'a> {
                 _ => listed.push((s, vec![s])),
             }
         }
+        // A move into a moved section of blocks that belonged to the section
+        // in the old version, after its heading, is part of the section's move.
+        let part_of = |r: usize| {
+            let Some(s) = self
+                .arrived
+                .get(&r)
+                .and_then(|t| self.sections.iter().find(|s| s.target == *t))
+            else {
+                return r;
+            };
+            let Some(own) = s.moved else { return r };
+            let (a, b) = (&self.ctx.moves[own].old, &self.ctx.moves[r].old);
+            let blocks = &self.ctx.aligned[a.0].1.docs.0.blocks;
+            let within = a.0 == b.0
+                && a.1.start < b.1.start
+                && blocks[a.1.start + 1..b.1.start]
+                    .iter()
+                    .all(|x| x.kind != Kind::Heading || x.heading_level() > s.level);
+            if within { own } else { r }
+        };
         let mut entries = String::new();
         for (s, parts) in listed {
             let here = |c: &Change| {
@@ -661,17 +681,17 @@ impl<'a> Writer<'a> {
             // A move is counted apart from edits, once in each section it
             // left or reached; a moved section's own move is its label.
             let n = count(&|c| here(c) && c.kind != ChangeKind::Moved);
-            let moves = self
+            let moves: HashSet<usize> = self
                 .changes
                 .iter()
                 .filter(|c| here(c) && c.kind == ChangeKind::Moved)
-                .map(|c| &c.text)
-                .collect::<HashSet<_>>()
-                .len();
-            if n == 0 && moves == 0 && !s.deleted {
+                .filter_map(|c| c.text.parse().ok())
+                .map(part_of)
+                .collect();
+            if n == 0 && moves.is_empty() && !s.deleted {
                 continue;
             }
-            let moves = moves - usize::from(s.moved && moves > 0);
+            let moves = moves.len() - usize::from(s.moved.is_some_and(|r| moves.contains(&r)));
             let code: String = self
                 .changes
                 .iter()
@@ -683,7 +703,7 @@ impl<'a> Writer<'a> {
                 _ => "none".into(),
             };
             // Moves are listed only where there are some.
-            let moved = match (moves, s.moved) {
+            let moved = match (moves, s.moved.is_some()) {
                 (0, false) => String::new(),
                 (_, false) => format!("moves: {moves}, "),
                 _ => format!("moves: {moves}, moved: true, "),
@@ -779,7 +799,7 @@ impl<'a> Writer<'a> {
             title: format!("[{}]", title.trim()),
             deleted: false,
             new,
-            moved: false,
+            moved: None,
         });
         self.current = Some(target);
         label
@@ -878,7 +898,7 @@ impl<'a> Writer<'a> {
         let args = format!(
             "heading: {}, down: {}, more: {more}, paragraphs: {}, items: {}",
             ob.kind == Kind::Heading,
-            !self.arrived.contains(&r),
+            !self.arrived.contains_key(&r),
             count(Kind::Para),
             count(Kind::Item)
         );
@@ -975,7 +995,7 @@ impl<'a> Writer<'a> {
             &format!("end: true, block: {}", block(new.blocks.last().unwrap(), true)),
             "",
         );
-        self.arrived.insert(r);
+        self.arrived.insert(r, None);
         let sections = self.sections.len();
         // Deleted code is evaluated with the definitions of its own file.
         let path = std::mem::replace(&mut self.file.old_path, of.old_path.clone());
@@ -986,12 +1006,13 @@ impl<'a> Writer<'a> {
             );
             self.write_new(&old, &new, s, marks);
             if k == first {
+                self.arrived.insert(r, self.current.clone());
                 self.record(ChangeKind::Moved, r.to_string());
             }
         }
         self.file.old_path = path;
         for s in &mut self.sections[sections..] {
-            s.moved = true;
+            s.moved = Some(r);
         }
     }
 
@@ -1128,7 +1149,7 @@ impl<'a> Writer<'a> {
                     title: format!("[{body}]"),
                     deleted: true,
                     new: false,
-                    moved: false,
+                    moved: None,
                 });
                 self.current = Some(key);
             }
