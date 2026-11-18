@@ -40,7 +40,7 @@ If your document uses files outside its own folder, such as `#import "../macros.
 ## What is marked
 
 - **Text:** deleted words are struck through in red, new words are highlighted in blue, and a wholly new paragraph is blue. This also works inside headings, list items, captions, bold and emphasized text.
-- **Formulas, figures, code blocks and drawings** are shown whole: the old one in a dashed red frame, the new one in a blue frame. An old image or shape without text is crossed out. Code blocks, drawings and boxes or tables with a fill of their own keep their colours inside the frame. Where the text is light, as on a dark slide, deleted words get a light background and new paragraphs a lighter blue.
+- **Formulas, figures, code blocks and drawings** are shown whole: the old one in a dashed red frame, the new one in a blue frame. An old drawing, image or shape is crossed out. A drawing in a box in the text, such as an icon, gets a frame of its own size. Code blocks, drawings and boxes or tables with a fill of their own keep their colours inside the frame. Where the text is light, as on a dark slide, deleted words get a light background and new paragraphs a lighter blue.
 - **Bars in the margin** point to every changed line, dashed for deletions and solid for insertions.
 - **Several files:** changes in files that the document includes or imports are marked too. With git, the old versions of those files, and of images the old text uses, are taken from the old commit.
 - **Moved text:** a paragraph, heading, list item or section moved elsewhere, also into another file, is shown once, unmarked at its new place, with a grey bracket and a blue "moved" note in the margin. A grey line with a red arrow at its old place names its first words and links to it. Edits made while moving are marked as usual. `--no-moves` shows moved text as deleted at one place and inserted at the other.
@@ -99,6 +99,8 @@ This is the layout to use for slides. In the default layout the deleted content 
 - In deleted code, a label passed as a named argument or written in math is taken to be attached by the code and is renamed; a label passed positionally is taken to be a reference. Code that uses labels the other way makes the tool show deleted code by name.
 - Deleted content is laid out under the new version's show and set rules, so where such a rule changed, deleted content does not look as it did in the old version. The side-by-side layout shows the old pages as they were.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
+- With Typst 0.11, right-to-left text gets no change bars, and a deletion in it fails to compile, because that version orders the tags in such text by position.
+- A text show rule with a `regex` selector stops matching where a mark cuts its match. For a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
 - A citation added to or removed from a group such as `@a @b` marks the whole group, because Typst lays the group out as one piece.
 - Entries that appear in, disappear from or change in the bibliography are not marked there. The summary page names them.
