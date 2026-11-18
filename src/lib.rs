@@ -1,6 +1,7 @@
 //! Produce a Typst project that shows the new version of a document with
 //! the changes against an old version marked.
 
+mod align;
 mod blame;
 mod mark;
 mod side;

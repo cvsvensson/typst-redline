@@ -8,6 +8,7 @@ use std::ops::Range;
 use similar::{Algorithm, DiffOp, capture_diff_slices};
 use typst_syntax::{RootedPath, Source, SyntaxKind as K, SyntaxNode, VirtualPath, VirtualRoot, parse};
 
+use crate::align::{Step, align};
 use crate::blame::{Steps, blame};
 use crate::syntax::*;
 use crate::{Bib, Change, ChangeKind, History, OLD_DIR, Options, PREAMBLE_PATH, pair_files, resolve};
@@ -36,6 +37,18 @@ pub struct Ctx {
     steps: Option<Vec<Vec<(String, String)>>>,
     /// The steps lead from the new version to the old one.
     swapped: bool,
+    /// Each new file that is to be written, by path, with its old file.
+    aligned: HashMap<String, Aligned>,
+}
+
+/// A new file and the old file it is compared with, as blocks, and the
+/// steps that write it.
+struct Aligned {
+    old_path: String,
+    /// Distinct file ids, so that a span finds its node only in its file.
+    sources: (Source, Source),
+    docs: (Doc, Doc),
+    steps: Vec<Step>,
 }
 
 impl Ctx {
@@ -60,6 +73,33 @@ impl Ctx {
             .chain((1..).map(|n| format!("redline{n}")))
             .find(|p| !used(p))
             .unwrap();
+        let pairs = pair_files(&old_files, &new_files);
+        let aligned = new_files
+            .iter()
+            .filter_map(|(path, new_src)| {
+                let old_path = pairs.get(path).cloned().unwrap_or_default();
+                let old_src = source(&old_files, &old_path).unwrap_or_default();
+                if *path != new_files[0].0 && old_src == new_src {
+                    return None;
+                }
+                let parsed = |side: &str, src: &str| {
+                    let name = format!("{side}/{path}");
+                    let id = RootedPath::new(VirtualRoot::Project, VirtualPath::new(&name).unwrap()).intern();
+                    Source::new(id, src.into())
+                };
+                let (os, ns) = (parsed("old", old_src), parsed("new", new_src));
+                let children = |s: &Source| s.root().children().cloned().collect::<Vec<_>>();
+                let docs = (Doc::new(&children(&os)), Doc::new(&children(&ns)));
+                let steps = align(&docs.0, &docs.1);
+                let a = Aligned {
+                    old_path,
+                    sources: (os, ns),
+                    docs,
+                    steps,
+                };
+                Some((path.clone(), a))
+            })
+            .collect();
         Ctx {
             prefix,
             opts,
@@ -68,11 +108,12 @@ impl Ctx {
                 .difference(&union(&new_files, definitions))
                 .cloned()
                 .collect(),
-            pairs: pair_files(&old_files, &new_files),
+            pairs,
             old_files,
             new_files,
             steps,
             swapped,
+            aligned,
         }
     }
 
@@ -244,24 +285,16 @@ impl<'a> Writer<'a> {
     /// once; an unchanged file other than the entry is not written.
     fn file(&mut self, path: &str) {
         let ctx = self.ctx;
-        let Some(new_src) = source(&ctx.new_files, path) else {
+        let Some(a) = ctx.aligned.get(path) else {
             return;
         };
         if !self.done.insert(path.to_string()) {
             return;
         }
-        let old_path = ctx.pairs.get(path).cloned().unwrap_or_default();
-        let old_src = source(&ctx.old_files, &old_path).unwrap_or_default();
         let entry = path == ctx.entry();
-        if !entry && old_src == new_src {
-            return;
-        }
-        // Distinct file ids, so that a span finds its node only in its file.
-        let parsed = |name: &str, src: &str| {
-            let id = RootedPath::new(VirtualRoot::Project, VirtualPath::new(name).unwrap()).intern();
-            Source::new(id, src.into())
-        };
-        let (os, ns) = (parsed("old.typ", old_src), parsed("new.typ", new_src));
+        let old_path = a.old_path.clone();
+        let (os, ns) = &a.sources;
+        let (old_src, new_src) = (os.text(), ns.text());
         let (o, n) = (os.root(), ns.root());
         let (mut removed, kept) = (definitions(o), definitions(n));
         removed.retain(|d| !kept.contains(d));
@@ -287,8 +320,6 @@ impl<'a> Writer<'a> {
                 (wrote, removed)
             }
         });
-        let children = |r: &SyntaxNode| r.children().cloned().collect::<Vec<_>>();
-        let (odoc, ndoc) = (Doc::new(&children(o)), Doc::new(&children(n)));
         let file = File {
             path: path.into(),
             old_path,
@@ -299,7 +330,7 @@ impl<'a> Writer<'a> {
         };
         let outer = std::mem::replace(&mut self.file, file);
         let out = std::mem::take(&mut self.out);
-        self.docs(&odoc, &ndoc);
+        self.write_steps(&a.docs.0, &a.docs.1, &a.steps);
         let marked = std::mem::replace(&mut self.out, out);
         self.file = outer;
         if entry {
@@ -610,97 +641,35 @@ impl<'a> Writer<'a> {
     }
 
     fn docs(&mut self, old: &Doc, new: &Doc) {
-        for op in capture_diff_slices(Algorithm::Patience, &old.keys(), &new.keys()) {
-            match op {
-                DiffOp::Equal { .. } => new.blocks[op.new_range()].iter().for_each(|b| self.kept(b)),
-                _ => self.region(&old.blocks[op.old_range()], &new.blocks[op.new_range()]),
+        self.write_steps(old, new, &align(old, new));
+    }
+
+    fn write_steps(&mut self, old: &Doc, new: &Doc, steps: &[Step]) {
+        // Only a deleted section's own blocks count with it.
+        let mut outer = None;
+        for &s in steps {
+            match s {
+                Step::Del(o) if old.blocks[o].kind == Kind::Heading => {
+                    outer.get_or_insert_with(|| self.current.clone());
+                }
+                Step::Del(_) => {}
+                _ => {
+                    if let Some(c) = outer.take() {
+                        self.current = c;
+                    }
+                }
             }
+            match s {
+                Step::Keep(n) => self.kept(&new.blocks[n]),
+                Step::Pair(o, n) => self.pair(&old.blocks[o], &new.blocks[n]),
+                Step::Del(o) => self.deleted(&old.blocks[o]),
+                Step::Ins(n) => self.inserted(&new.blocks[n]),
+            }
+        }
+        if let Some(c) = outer {
+            self.current = c;
         }
         self.out.push_str(&new.trailing);
-    }
-
-    /// A run of differing blocks. Similar blocks of the same kind, marker
-    /// and label are paired and diffed word by word; around each pair,
-    /// deletions come first. Across a heading that replaces another, blocks
-    /// are paired only if they are much alike: the section is likely new,
-    /// unless it was renamed. Pairing looks a bounded number
-    /// of blocks ahead, so that its cost stays linear in the length of the
-    /// run.
-    fn region(&mut self, old: &[Block], new: &[Block]) {
-        let owords: Vec<Vec<String>> = old.iter().map(|b| words(&b.toks())).collect();
-        let heading = |b: &&Block| b.kind == Kind::Heading;
-        let mut p = 0;
-        let mut pending: Vec<&Block> = vec![];
-        for nb in new {
-            let nwords = words(&nb.toks());
-            let new_section = nb.kind != Kind::Heading && pending.iter().any(heading);
-            let end = old.len().min(p + 32);
-            let old_heading = (p..end).find(|&q| old[q].kind == Kind::Heading).unwrap_or(end);
-            let best = most_similar(
-                (p..end)
-                    .filter(|&q| old[q].kind == nb.kind && old[q].frame() == nb.frame())
-                    .map(|q| (q, similarity(&owords[q], &nwords)))
-                    .filter(|&(q, s)| !new_section || q < old_heading || s >= 0.7),
-            );
-            match best {
-                Some(q) => {
-                    self.unpaired(&old[p..q], &pending);
-                    pending.clear();
-                    self.pair(&old[q], nb);
-                    p = q + 1;
-                }
-                None => pending.push(nb),
-            }
-        }
-        self.unpaired(&old[p..], &pending);
-    }
-
-    /// Deleted and inserted blocks in turn, so that a replaced block is
-    /// followed by its replacement; but leading setup code of the new
-    /// version goes first (deleted content may use its definitions), and
-    /// from the first heading on either side, sections take turns whole. A
-    /// page or column break inserted or deleted with marked content is part
-    /// of that change and is not listed.
-    fn unpaired(&mut self, old: &[Block], new: &[&Block]) {
-        let ns = new.iter().position(|b| b.kind != Kind::Setup).unwrap_or(new.len());
-        let oh = old.iter().position(|b| b.kind == Kind::Heading).unwrap_or(old.len());
-        let nh = new.iter().position(|b| b.kind == Kind::Heading).unwrap_or(new.len());
-        let old_content = old.iter().any(|b| b.kind != Kind::Setup);
-        let new_content = ns < new.len();
-        let insert = |w: &mut Self, b: &Block| {
-            if b.is_break() && new_content {
-                w.kept(b)
-            } else {
-                w.inserted(b)
-            }
-        };
-        new[..ns].iter().for_each(|b| insert(self, b));
-        let delete = |w: &mut Self, b: &Block| {
-            if !(b.is_break() && old_content) {
-                w.deleted(b)
-            }
-        };
-        for k in 0..oh.max(nh - ns) {
-            old[..oh].get(k).inspect(|b| delete(self, b));
-            new[ns..nh].get(k).inspect(|b| insert(self, b));
-        }
-        let osecs: Vec<&[Block]> = old[oh..].chunk_by(|_, b| b.kind != Kind::Heading).collect();
-        let nsecs: Vec<&[&Block]> = new[nh..].chunk_by(|_, b| b.kind != Kind::Heading).collect();
-        for k in 0..osecs.len().max(nsecs.len()) {
-            // Only a deleted section's own blocks count with it.
-            let outer = self.current.clone();
-            osecs
-                .get(k)
-                .into_iter()
-                .flat_map(|s| s.iter())
-                .for_each(|b| delete(self, b));
-            self.current = outer;
-            nsecs
-                .get(k)
-                .into_iter()
-                .flat_map(|s| s.iter())
-                .for_each(|b| insert(self, b));
-        }
     }
 
     fn kept(&mut self, b: &Block) {
