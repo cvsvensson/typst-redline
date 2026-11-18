@@ -716,9 +716,10 @@ fn only_the_pdf_is_written_next_to_the_sources() {
     std::fs::write(dir.join("new.typ"), doc("beta")).unwrap();
     let out = cli(&dir, &["old.typ", "new.typ"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let printed = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
     assert_eq!(
-        String::from_utf8_lossy(&out.stdout).trim(),
-        dir.join("new.redline.pdf").display().to_string()
+        printed.canonicalize().unwrap(),
+        dir.join("new.redline.pdf").canonicalize().unwrap()
     );
     let mut files: Vec<_> = std::fs::read_dir(&*dir)
         .unwrap()
