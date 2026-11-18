@@ -1,46 +1,76 @@
 # typst-redline
 
-An editor's proof for [Typst](https://typst.app), in the spirit of `latexdiff`: a PDF of the new version of a document with insertions highlighted, deletions struck through, change bars in the margin, and a first page listing the changed sections with links.
+`typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document: a PDF of the new version with deleted text struck out and new text highlighted. It does for Typst what `latexdiff` does for LaTeX. AI agents wrote this tool.
 
-Both versions are parsed with Typst's own parser (`typst-syntax`), so changes are found at the level of paragraphs, headings, list items and equations, then word by word inside prose. Inline and display math, references, labels and code are never split: a changed formula shows whole, old struck and new highlighted. Only the new version's labels exist in the output, so every `@ref` still resolves; labels in deleted text are dropped and references to deleted targets become plain text. Line endings are normalized, so a CRLF working copy against LF from git shows no changes.
+<img src="docs/example.png" width="480" alt="A paragraph and a formula with changes marked">
+
 
 ## Install
 
-```sh
-cargo install --path .
-```
-
-Needs the `typst` CLI on `PATH` (tested with 0.15.1).
-
-## Usage
+You need [Typst](https://github.com/typst/typst#installation), [git](https://git-scm.com/downloads) and [Rust](https://rustup.rs). Then:
 
 ```sh
-# changes in the working copy since a git revision
-typst-redline notes/notes.typ --since HEAD~3 --root .
-
-# between two revisions
-typst-redline notes/notes.typ --since v1 --to v2 --root .
-
-# between two files
-typst-redline old.typ new.typ
+cargo install --git https://github.com/cvsvensson/typst-redline
 ```
 
-The result is `<name>.redline.pdf` next to the file (`-o` to change). The generated source is written next to the new file as `<name>.redline-tmp.typ`, so that relative imports, images and the bibliography resolve, and deleted after compiling unless `--keep-typ` is given. `--root` is passed to `typst compile`.
+## Use
 
-Colors and bar position are set in a `#let redline-style = (...)` dictionary at the top of the built-in [preamble](src/preamble.typ). To change them, copy that file, edit it, and pass `--preamble my-style.typ`.
+```sh
+typst-redline paper.typ                    # changes since the last commit
+typst-redline paper.typ --since HEAD~3     # changes since an earlier commit
+typst-redline paper.typ --since v1..v2     # changes between two commits
+typst-redline old.typ new.typ              # changes between two files, no git needed
+```
+
+The result is `paper.redline.pdf` next to your file; `-o out.pdf` puts it elsewhere. Anything git accepts works after `--since`: a commit hash, a tag, a branch name.
+
+If your document uses files outside its own folder, such as `#import "../macros.typ"`, pass the project folder with `--root`, as you would to `typst compile`. `typst-redline --help` lists the other options.
+
+## What is marked
+
+Every change to the text of the document is marked where it appears, also in files the document includes or imports. Formulas are shown whole: the old one struck, the new one highlighted. The first page lists the sections that changed.
+
+Changes to code, such as a function body or a `#set` rule, cannot be shown as marks. The first page lists them as *not marked*, so no change goes unreported.
+
+Known problems:
+
+- A one-word change inside bold or emphasized text marks the whole phrase.
+- Moved text shows as deleted in one place and inserted in another.
+- Deleted code that no longer works in the new document, for example because it uses a definition you removed, is shown as source text instead of its output.
+- Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
+
+## Styling
+
+Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`.
 
 ## VS Code
 
-`vscode/` holds a minimal extension with the command *Typst Redline: Show changes since…*: it lists recent commits of the active `.typ` file, runs `typst-redline`, and opens the PDF. Build it with `npm install && npm run compile` in `vscode/`, then package it with `vsce` or load the folder as a development extension.
+The extension in `vscode/` adds the command *Typst Redline: Show changes since…*: pick a commit of the open file and it opens the PDF. It needs `typst-redline` installed as above. Build it with `npm install && npm run package` in `vscode/` and install the resulting `.vsix` with *Extensions: Install from VSIX…*.
 
-## Limitations
+## Claude Code
 
-- Bold and emphasized phrases, and code expressions such as `#figure(...)`, are compared as wholes: a one-word change inside them marks the whole element.
-- Moved text shows as deleted in one place and inserted in another.
-- Changes to `#set`, `#show`, `#let` and `#import` lines are not marked; the new version's are used. Deleted code that uses a removed definition is shown as source text.
-- Imports, figures and the bibliography are read from the working tree, so comparing two old revisions fails if they cite entries that are no longer in the bibliography.
-- A change bar marks the first and last line of a changed run inside a paragraph, not every line in between.
+[`claude-plugin/`](claude-plugin) is a plugin with a skill for compiling a Typst document and making its redline, for requests like *"send me the notes and what changed since Monday"*. Install it with
+
+```
+/plugin marketplace add cvsvensson/typst-redline
+/plugin install typst-redline@typst-redline
+```
+
+or enable it for a project in its `.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "typst-redline": { "source": { "source": "github", "repo": "cvsvensson/typst-redline" } }
+  },
+  "enabledPlugins": { "typst-redline@typst-redline": true }
+}
+```
+
+## See also
+
+[typdiff](https://github.com/sou1118/typdiff) and [typst-diff](https://github.com/alexanderkoller/typst-diff) are other tools for the same job.
 
 ## License
 
-MIT. The dependencies `typst-syntax` and `similar` are Apache-2.0, which is compatible with an MIT-licensed project; a distributed binary must carry their license notices.
+MIT
