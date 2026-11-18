@@ -2,13 +2,13 @@
 
 `typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document: a PDF of the new version with deleted text struck out and new text highlighted. It does for Typst what `latexdiff` does for LaTeX. AI agents wrote this tool.
 
-The two pictures are the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). Page 1 is a summary that explains the marks and lists the sections that changed. When the two versions come from git, it also lists the commits between them. The summary has the page setup of the document's leading `#set` rules but not its template, show rules, header or footer. In a document with `inside` and `outside` margins or a page `binding`, a blank page after the summary keeps the document on odd and even pages as in the new version.
-
-<img src="docs/example-summary.png" width="420" alt="The summary page: a legend and the list of changed sections">
-
-Page 2 is the document with the changes marked:
+The two pictures are the PDF made from [docs/example/old.typ](docs/example/old.typ) and [docs/example/new.typ](docs/example/new.typ). The document comes first, with the changes marked:
 
 <img src="docs/example.png" width="420" alt="A page with a changed sentence, formula and drawing and a new paragraph, each marked">
+
+After its last page, a summary explains the marks and lists the sections that changed. When the two versions come from git, it also lists the commits between them. The summary has the page setup of the document's leading `#set` rules but not its template, show rules, header or footer.
+
+<img src="docs/example-summary.png" width="420" alt="The summary page: a legend and the list of changed sections">
 
 With `--layout side-by-side`, the old page is shown next to the new one instead:
 
@@ -107,7 +107,6 @@ This is the layout to use for slides. In the default layout the deleted content 
 - When a figure's call and its image file both change, the old figure is drawn with the new image file.
 - A changed element that sets the page from inside a function, such as a slide, cannot be framed. The document is then compiled again with no frames around content computed at layout (calls of functions built on `context` or `layout`, which includes many drawings), and the summary page says so. With Typst 0.11, a changed drawing that needs a finite width has the same effect.
 - Pages where your document or its template sets both its own page foreground and background get no margin bars. The summary page lists those pages.
-- A document that is two-sided only through its headers or footers, such as one that tests `calc.odd(here().page())` without `inside` and `outside` margins, has its odd and even pages swapped when the summary has an odd number of pages.
 - In side-by-side, an inserted or deleted page is shown next to an empty one only when the pages have headings; otherwise it can be paired with a neighbouring page.
 
 ## Styling

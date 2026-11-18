@@ -707,14 +707,15 @@ impl<'a> Writer<'a> {
     }
 
     /// The entry's output source: the preamble import and the marked
-    /// document with the summary at the place [`Self::summary_here`] chose.
+    /// document, which from the place [`Self::summary_here`] chose on is
+    /// drawn with bars and followed by the summary.
     fn finish(&self, old_label: &str, new_label: &str, bib: &Bib, history: &History) -> String {
         let at = self.summary_at.unwrap_or(self.entry_out.len());
         let mut out = self.entry_out.clone();
         let newline = if out[..at].ends_with('\n') || at == 0 { "" } else { "\n" };
+        let p = &self.ctx.prefix;
         let start = format!(
-            "{newline}#show: {}-bars\n{}",
-            self.ctx.prefix,
+            "{newline}#show: body => {{ {p}-bars(body); {} }}\n",
             self.summary(old_label, new_label, bib, history)
         );
         out.insert_str(at, &start);
@@ -852,7 +853,7 @@ impl<'a> Writer<'a> {
             .to_typst(old_label, new_label)
             .map_or(String::new(), |h| format!("  history: {h},\n"));
         format!(
-            "#{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},{}\n  entries: (\n{entries}  ),\n  bib: {},\n{history}))\n",
+            "{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},{}\n  entries: (\n{entries}  ),\n  bib: {},\n{history}))",
             typst_str(old_label),
             typst_str(new_label),
             count(&|c| c.kind == ChangeKind::Ins),
@@ -865,9 +866,9 @@ impl<'a> Writer<'a> {
         )
     }
 
-    /// The summary goes at the top level of the entry, before its first
-    /// show rule and its first content, so that the document's template
-    /// and show rules do not apply to it.
+    /// The bars and the summary go at the top level of the entry, in a show
+    /// rule before its first show rule and its first content, so that the
+    /// document's template and show rules do not apply to the summary.
     fn summary_here(&mut self) {
         if self.top && self.file.path == self.ctx.entry() && self.summary_at.is_none() {
             self.summary_at = Some(self.out.len());
