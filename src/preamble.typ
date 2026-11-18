@@ -27,7 +27,9 @@
 // `--input redline-side=new`, and the old version marked against the new
 // one with `redline-side=old`, so that there an insertion is content only
 // the old version has. The composite of both calls
-// redline-side-by-side(info) (see there).
+// redline-side-by-side(info) (see there). With `redline-side=inline` the
+// marks look as without it but are recorded as on a side, for comparing
+// two versions that are each marked against a common base.
 
 #let redline-style = {
   let (ins, del) = (rgb("#1565c0"), rgb("#c62828"))
@@ -296,7 +298,8 @@
 // does not have: the page next to it shows it.
 #let redline-del(body, block: false, heading: none, gap: false, step: none) = {
   let st = redline-step-style(step)
-  if redline-side != none { return redline-side-mark("del", body) }
+  if redline-side not in (none, "inline") { return redline-side-mark("del", body) }
+  if redline-side == "inline" { redline-side-mark("del", body) }
   let block = block or heading != none
   let body = redline-neutral(body)
   let body = if heading != none {
@@ -347,15 +350,16 @@
   if pg == 1 {
     // For the summary and the binary: the pages with changes but without
     // bars. For the side-by-side layout also the number of pages, each
-    // change's kind (0 deleted, 1 inserted), identity and page, and the same
-    // for each heading (kind 2), whose identity is its text, all as one flat
-    // array of integers.
+    // change's kind (0 deleted, 1 inserted), identity, page and height on the
+    // page in thousandths, and the same for each heading (kind 2), whose
+    // identity is its text, all as one flat array of integers.
     let drawn = query(<redline-page>).map(m => m.location().page())
     let unbarred = query(<redline-tag>).map(t => t.location().page()).dedup().filter(p => p not in drawn)
     [#metadata(unbarred)<redline-unbarred>]
     if redline-side != none {
-      let changes = query(<redline-change>).map(m => (int(m.value.at(0) == "ins"), m.value.at(1), m.location().page()))
-      let headings = query(heading).map(h => (2, redline-hash(3, h.body), h.location().page()))
+      let y(loc) = if type(page.height) == length { int(1000 * (loc.position().y / page.height.to-absolute())) } else { 0 }
+      let changes = query(<redline-change>).map(m => (int(m.value.at(0) == "ins"), m.value.at(1), m.location().page(), y(m.location())))
+      let headings = query(heading).map(h => (2, redline-hash(3, h.body), h.location().page(), y(h.location())))
       [#metadata((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, ..changes.flatten(), ..headings.flatten()))<redline-layout>]
     }
   }
@@ -563,7 +567,9 @@
 // shown next to each other, steps-old, steps-new: pages of earlier steps of
 // the same slide, not shown), unpaired: array of (side, ins, page): changes
 // found in one version only, unmarked: array of (file, text): changed code
-// that is not marked, bib: as for `redline-summary`).
+// that is not marked, bib: as for `redline-summary`). For two versions each
+// marked against a common base, `base` names it and `histories` holds the
+// history of each in place of `history`.
 #let redline-side-by-side(info) = context {
   let st = redline-style
   let (o, n) = (info.old, info.new)
@@ -581,7 +587,9 @@
     runs.map(r => str(r.first()) + if r.len() > 1 { "–" + str(r.last()) } else { "" }).join(", ", default: "–")
   }
   let shown(ps, steps) = if ps.len() == 0 [–] else [#pages(ps)#if steps.len() > 0 [ (last step of #pages(steps + ps))]]
-  let name(side) = text(weight: "bold", fill: if side == o { st.del } else { st.ins }, side.label)
+  // Comparing two versions marked against their common base `base`.
+  let base = info.at("base", default: none)
+  let name(side) = text(weight: "bold", fill: if base != none { black } else if side == o { st.del } else { st.ins }, side.label)
   let left-out(side, ps) = side.pages - ps.map(p => p.len()).sum(default: 0)
   let hist = info.at("history", default: none)
   let steps = hist != none and hist.steps
@@ -589,10 +597,13 @@
   set page(width: auto, height: auto, margin: gap)
   set text(size: size)
   block(width: width + gap, align(center, block(width: calc.min(width + gap, 36 * size), align(left, {
-    block(text(size: 1.4em, weight: "bold")[Changes from #o.label to #n.label])
+    block(text(size: 1.4em, weight: "bold", if base == none [Changes from #o.label to #n.label] else [#o.label and #n.label compared]))
     let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
     let bib = redline-bib(info.bib)
-    if info.pairs.len() == 0 { if bib == none [No changes.] } else [
+    if info.pairs.len() == 0 { if bib == none [No changes.] } else if base != none [
+      Pages of #name(o) on the left and of #name(n) on the right, each with its changes from their merge base #raw(base) marked: #redline-ins-rules([inserted], false) and #redline-del-rules[deleted] text. Pages that show the same sections are next to each other.
+      #if lo + ln > 0 [Pages without changes in either version are left out: #lo of the #o.pages pages of #o.label and #ln of the #n.pages of #n.label.]
+    ] else [
       Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the commit that made the change]. Bars in the margin mark the changed lines.
       #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
     ]
@@ -623,7 +634,9 @@
       list(..info.unmarked.map(u => [#redline-code(u.text) in #raw(u.file)]))
     }
     if bib != none { block(bib) }
-    redline-commits(hist, o.label, n.label)
+    if base == none { redline-commits(hist, o.label, n.label) } else {
+      for (h, side) in info.histories.zip((o, n)) { redline-commits(h, raw(base), side.label) }
+    }
     for side in (o, n) {
       if side.unbarred.len() > 0 { block[Changes on these pages of #name(side) have no bars in the margin, because the document sets its own page foreground and background there: #pages(side.unbarred).] }
     }

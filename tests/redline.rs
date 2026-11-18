@@ -951,6 +951,26 @@ fn typst_before_0_14() -> bool {
 }
 
 #[test]
+fn compare_marks_each_branch_against_the_merge_base() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = repo("compare", &["alpha"]);
+    for (branch, word) in [("a", "beta"), ("b", "gamma")] {
+        git(&dir, &["checkout", "-q", "-b", branch, "c-alpha"]);
+        commit(&dir, "doc/main.typ", word);
+    }
+    let out = cli(&dir, &["doc/main.typ", "--compare", "a", "b", "--keep-typ"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let kept = Path::new(stderr.lines().find_map(|l| l.strip_prefix("kept ")).unwrap());
+    let side = |folder: &str| std::fs::read_to_string(kept.join(folder).join("main.typ")).unwrap();
+    assert_compared(&side(".redline-a"), "alpha", "beta");
+    assert_compared(&side(".redline-b"), "alpha", "gamma");
+    std::fs::remove_dir_all(kept).unwrap();
+}
+
+#[test]
 fn side_by_side_old_pages_are_the_old_document() {
     if !typst_available() || typst_before_0_14() {
         return;

@@ -10,7 +10,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use typst_syntax::{SyntaxKind, SyntaxNode, ast, parse};
 
-pub use side::{Anchor, Pair, Placed, Side, composite, pair_pages};
+pub use side::{Anchor, Pair, Placed, Side, compare_composite, composite, pair_pages};
 
 use syntax::{collapse_ws, label_name, most_similar, ref_name, similarity, tokenize, walk, words};
 

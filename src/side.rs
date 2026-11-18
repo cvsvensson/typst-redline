@@ -50,16 +50,10 @@ pub type Anchor = (u64, usize);
 /// content: the content fills pages of its own. Consecutive pairs with the
 /// same changes are steps of one slide; only the last is kept.
 pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor])) -> (Vec<Pair>, Vec<(bool, Placed)>) {
-    let unique = |a: &[Anchor]| {
-        let mut m: HashMap<u64, Option<usize>> = HashMap::new();
-        for &(id, page) in a {
-            m.entry(id).and_modify(|p| *p = None).or_insert(Some(page));
-        }
-        m
-    };
-    let (ua, ub) = (unique(anchors.0), unique(anchors.1));
-    // Old and new pages that show the same headings.
-    let same: Vec<(usize, usize)> = ua.iter().filter_map(|(id, o)| Some(((*o)?, (*ub.get(id)?)?))).collect();
+    let same: Vec<(usize, usize)> = same_headings(anchors)
+        .into_iter()
+        .map(|(i, j)| (anchors.0[i].1, anchors.1[j].1))
+        .collect();
     let elsewhere = |in_old: bool, page: usize, other: usize| {
         let there = same
             .iter()
@@ -160,6 +154,72 @@ pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor]
     (pairs, unpaired)
 }
 
+/// The headings that occur once in each version, as indices into each, in
+/// the order of the first.
+fn same_headings(anchors: (&[Anchor], &[Anchor])) -> Vec<(usize, usize)> {
+    let unique = |a: &[Anchor]| {
+        let mut m: HashMap<u64, Option<usize>> = HashMap::new();
+        for (i, &(id, _)) in a.iter().enumerate() {
+            m.entry(id).and_modify(|p| *p = None).or_insert(Some(i));
+        }
+        m
+    };
+    let (ua, ub) = (unique(anchors.0), unique(anchors.1));
+    anchors
+        .0
+        .iter()
+        .filter_map(|(id, _)| Some(((*ua.get(id)?)?, (*ub.get(id)?)?)))
+        .collect()
+}
+
+/// Pages of two versions, each marked against a common base, that show the
+/// same part of the document; `at` holds the position of each change and
+/// then each heading, in pages from the top. Positions map from one version
+/// to the other linearly between the headings both have, and a page with a
+/// change is paired with the page its position maps to.
+pub fn pair_sections(a: &Side, b: &Side, at: [&[f64]; 2]) -> Vec<Pair> {
+    let mut knots = vec![(0.0, 0.0)];
+    for (i, j) in same_headings((a.headings, b.headings)) {
+        let (x, y) = (at[0][a.changes.len() + i], at[1][b.changes.len() + j]);
+        let &(px, py) = knots.last().unwrap();
+        // Headings the versions put in a different order are left out.
+        if x >= px && y >= py {
+            knots.push((x, y));
+        }
+    }
+    knots.push((a.pages as f64, b.pages as f64));
+    let map = |x: f64, from_a: bool| {
+        let k = |&(p, q): &(f64, f64)| if from_a { (p, q) } else { (q, p) };
+        let w = knots
+            .windows(2)
+            .find(|w| x <= k(&w[1]).0)
+            .unwrap_or(&knots[knots.len() - 2..]);
+        let ((x0, y0), (x1, y1)) = (k(&w[0]), k(&w[1]));
+        if x1 > x0 {
+            y0 + (x - x0) * (y1 - y0) / (x1 - x0)
+        } else {
+            y0
+        }
+    };
+    let mut groups = vec![];
+    for (from_a, side, other, at) in [(true, a, b, at[0]), (false, b, a, at[1])] {
+        for (c, &x) in side.changes.iter().zip(at) {
+            let q = (map(x, from_a).floor() as usize + 1).clamp(1, other.pages);
+            let (pa, pb) = if from_a { (c.page, q) } else { (q, c.page) };
+            join(&mut groups, Some(pa), Some(pb));
+        }
+    }
+    groups.sort_by_key(|(o, n)| (o.first().copied(), n.first().copied()));
+    groups
+        .into_iter()
+        .map(|(o, n)| Pair {
+            old: o.into_iter().collect(),
+            new: n.into_iter().collect(),
+            ..Pair::default()
+        })
+        .collect()
+}
+
 /// Put old page `o` and new page `n` into one group, merging the groups
 /// that hold either.
 fn join(groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>, o: Option<usize>, n: Option<usize>) {
@@ -181,6 +241,51 @@ fn join(groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>, o: Option<usize>, 
 /// changes, and the commits if there are any.
 pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history: &History) -> String {
     let (pairs, unpaired) = pair_pages(old.changes, new.changes, (old.headings, new.headings));
+    let extra = history
+        .to_typst()
+        .map(|h| format!("  history: {h},\n"))
+        .unwrap_or_default();
+    source(old, new, &pairs, &unpaired, changes, bib, &extra)
+}
+
+/// The composite for two versions `a` and `b`, each marked against their
+/// merge base `base`, with positions `at` as [`pair_sections`] takes them
+/// and the changes, bibliography changes and history of each.
+pub fn compare_composite(
+    a: &Side,
+    b: &Side,
+    at: [&[f64]; 2],
+    base: &str,
+    runs: [(&[Change], &Bib, &History); 2],
+) -> String {
+    let pairs = pair_sections(a, b, at);
+    let changes = [runs[0].0, runs[1].0].concat();
+    let both = |f: fn(&Bib) -> &Vec<String>| [&f(runs[0].1)[..], f(runs[1].1)].concat();
+    let bib = Bib {
+        added: both(|b| &b.added),
+        removed: both(|b| &b.removed),
+        changed: both(|b| &b.changed),
+        files: both(|b| &b.files),
+    };
+    let history = |h: &History| h.to_typst().unwrap_or_else(|| "none".into());
+    let extra = format!(
+        "  base: {},\n  histories: ({}, {}),\n",
+        typst_str(base),
+        history(runs[0].2),
+        history(runs[1].2)
+    );
+    source(a, b, &pairs, &[], &changes, &bib, &extra)
+}
+
+fn source(
+    old: &Side,
+    new: &Side,
+    pairs: &[Pair],
+    unpaired: &[(bool, Placed)],
+    changes: &[Change],
+    bib: &Bib,
+    extra: &str,
+) -> String {
     let list = |v: &[usize]| format!("({})", v.iter().map(|p| format!("{p},")).collect::<String>());
     let side = |s: &Side| {
         format!(
@@ -196,7 +301,7 @@ pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history:
         side(old),
         side(new)
     );
-    for p in &pairs {
+    for p in pairs {
         out.push_str(&format!(
             "    (old: {}, new: {}, steps-old: {}, steps-new: {}),\n",
             list(&p.old),
@@ -206,7 +311,7 @@ pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history:
         ));
     }
     out.push_str("  ),\n  unpaired: (\n");
-    for (in_old, c) in &unpaired {
+    for (in_old, c) in unpaired {
         let side = if *in_old { "old" } else { "new" };
         out.push_str(&format!("    (side: \"{side}\", ins: {}, page: {}),\n", c.ins, c.page));
     }
@@ -218,10 +323,7 @@ pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history:
             typst_str(&c.text)
         ));
     }
-    out.push_str(&format!("  ),\n  bib: {},\n", bib.to_typst()));
-    if let Some(h) = history.to_typst() {
-        out.push_str(&format!("  history: {h},\n"));
-    }
+    out.push_str(&format!("  ),\n  bib: {},\n{extra}", bib.to_typst()));
     out.push_str("))\n");
     out
 }

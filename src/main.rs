@@ -7,8 +7,8 @@ use std::process::{Command, ExitCode, Output};
 
 use tree::{Tree, git, output};
 use typst_redline::{
-    Anchor, Commit, History, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version, composite,
-    redline,
+    Anchor, Commit, History, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline, Side, Version,
+    compare_composite, composite, redline,
 };
 
 const USAGE: &str = "\
@@ -17,11 +17,14 @@ typst-redline: mark changes between two versions of a Typst document
 Usage:
   typst-redline <file.typ> [--since <rev>] [--to <rev>] [options] [-- <typst args>]
   typst-redline <old> <new> [options] [-- <typst args>]
+  typst-redline <file.typ> --compare <rev-a> <rev-b> [options] [-- <typst args>]
 
 With one file, the old version is the file at git revision --since (default
 HEAD) and the new version is the working copy, or the file at --to. --since
 A..B is --since A --to B; --since A...B compares the merge base of A and B
 with B. With two files, each is a path or REV:PATH (:PATH for the index).
+With --compare, the file at each of two revisions is marked against their
+merge base, and the two are shown side by side (needs Typst 0.14 or later).
 
 Options:
   -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
@@ -51,11 +54,12 @@ struct Args {
     keep: bool,
     side_by_side: bool,
     each_commit: bool,
+    compare: Option<[String; 2]>,
     typst_args: Vec<String>,
 }
 
 enum Parsed {
-    Run(Args),
+    Run(Box<Args>),
     Print(String),
 }
 
@@ -71,6 +75,7 @@ fn parse_args() -> Result<Parsed, String> {
         keep: false,
         side_by_side: false,
         each_commit: false,
+        compare: None,
         typst_args: vec![],
     };
     let mut it = std::env::args().skip(1);
@@ -90,6 +95,7 @@ fn parse_args() -> Result<Parsed, String> {
             "--typst" => a.typst = val()?,
             "--keep-typ" => a.keep = true,
             "--each-commit" => a.each_commit = true,
+            "--compare" => a.compare = Some([val()?, val()?]),
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
                     "inline" => false,
@@ -108,8 +114,13 @@ fn parse_args() -> Result<Parsed, String> {
     if a.each_commit && a.files.len() != 1 {
         return Err("--each-commit works with one file, not with two".into());
     }
+    if a.compare.is_some()
+        && (a.files.len() != 1 || a.since.is_some() || a.to.is_some() || a.each_commit || a.side_by_side)
+    {
+        return Err("--compare takes one file and no --since, --to, --each-commit or --layout".into());
+    }
     match (a.files.len(), &a.since, &a.to) {
-        (1, _, _) | (2, None, None) => Ok(Parsed::Run(a)),
+        (1, _, _) | (2, None, None) => Ok(Parsed::Run(Box::new(a))),
         _ => Err("give one file, or two files without --since and --to".into()),
     }
 }
@@ -290,7 +301,11 @@ fn run(a: Args) -> Result<PathBuf, String> {
         Some(p) => {
             let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
             let needs = [
-                (a.side_by_side, "redline-side-by-side", "the side-by-side layout"),
+                (
+                    a.side_by_side || a.compare.is_some(),
+                    "redline-side-by-side",
+                    "the side-by-side layout",
+                ),
                 (a.each_commit, "redline-step-style", "--each-commit"),
             ];
             if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
@@ -303,14 +318,17 @@ fn run(a: Args) -> Result<PathBuf, String> {
         }
         None => PREAMBLE.to_string(),
     };
-    if a.side_by_side
+    if (a.side_by_side || a.compare.is_some())
         && let Some(v) = typst_version(&a.typst)
         && minor(&v) < (0, 14)
     {
         return Err(format!(
-            "the side-by-side layout needs Typst 0.14 or later, but {} is Typst {v}",
+            "the side-by-side layout and --compare need Typst 0.14 or later, but {} is Typst {v}",
             a.typst
         ));
+    }
+    if let Some(revs) = &a.compare {
+        return compare(&a, &preamble, revs);
     }
     let (old, new) = specs(&a)?;
     if new.tree.read(&new.entry).is_none() {
@@ -711,43 +729,8 @@ fn compose(
     history: &History,
     to: &Path,
 ) -> Result<(), String> {
-    type Layout = (usize, Vec<usize>, Vec<Placed>, Vec<Anchor>);
-    let layout = |(root, entry, side, _): (&Path, &String, &str, &str), label: &str| -> Result<Layout, String> {
-        let input = format!("redline-side={side}");
-        let entry = root.join(entry);
-        let args: [&dyn AsRef<OsStr>; 7] = [
-            &"--input",
-            &input,
-            &"--field",
-            &"value",
-            &"--one",
-            &entry,
-            &"<redline-layout>",
-        ];
-        let out = typst(a, root, "query", &args)?;
-        let nums = ints(&out.stdout);
-        let Some([pages, n, rest @ ..]) = nums.as_deref() else {
-            return Err(format!(
-                "cannot find the pages of the changes; the side-by-side layout needs the change bars that the preamble draws\n{}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
-        };
-        let (unbarred, rest) = rest.split_at((*n).min(rest.len()));
-        warn_unbarred(unbarred, label);
-        let (mut changes, mut headings) = (vec![], vec![]);
-        for &[kind, id, page] in rest.as_chunks::<3>().0 {
-            match kind {
-                2 => headings.push((id as u64, page)),
-                _ => changes.push(Placed {
-                    ins: kind == 1,
-                    id: id as u64,
-                    page,
-                }),
-            }
-        }
-        Ok((*pages, unbarred.to_vec(), changes, headings))
-    };
-    let ((old_pages, old_unbarred, old, old_headings), (new_pages, new_unbarred, new, new_headings)) =
+    let layout = |(root, entry, side, _): (&Path, &String, &str, &str), label| layout(a, root, entry, side, label);
+    let ((old_pages, old_unbarred, old, old_headings, _), (new_pages, new_unbarred, new, new_headings, _)) =
         (layout(sides[0], labels.0)?, layout(sides[1], labels.1)?);
     let (old_pdf, new_pdf) = (format!("/{OLD_PDF}"), format!("/{NEW_PDF}"));
     let source = composite(
@@ -781,6 +764,160 @@ fn compose(
     }
     Ok(())
 }
+
+type Layout = (usize, Vec<usize>, Vec<Placed>, Vec<Anchor>, Vec<f64>);
+
+/// The number of pages, the pages without bars, the changes and the
+/// headings of `entry` in `root` compiled with `redline-side=<side>`, and
+/// the position of each change and then each heading in pages from the top
+/// of the first.
+fn layout(a: &Args, root: &Path, entry: &str, side: &str, label: &str) -> Result<Layout, String> {
+    let input = format!("redline-side={side}");
+    let entry = root.join(entry);
+    let args: [&dyn AsRef<OsStr>; 7] = [
+        &"--input",
+        &input,
+        &"--field",
+        &"value",
+        &"--one",
+        &entry,
+        &"<redline-layout>",
+    ];
+    let out = typst(a, root, "query", &args)?;
+    let nums = ints(&out.stdout);
+    let Some([pages, n, rest @ ..]) = nums.as_deref() else {
+        return Err(format!(
+            "cannot find the pages of the changes; the side-by-side layout needs the change bars that the preamble draws\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    };
+    let (unbarred, rest) = rest.split_at((*n).min(rest.len()));
+    warn_unbarred(unbarred, label);
+    let (mut changes, mut headings, mut at) = (vec![], vec![], vec![]);
+    for &[kind, id, page, y] in rest.as_chunks::<4>().0 {
+        at.push((page - 1) as f64 + y as f64 / 1000.0);
+        match kind {
+            2 => headings.push((id as u64, page)),
+            _ => changes.push(Placed {
+                ins: kind == 1,
+                id: id as u64,
+                page,
+            }),
+        }
+    }
+    Ok((*pages, unbarred.to_vec(), changes, headings, at))
+}
+
+/// `--compare`: the file at each of two revisions marked against their merge
+/// base by an ordinary run, each staged and compiled in its own folder, and
+/// the composite that shows the two next to each other.
+fn compare(a: &Args, preamble: &str, revs: &[String; 2]) -> Result<PathBuf, String> {
+    let file = std::path::absolute(&a.files[0]).map_err(|e| e.to_string())?;
+    let at = file.parent().unwrap();
+    let base = git_text(at, &["merge-base", &revs[0], &revs[1]])?;
+    let short = git_text(at, &["rev-parse", "--short", &base])?;
+    let root = a.root.as_deref();
+    let old = spec(&file, Some(&base), root, short.clone())?;
+    let news = [
+        spec(&file, Some(&revs[0]), root, revs[0].clone())?,
+        spec(&file, Some(&revs[1]), root, revs[1].clone())?,
+    ];
+    if let Some(new) = news.iter().find(|n| n.tree.read(&n.entry).is_none()) {
+        return Err(format!("{} does not exist in {}", new.entry, new.label));
+    }
+    let pdf = output_path(a, &old, &news[1])?;
+    let staging = Staging::new(a.keep);
+    let dir = &staging.dir;
+    write(dir, &[(PREAMBLE_PATH.into(), preamble.into())])?;
+    let read_old = |p: &str| old.tree.read(p);
+    let old_v = Version {
+        label: old.label.clone(),
+        entry: old.entry.clone(),
+        read: &read_old,
+    };
+    let mut runs = vec![];
+    for (new, folder) in news.iter().zip(COMPARE_SIDES) {
+        let root = dir.join(folder);
+        let read_new = |p: &str| new.tree.read(p);
+        let new_v = Version {
+            label: new.label.clone(),
+            entry: new.entry.clone(),
+            read: &read_new,
+        };
+        let history = log(&old, new)?.map(|l| l.history).unwrap_or_default();
+        let mut first_error = String::new();
+        let mut done = None;
+        for (i, (opts, note)) in LADDER.into_iter().enumerate() {
+            let result = redline(&old_v, &new_v, opts, &history);
+            if i == 0 {
+                for w in &result.warnings {
+                    eprintln!("warning: {}: {w}", new.label);
+                }
+                stage(&root, &old, new, &result)?;
+                write(&root, &[(PREAMBLE_PATH.into(), preamble.into())])?;
+            }
+            write(&root, &result.files)?;
+            let side_pdf = dir.join(format!("{folder}.pdf"));
+            let args: [&dyn AsRef<OsStr>; 4] = [&"--input", &"redline-side=inline", &root.join(&new.entry), &side_pdf];
+            let out = typst(a, &root, "compile", &args)?;
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            if out.status.success() {
+                eprint!("{stderr}");
+                if !note.is_empty() {
+                    eprintln!(
+                        "note: {}: {note}, because the full proof failed to compile ({first_error})",
+                        new.label
+                    );
+                }
+                done = Some(result);
+                break;
+            }
+            if first_error.is_empty() {
+                first_error = stderr
+                    .lines()
+                    .find(|l| l.starts_with("error:"))
+                    .unwrap_or_default()
+                    .into();
+            }
+            if i == LADDER.len() - 1 {
+                eprint!("{stderr}");
+            }
+        }
+        let result = done.ok_or(format!("typst compile failed for {}", new.label))?;
+        let layout = layout(a, &root, &new.entry, "inline", &new.label)?;
+        runs.push((result, history, layout));
+    }
+    let pdfs = COMPARE_SIDES.map(|f| format!("/{f}.pdf"));
+    let side = |k: usize| {
+        let (_, _, (pages, unbarred, changes, headings, _)) = &runs[k];
+        Side {
+            label: &news[k].label,
+            pdf: &pdfs[k],
+            pages: *pages,
+            unbarred,
+            changes,
+            headings,
+        }
+    };
+    let run = |k: usize| (&runs[k].0.changes[..], &runs[k].0.bib, &runs[k].1);
+    let at = [&runs[0].2.4[..], &runs[1].2.4];
+    let source = compare_composite(&side(0), &side(1), at, &short, [run(0), run(1)]);
+    write(dir, &[(COMPOSITE.into(), source)])?;
+    let tmp = dir.with_extension(pdf.extension().unwrap_or("pdf".as_ref()));
+    let out = typst(a, dir, "compile", &[&dir.join(COMPOSITE), &tmp])?;
+    if !out.status.success() {
+        return Err(format!(
+            "the side-by-side composite failed to compile\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let written = std::fs::copy(&tmp, &pdf);
+    let _ = std::fs::remove_file(&tmp);
+    written.map_err(|e| format!("cannot write {}: {e}", pdf.display()))?;
+    Ok(pdf)
+}
+
+const COMPARE_SIDES: [&str; 2] = [".redline-a", ".redline-b"];
 
 /// The output of `typst query --field value --one` for a flat array of
 /// integers.
@@ -844,7 +981,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match run(args) {
+    match run(*args) {
         Ok(pdf) => {
             println!("{}", pdf.display());
             ExitCode::SUCCESS
