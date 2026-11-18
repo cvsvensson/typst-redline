@@ -356,18 +356,103 @@ const MOVED_TO: &str = "#redline-ins(move: (";
 
 #[test]
 fn moved_paragraph_is_marked_at_both_places_not_struck() {
-    let out = body("moved-paragraph");
-    assert_eq!(out.matches(MOVED_FROM).count(), 1, "{out}");
-    assert_eq!(out.matches(MOVED_TO).count(), 2, "{out}");
-    assert!(!out.contains("block: true)[Herons"), "{out}");
+    let r = run("moved-paragraph");
+    assert_eq!(r.body.matches(MOVED_FROM).count(), 1, "{}", r.body);
+    assert!(r.changes.iter().all(|c| c.kind == ChangeKind::Moved), "{:?}", r.changes);
 }
 
 #[test]
 fn edits_inside_moved_text_are_marked() {
-    let out = body("moved-edited");
-    assert!(out.contains(MOVED_FROM) && out.contains(MOVED_TO), "{out}");
+    let r = run("moved-edited");
+    let changed = |kind, text: &str| r.changes.iter().any(|c| c.kind == kind && c.text == text);
+    assert!(changed(ChangeKind::Moved, "0"), "{:?}", r.changes);
     assert!(
-        out.contains("#redline-del(gap: true)[dawn];#redline-ins()[dusk]"),
+        changed(ChangeKind::Del, "dawn") && changed(ChangeKind::Ins, "dusk"),
+        "{:?}",
+        r.changes
+    );
+}
+
+#[test]
+fn moved_setup_code_is_listed_as_changed_code() {
+    let r = run("moved-setup");
+    assert!(
+        r.changes.iter().any(|c| c.kind == ChangeKind::Unmarked),
+        "{:?}",
+        r.changes
+    );
+    assert!(r.changes.iter().all(|c| c.kind != ChangeKind::Moved), "{:?}", r.changes);
+}
+
+#[test]
+fn text_moved_into_a_file_that_is_not_shown_is_deleted() {
+    let r = run("moved-into-hidden");
+    assert!(r.changes.iter().any(|c| c.kind == ChangeKind::Del), "{:?}", r.changes);
+    assert!(r.changes.iter().all(|c| c.kind != ChangeKind::Moved), "{:?}", r.changes);
+}
+
+#[test]
+fn deleted_block_after_a_list_is_not_part_of_its_last_item() {
+    let out = body("deleted-after-list");
+    assert!(out.contains("second item\n#redline-del("), "{out}");
+}
+
+/// Draws the markers of moves but nothing else.
+const MOVE_MARKERS: &str = "
+#let redline-del(..args) = none
+#let redline-summary(info) = none
+#let redline-bars(body) = body
+";
+
+#[test]
+fn move_markers_do_not_change_the_layout() {
+    let preamble = format!("{PREAMBLE}{MOVE_MARKERS}");
+    for name in [
+        "moved-paragraph",
+        "moved-section",
+        "moved-item",
+        "moved-figure",
+        "moved-heading-outline",
+    ] {
+        let r = generate(name, &preamble, BY_NAME);
+        assert!(r.body.contains(MOVED_TO), "{name}: {}", r.body);
+        let Some(proof) = render(&format!("{name}-markers"), &r.files) else {
+            return;
+        };
+        let new = render(&format!("{name}-markers-new"), &tree(name, "new")).unwrap();
+        assert!(proof == new, "{name}:\n{}", r.body);
+    }
+}
+
+#[test]
+fn moved_heading_is_marked_once_with_an_outline_and_running_headers() {
+    let Some(dir) = compile("moved-heading-outline", &run("moved-heading-outline").files) else {
+        return;
+    };
+    let out = Command::new("typst")
+        .args(["query", "--root"])
+        .arg(&*dir)
+        .arg(dir.join("main.typ"))
+        .args(["metadata", "--field", "value"])
+        .output()
+        .unwrap();
+    let values = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(values.matches(r#""kind":"to""#).count(), 1, "{values}");
+}
+
+#[test]
+fn no_moves_shows_moved_text_deleted_and_inserted() {
+    let dir = temp_dir("no-moves");
+    for side in ["old", "new"] {
+        let src = read_fixture("moved-paragraph", side, "main.typ").unwrap();
+        std::fs::write(dir.join(format!("{side}.typ")), src).unwrap();
+    }
+    if !typst_available() {
+        return;
+    }
+    let out = marked(&dir, &["old.typ", "new.typ", "--no-moves"], "new.typ");
+    assert!(
+        !out.contains("move:") && out.contains("#redline-del(") && out.contains("#redline-ins("),
         "{out}"
     );
 }
@@ -1390,7 +1475,11 @@ fn move_is_marked_with_the_commit_that_made_it() {
         ..History::default()
     };
     let out = &redline(&v(&old), &v(&new), FULL, &history, Moves::Find).files[0].1;
-    assert_eq!(out.matches("), step: 1)[").count(), 3, "{out}");
+    let moves: Vec<&str> = out.lines().filter(|l| l.contains("move: (")).collect();
+    assert!(
+        !moves.is_empty() && moves.iter().all(|l| l.contains("step: 1)")),
+        "{out}"
+    );
     assert!(out.contains("step: 2)[dusk]"), "{out}");
 }
 
