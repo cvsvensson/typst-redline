@@ -320,14 +320,8 @@ fn deleted_code_sees_the_old_definitions_and_files() {
     let Some(dir) = compile("old-definitions-query", &run("old-definitions").files) else {
         return;
     };
-    let out = Command::new("typst")
-        .args(["query", "--root"])
-        .arg(&*dir)
-        .arg(dir.join("main.typ"))
-        .args(["metadata", "--field", "value"])
-        .output()
-        .unwrap();
-    assert!(String::from_utf8_lossy(&out.stdout).contains("\"oldold\""), "{out:?}");
+    let caption = query_field(&dir, "figure", "caption");
+    assert_eq!(caption.matches(r#""text":"old""#).count(), 2, "{caption}");
 }
 
 #[test]
@@ -503,15 +497,8 @@ fn moved_heading_is_marked_once_with_an_outline_and_running_headers() {
     let Some(dir) = compile("moved-heading-outline", &run("moved-heading-outline").files) else {
         return;
     };
-    let out = Command::new("typst")
-        .args(["query", "--root"])
-        .arg(&*dir)
-        .arg(dir.join("main.typ"))
-        .args(["metadata", "--field", "value"])
-        .output()
-        .unwrap();
-    let values: String = String::from_utf8_lossy(&out.stdout).split_whitespace().collect();
-    assert_eq!(values.matches(r#""kind":"to""#).count(), 1, "{values}");
+    let labels = query_field(&dir, r#"state("").update(none).func()"#, "label");
+    assert_eq!(labels.matches("redline-move-to-").count(), 1, "{labels}");
 }
 
 #[test]
@@ -674,11 +661,17 @@ fn probe(name: &str) -> Option<String> {
 
 /// The values of the elements with `label` in the compiled project in `dir`.
 fn query(dir: &Path, label: &str) -> String {
+    query_field(dir, label, "value")
+}
+
+/// The `field` of the elements that `selector` finds in the compiled project
+/// in `dir`.
+fn query_field(dir: &Path, selector: &str, field: &str) -> String {
     let out = Command::new("typst")
         .args(["query", "--root"])
         .arg(dir)
         .arg(dir.join("main.typ"))
-        .args([label, "--field", "value"])
+        .args([selector, "--field", field])
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -701,7 +694,7 @@ fn change_that_a_function_drops_is_listed() {
     let Some(dir) = compile("text-parsed-body", &files) else {
         return;
     };
-    let lost = query(&dir, "<redline-lost>");
+    let lost = query_field(&dir, "<redline-lost>", "key");
     let texts: Vec<&str> = lost
         .split(|c: char| !c.is_ascii_digit())
         .filter_map(|i| Some(r.changes.get(i.parse::<usize>().ok()?)?.text.as_str()))
@@ -783,7 +776,7 @@ fn change_in_hidden_content_is_listed() {
     let Some(dir) = compile("hidden-change", &files) else {
         return;
     };
-    assert_eq!(query(&dir, "<redline-lost>"), "[[0,1]]");
+    assert_eq!(query_field(&dir, "<redline-lost>", "key"), r#"["0,1"]"#);
 }
 
 #[test]
@@ -1054,6 +1047,18 @@ fn document_reads_the_physical_page_numbers_of_the_new_version() {
 }
 
 #[test]
+fn document_queries_find_only_the_new_versions_elements() {
+    let Some(marked) = probe("tool-metadata") else {
+        return;
+    };
+    let new = query(
+        &compile("tool-metadata-new", &tree("tool-metadata", "new")).unwrap(),
+        "<probe>",
+    );
+    assert_eq!(marked, new);
+}
+
+#[test]
 fn counters_stepped_by_deleted_content_keep_the_new_numbers() {
     if let Some(v) = probe("deleted-numbered") {
         assert_eq!(v, "[[2]]");
@@ -1112,7 +1117,7 @@ fn page_foregrounds_of_the_document_are_kept_with_the_bars() {
         return;
     };
     assert!(query(&dir, "<probe>").contains("\"draft\""));
-    assert_eq!(query(&dir, "<redline-unbarred>"), "[[]]");
+    assert_eq!(query_field(&dir, "<redline-unbarred>", "key"), r#"[""]"#);
 }
 
 #[test]

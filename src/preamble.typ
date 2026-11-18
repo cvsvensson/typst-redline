@@ -95,6 +95,14 @@
   redline-style + redline-colours(cs.at(calc.rem(step - 1, cs.len())))
 }
 
+// The tool's own bookkeeping: a labelled update of the state "redline",
+// which the document's queries do not find as they find metadata.
+// `redline-value` reads its value back. The binary reads the key, which for
+// `redline-ints` lists the integers.
+#let redline-meta(value, label, key: "redline") = [#state(key, none).update(value)#label]
+#let redline-value(m) = state(m.key).at(m.location())
+#let redline-ints(ints, label) = redline-meta(ints, label, key: if ints.len() == 0 { "" } else { ints.map(str).join(",") })
+
 // Each mark is bracketed by two of these; `redline-bars` draws a bar in the
 // margin from the start of one to its end, `dy` beyond the tags. The end tag
 // records the width of the column, cell or other container it is in, the
@@ -103,7 +111,7 @@
 // break from separating it from the mark. `redline-bars` labels the tag
 // `<redline-tag>` where it is visible.
 #let redline-tag(kind, dy, width: none, step: none, id: none) = if kind != "end" or width != none {
-  [#metadata((kind, dy, width, if width != none { columns.gutter }, step, if width != none { page.columns }, id))<redline-tag-at>]
+  redline-meta((kind, dy, width, if width != none { columns.gutter }, step, if width != none { page.columns }, id), <redline-tag-at>)
 } else [\u{2060}#box(layout(size => redline-tag(kind, dy, width: size.width)))]
 
 // Spaces at the edges of a mark go outside it: a struck space looks like a
@@ -308,15 +316,15 @@
 #let redline-keep-states = "states" in redline-fallback
 
 // Whether content holds something that would affect the rest of the
-// document: a label, a footnote, a reference, a state update.
+// document: a label, a footnote, a reference, metadata, a state update.
 #let redline-effect(c) = type(c) == content and (
-  c.func() in (footnote, ref) or c.has("label") or not redline-keep-states and repr(c.func()) == "state-update"
+  c.func() in (footnote, ref, metadata) or c.has("label") or not redline-keep-states and repr(c.func()) == "state-update"
     or c.fields().values().any(v => redline-effect(v) or type(v) == array and v.any(redline-effect))
 )
 
-// Deleted content without effects on the rest of the document: labels and
-// state updates removed, footnotes inline, references to a target or
-// citation the new document lacks as text. Show rules cannot do this,
+// Deleted content without effects on the rest of the document: labels,
+// metadata and state updates removed, footnotes inline, references to a
+// target or citation the new document lacks as text. Show rules cannot do this,
 // because an element is registered before they run, so the content is
 // rebuilt; styles on the way to such an element are lost. Counter updates
 // stay, so that the content is numbered as in the old version;
@@ -338,7 +346,7 @@
 #let redline-neutral(c) = {
   if not redline-effect(c) { return c }
   let f = c.func()
-  if repr(f) == "state-update" { return [] }
+  if f == metadata or repr(f) == "state-update" { return [] }
   if f == footnote { return [ (#redline-neutral(c.body))] }
   if f == ref {
     let sup = c.at("supplement", default: none)
@@ -402,12 +410,15 @@
       counter(k).update((..now) => d.enumerate().map(((i, x)) => calc.max(0, now.pos().at(i, default: 0) - x)))
     }
   }
-  // Counting the state updates before each end is cheaper than finding
-  // those inside every deletion.
-  let states = counter(redline-state-update)
-  let changed = if states.at(here()) != states.at(start) { inside(redline-state-update).map(u => u.key).dedup() } else { () }
+  // Counting the state updates before each end, the tool's own apart, is
+  // cheaper than finding those inside every deletion.
+  let count(c) = c.at(here()).first() - c.at(start).first()
+  let own(u) = u.has("label") and str(u.label).starts-with("redline-")
+  let changed = if count(counter(redline-state-update)) != count(counter(redline-state-update.where(key: "redline"))) {
+    inside(redline-state-update).filter(u => not own(u)).map(u => u.key).dedup()
+  } else { () }
   let lost = changed + if inside(redline-counter-update.where(key: page)).len() > 0 { (page,) } else { () }
-  if lost.len() > 0 [#metadata(lost)<redline-unrestored>]
+  if lost.len() > 0 { redline-meta(lost, <redline-unrestored>) }
 }
 
 #let redline-del-look(body, st: redline-style) = {
@@ -442,7 +453,7 @@
 #let redline-side-mark(kind, body, id: none) = {
   // `body` is a move's key for a move.
   let kind = if redline-side == "old" { if kind == "ins" { "del" } else { "ins" } } else { kind }
-  [#metadata((kind, redline-hash(if kind == "ins" { 1 } else { 2 }, body), id))<redline-change>]
+  redline-meta((kind, redline-hash(if kind == "ins" { 1 } else { 2 }, body), id), <redline-change>)
 }
 
 // A move is bracketed by tags of its own, because it encloses ordinary
@@ -454,10 +465,10 @@
 #let redline-move-tag(kind, id, step: none, block: false) = {
   let v = (kind: kind, id: id, step: step, block: block)
   if kind != "end" {
-    let tag = [#metadata(v)#label("redline-move-" + kind + "-" + str(id))]
+    let tag = redline-meta(v, label("redline-move-" + kind + "-" + str(id)))
     if block { tag } else { box(tag) }
   } else {
-    let tag = layout(size => [#metadata(v + (width: size.width, gutter: columns.gutter, columns: page.columns))<redline-move>])
+    let tag = layout(size => redline-meta(v + (width: size.width, gutter: columns.gutter, columns: page.columns), <redline-move>))
     if block { place(tag) } else [\u{2060}#box(tag)]
   }
 }
@@ -552,7 +563,7 @@
   }
   // A label of its own, which is found faster than the last of many.
   let start = label("redline-del-start-" + repr(id))
-  [#metadata(none)#start]
+  redline-meta(none, start)
   redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, step: step, id: id)
   redline-restore(start)
   if block { parbreak() } else if gap { h(0.25em) }
@@ -608,7 +619,7 @@
   // Notes and the legend are laid out left to right, as the bars are.
   set text(dir: ltr)
   let pg = here().page()
-  [#metadata(from)<redline-page>]
+  redline-meta(from, <redline-page>)
   let m = page.margin
   if pg == 1 {
     // For the summary and the binary: the pages with changes but without
@@ -618,12 +629,12 @@
     // whose identity is its text, all as one flat array of integers.
     let drawn = query(<redline-page>).map(m => m.location().page())
     let unbarred = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location().page()).dedup().filter(p => p not in drawn)
-    [#metadata(unbarred)<redline-unbarred>]
+    redline-ints(unbarred, <redline-unbarred>)
     if redline-side != none {
-      let changes = query(<redline-change>).map(m => (int(m.value.at(0) == "ins"), m.value.at(1), m.location().page()))
+      let changes = query(<redline-change>).map(m => (int(redline-value(m).at(0) == "ins"), redline-value(m).at(1), m.location().page()))
       let headings = query(heading).map(h => (2, redline-hash(3, h.body), h.location().page()))
-      let lost = query(<redline-lost>).map(m => m.value).flatten()
-      [#metadata((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, lost.len(), ..lost, ..changes.flatten(), ..headings.flatten()))<redline-layout>]
+      let lost = query(<redline-lost>).map(redline-value).flatten()
+      redline-ints((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, lost.len(), ..lost, ..changes.flatten(), ..headings.flatten()), <redline-layout>)
     }
   }
   let tags = query(<redline-tag>)
@@ -694,14 +705,15 @@
     let (a, b) = (tags.at(2 * i), tags.at(2 * i + 1))
     let (s, e) = (a.location().position(), b.location().position())
     if s.page > pg { break }
+    let (a, b) = (redline-value(a), redline-value(b))
     // A mark ending above the text area is in a header or title bar.
     if e.page > pg or e.y > top {
-      let y0 = if s.page == pg { calc.max(s.y + a.value.at(1).to-absolute(), top - 1em.to-absolute()) } else { top }
-      let y1 = if e.page == pg { e.y + b.value.at(1).to-absolute() } else { bottom }
-      let ins = a.value.at(0) == "ins"
+      let y0 = if s.page == pg { calc.max(s.y + a.at(1).to-absolute(), top - 1em.to-absolute()) } else { top }
+      let y1 = if e.page == pg { e.y + b.at(1).to-absolute() } else { bottom }
+      let ins = a.at(0) == "ins"
       // Deletions are one lane further out.
-      let (x, ..) = bar-x(s, e, b.value.at(2, default: none), b.value.at(3, default: none), b.value.at(5, default: none), if ins { 0 } else { 1 })
-      let sst = redline-step-style(a.value.at(4, default: none))
+      let (x, ..) = bar-x(s, e, b.at(2, default: none), b.at(3, default: none), b.at(5, default: none), if ins { 0 } else { 1 })
+      let sst = redline-step-style(a.at(4, default: none))
       bars.push((x, y0 + 1pt, y1 - 1pt, ins, if ins { sst.ins } else { sst.del }))
     }
     i += 1
@@ -742,13 +754,13 @@
     if ends.at(mid).location().page() < pg { lo = mid + 1 } else { hi = mid }
   }
   for t in ends.slice(lo) {
-    let v = t.value
+    let v = redline-value(t)
     let a = redline-move-find("to", v.id)
     if a == none { continue }
     let (s, e) = (a.location().position(), t.location().position())
     if s.page > pg { break }
     // Brackets of moves that follow each other stay a little apart.
-    let y0 = if s.page < pg { top } else { s.y - (if a.value.block { 0.1em } else { 0.8em }).to-absolute() + 2.5pt }
+    let y0 = if s.page < pg { top } else { s.y - (if redline-value(a).block { 0.1em } else { 0.8em }).to-absolute() + 2.5pt }
     let y1 = if e.page > pg { bottom } else { e.y + (if v.block { 0em } else { 0.3em }).to-absolute() - 2.5pt }
     let stroke = st.move-stroke + st.move
     // The end of a line of text can reach past the column; its column is
@@ -779,7 +791,7 @@
       ([moved from p. #n #arrow], [moved#linebreak()from p. #n #arrow], [moved])
     } else { ([moved],) }
     let free = if right-side { edge - 2pt - x - 3pt } else { x - 3pt - edge - 2pt }
-    let sst = redline-step-style(a.value.step)
+    let sst = redline-step-style(redline-value(a).step)
     let style = text.with(size: 6.5pt, fill: if redline-side == "old" { sst.del } else { sst.ins }, top-edge: "cap-height", bottom-edge: "baseline", hyphenate: false)
     let note = notes.map(n => { set par(leading: 0.4em); style(n) }).find(n => measure(n).width <= free)
     if note != none {
@@ -791,7 +803,7 @@
   // if there is room. A page number is taken to be one line high; in
   // Typst 0.11 an unset footer reads as none.
   let hist = query(<redline-history>)
-  let legend = if merged.len() > 0 and hist.len() > 0 { redline-legend(hist.first().value, body) }
+  let legend = if merged.len() > 0 and hist.len() > 0 { redline-legend(redline-value(hist.first()), body) }
   if legend != none {
     let margin = side(("bottom",), h)
     let foot = if page.footer not in (none, auto) { page.footer } else if page.numbering != none and page.number-align.y == redline-bottom-left.y [0]
@@ -816,14 +828,15 @@
   // foreground drew them. Not a query of all pages, which would cost time
   // with the square of their number.
   let fallback = context {
-    let next = query(selector(<redline-page>).after(here())).find(m => m.value == "fg")
+    let next = query(selector(<redline-page>).after(here())).find(m => redline-value(m) == "fg")
     if next == none or next.location().page() != here().page() { redline-page-bars("bg") }
   }
   set page(foreground: { fg; redline-page-bars("fg") }, background: { bg; fallback })
   // Marks in hidden content get no bars and count as not laid out. A query
   // finds an element that a show rule replaced, so the visible tags are
   // the ones labelled here.
-  show <redline-tag-at>: t => [#metadata(t.value)<redline-tag>]
+  // The visible tag repeats the value that the tag set just before it.
+  show <redline-tag-at>: t => [#state("redline").update(v => v)<redline-tag>]
   show hide: it => {
     show <redline-tag-at>: none
     it
@@ -875,7 +888,7 @@
 // The commits from the old version to the new one, each in the colour of
 // its marks if marks are coloured by commit; none without a history.
 #let redline-commits(hist, old, new) = if hist != none and "groups" in hist {
-  [#metadata(hist)<redline-history>]
+  redline-meta(hist, <redline-history>)
   redline-groups(hist, old, new)
 } else if hist != none {
   let row(step, ..cells) = if hist.steps {
@@ -884,7 +897,7 @@
   } else { cells.pos() }
   let rows = hist.commits.enumerate().map(p => row(hist.earlier + p.at(0) + 1, raw(p.at(1).hash), p.at(1).date, p.at(1).subject))
   if hist.uncommitted { rows.push(row(hist.earlier + hist.commits.len() + 1, [], [], emph[Uncommitted changes])) }
-  if hist.steps [#metadata(hist)<redline-history>]
+  if hist.steps { redline-meta(hist, <redline-history>) }
   block(below: 1.5em, {
     block(below: 0.8em, strong[Commits from #old to #new])
     if hist.earlier > 0 { block(emph[#hist.earlier earlier commits, not listed]) }
@@ -914,26 +927,30 @@
 
 #let redline-move-legend(st) = [Moved text is shown once, unmarked at its new place, with a grey bracket #redline-move-bracket and a #text(fill: st.ins, size: 0.8em)[moved] note in the margin; at its old place a #text(fill: redline-style.move)[grey line] with an arrow #text(fill: st.del, sym.arrow.b) names its first words and links to it. Edits made while moving are marked as usual.]
 
-// The ids of the marks laid out, as keys. One query for all entries: calls
-// of a function are cached.
+// The start tags of the marks laid out; tags come in pairs.
+#let redline-starts() = {
+  let tags = query(<redline-tag>)
+  range(0, tags.len(), step: 2).map(i => tags.at(i))
+}
+
+// The ids of the marks laid out, as keys.
 #let redline-laid-out() = {
   let ids = (:)
-  let at(label, k) = query(label).map(t => t.value.at(k, default: none))
-  for i in at(<redline-tag>, 6) + at(<redline-change>, 2) {
+  let at(tags, k) = tags.map(t => redline-value(t).at(k, default: none))
+  for i in at(redline-starts(), 6) + at(query(<redline-change>), 2) {
     if i != none { ids.insert(str(i), true) }
   }
   ids
 }
 
-// The marks among `marks` that were not laid out, such as marks in content
-// that a function reads as text, listed as code; a move counts as laid out
-// if its new place is.
-#let redline-lost(marks) = context {
-  let shown = redline-laid-out()
+// The marks among `marks` that were not laid out (`shown` is from
+// `redline-laid-out`), such as marks in content that a function reads as
+// text, listed as code; a move counts as laid out if its new place is.
+#let redline-lost(marks, shown) = {
   let lost = marks.filter(m => if "move" in m {
     query(label("redline-move-to-" + str(m.move))).len() == 0
   } else { str(m.id) not in shown })
-  if lost.len() > 0 { [#metadata(lost.map(m => m.id))<redline-lost>] }
+  if lost.len() > 0 { redline-ints(lost.map(m => m.id), <redline-lost>) }
   if lost.len() > 0 and redline-side == none {
     pad(left: 1.5em, text(size: 0.85em, {
       block(text(fill: redline-style.del)[Changes that did not reach the page, not marked:])
@@ -974,8 +991,8 @@
 // which are neither outlined nor bookmarked, do not count.
 #let redline-under-headings(marks) = {
   let at = (:)
-  for t in query(<redline-tag>) {
-    let id = t.value.at(6)
+  for t in redline-starts() {
+    let id = redline-value(t).at(6)
     if id != none and str(id) not in at { at.insert(str(id), t.location()) }
   }
   let kept(x) = x.level <= 2 and (x.at("outlined", default: true) or x.at("bookmarked", default: auto) != false)
@@ -1003,7 +1020,8 @@
   // Pages of its own, without the document's header, footer and numbers.
   pagebreak(weak: true)
   set page(header: none, footer: none, numbering: none)
-  {
+  context {
+    let shown = redline-laid-out()
     // English, whatever language the document is in.
     set text(lang: "en", dir: ltr)
     block({
@@ -1022,13 +1040,13 @@
       if bib != none { block(below: 1.5em, bib) }
       if redline-fallback-note != none { block(below: 1.5em, text(fill: st.del, redline-fallback-note)) }
       context {
-        let unbarred = query(<redline-unbarred>).map(m => m.value).flatten()
+        let unbarred = query(<redline-unbarred>).map(redline-value).flatten()
         if unbarred.len() > 0 {
           block(text(fill: st.del)[Changes on these pages of this PDF have no bars in the margin, because the document sets its own page foreground and background there: #unbarred.map(str).join(", ").])
         }
         let lost = query(<redline-unrestored>)
         if lost.len() > 0 {
-          let keys = lost.map(m => m.value).flatten().dedup()
+          let keys = lost.map(redline-value).flatten().dedup()
           let pages = lost.map(m => m.location().page()).dedup()
           let names = keys.map(k => if k == page [the page counter] else { raw(k) }).join(", ")
           let (it, that) = if keys.len() == 1 { ([a state], [that state]) } else { ([states], [those states]) }
@@ -1040,7 +1058,7 @@
       let row(level, line, e) = block(above: 0.5em, below: 0.5em, pad(left: (level - min-level) * 1.5em, {
         line
         if e.code.len() > 0 { pad(left: 1.5em, text(size: 0.85em, e.code.map(redline-code).join())) }
-        redline-lost(e.marks)
+        redline-lost(e.marks, shown)
       }))
       for e in info.entries {
         let note = if e.code.len() > 0 [; changed code not marked]
@@ -1075,7 +1093,7 @@
       }
     })
   }
-} else { redline-lost(info.entries.map(e => e.marks).flatten()) }
+} else { context redline-lost(info.entries.map(e => e.marks).flatten(), redline-laid-out()) }
 
 // The side-by-side layout. `info` is (old, new: (label, pdf: the version
 // compiled with `redline-side`, pages, unbarred: pages with changes but no

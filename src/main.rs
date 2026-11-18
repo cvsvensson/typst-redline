@@ -734,7 +734,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                     &dir.join(&new.entry),
                     &"<redline-unbarred>",
                     &"--field",
-                    &"value",
+                    &"key",
                     &"--one",
                 ];
                 let out = typst(&a, dir, "query", &args)?;
@@ -1308,7 +1308,7 @@ fn compose(
             &"--input",
             &input,
             &"--field",
-            &"value",
+            &"key",
             &"--one",
             &entry,
             &"<redline-layout>",
@@ -1405,11 +1405,11 @@ fn both<A: Send, B>(f: impl FnOnce() -> A + Send, g: impl FnOnce() -> B) -> (A, 
     })
 }
 
-/// The output of `typst query --field value --one` for a flat array of
-/// integers.
+/// The output of `typst query --field key --one` for the integers that the
+/// preamble's `redline-ints` lists.
 fn ints(stdout: &[u8]) -> Option<Vec<usize>> {
     let s = String::from_utf8_lossy(stdout);
-    let s = s.trim().strip_prefix('[')?.strip_suffix(']')?.trim();
+    let s = s.trim().strip_prefix('"')?.strip_suffix('"')?.trim();
     if s.is_empty() {
         return Some(vec![]);
     }
