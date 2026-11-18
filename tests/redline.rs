@@ -683,7 +683,10 @@ fn working_copy_is_compared_with_head_by_default() {
     }
     let dir = repo("default-head", &["alpha", "beta"]);
     std::fs::write(dir.join("doc/main.typ"), doc("gamma")).unwrap();
-    assert_compared(&marked(&dir.join("doc"), &["main.typ"], "main.typ"), "beta", "gamma");
+    let src = marked(&dir.join("doc"), &["main.typ"], "main.typ");
+    assert_compared(&src, "beta", "gamma");
+    // No list of commits that holds only the uncommitted changes.
+    assert!(!src.contains("uncommitted"), "{src}");
 }
 
 #[test]
