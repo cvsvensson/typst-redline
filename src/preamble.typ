@@ -54,7 +54,10 @@
     ins: ins,
     ins-fill: rgb("#d8eaff"),
     del: del,
-    strike: 0.7pt + del,
+    // Behind deleted text on a dark background.
+    del-fill: rgb("#fde4e4"),
+    // As thick as the text is large, so that it does not cover small text.
+    strike: 0.065em + del,
     // Frames of block-level elements, this far outside them.
     ins-frame: 0.6pt + ins,
     del-frame: (paint: del, thickness: 0.6pt, dash: "dashed"),
@@ -79,7 +82,8 @@
   ins: c,
   ins-fill: c.lighten(80%),
   del: c,
-  strike: 0.7pt + c,
+  del-fill: c.lighten(85%),
+  strike: 0.065em + c,
   ins-frame: 0.6pt + c,
   del-frame: (paint: c, thickness: 0.6pt, dash: "dashed"),
 )
@@ -95,9 +99,10 @@
 // records the width of the column, cell or other container it is in, the
 // column gutter in effect and the number of page columns; the start tag
 // carries the mark's id, for the summary. The word joiner keeps a line
-// break from separating it from the mark.
+// break from separating it from the mark. `redline-bars` labels the tag
+// `<redline-tag>` where it is visible.
 #let redline-tag(kind, dy, width: none, step: none, id: none) = if kind != "end" or width != none {
-  [#metadata((kind, dy, width, if width != none { columns.gutter }, step, if width != none { page.columns }, id))<redline-tag>]
+  [#metadata((kind, dy, width, if width != none { columns.gutter }, step, if width != none { page.columns }, id))<redline-tag-at>]
 } else [\u{2060}#box(layout(size => redline-tag(kind, dy, width: size.width)))]
 
 // Spaces at the edges of a mark go outside it: a struck space looks like a
@@ -144,7 +149,7 @@
 // which no frame can hold, so the "frames" fallback leaves it unframed.
 #let redline-framed(c, sole) = (
   c.func() in (figure, block, align, grid, table, stack, pad, columns)
-    or c.func() == math.equation and c.block
+    or c.func() in (math.equation, raw) and c.block
     or sole and repr(c.func()) in ("image", "rect", "square", "circle", "ellipse", "polygon", "line", "path", "curve")
     or sole and repr(c.func()) in ("context", "layout") and "frames" not in redline-fallback
 )
@@ -172,9 +177,11 @@
   let a = if it.func() == align { it.alignment } else if eq or it.func() == figure { center } else { align.alignment }
   let a = if a.axis() == "horizontal" { a } else if a.axis() == none { a.x } else { start }
   it
+  // Content of no height, such as an empty header, gets no frame.
+  let empty = h == 0pt and repr(it.func()) != "line"
   place(top + a, box(width: w, height: h, {
-    place(rect(width: 100%, height: 100%, stroke: stroke, outset: st.outset))
-    if cross {
+    if not empty { place(rect(width: 100%, height: 100%, stroke: stroke, outset: st.outset)) }
+    if cross and not empty {
       let s = 0.6pt + stroke.paint.transparentize(40%)
       place(line(start: (0pt, 0pt), end: (w, h), stroke: s))
       place(line(start: (0pt, h), end: (w, 0pt), stroke: s))
@@ -190,16 +197,40 @@
   (c.func())(redline-end-in(c.child), c.styles)
 } else { c + redline-tag("end", 0.3em) }
 
+// Whether content takes no room in the flow, such as placed content or a
+// counter update.
+#let redline-roomless(c) = type(c) == content and (
+  c.func() in (place, metadata, [ ].func(), parbreak)
+    or repr(c.func()) in ("counter-update", "state-update")
+    or c.func() == [].func() and c.children.all(redline-roomless)
+    or repr(c.func()) == "styled" and redline-roomless(c.child)
+)
+
+// Whether content shows colours of its own that a mark's colour or strike
+// would make hard to read: a raw block, or an element with a fill.
+#let redline-own-colours(c) = type(c) == content and (
+  c.func() == raw and c.block
+    or c.func() not in (text, highlight) and c.at("fill", default: none) != none
+    or c.fields().values().any(v => redline-own-colours(v) or type(v) == array and v.any(redline-own-colours))
+)
+
 // The parts of a mark with its tags and frames: `style` applied to each run
 // of parts that are not framed, `frame-style` to each framed part that shows
-// text. A drawing or image is drawn as written, with only `plain` applied:
-// its frame (crossed, if deleted) is the mark, and a colour would reach its
-// labels but not its lines. A figure's caption is styled all the same.
+// text. A drawing, an image, or content with colours of its own is drawn as
+// written, with only `plain` applied: its frame is the mark. A colour would
+// reach the labels of a drawing but not its lines. A deleted image or shape
+// is also crossed; content computed at layout is not, since it can hold
+// text. A figure's caption is styled all the same. The tags around content
+// that takes no room are placed, so that they do not form a line.
 #let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, step: none, id: none) = {
   let (lead, ch, trail) = redline-parts(body)
   let n = ch.len()
   let framed = ch.map(c => redline-framed(c, block and n == 1))
-  let styled = n > 0 and not framed.last() and repr(ch.last().func()) == "styled"
+  let roomless = block and n > 0 and ch.all(redline-roomless)
+  let styled = n > 0 and not roomless and not framed.last() and repr(ch.last().func()) == "styled"
+  // A tag between blocks is at the top of the next line; the bar goes in
+  // the gap above it.
+  let start-dy = if roomless { -1em } else { -0.8em }
   let out = ()
   let run = ()
   for (i, c) in ch.enumerate() {
@@ -207,9 +238,12 @@
       if run.len() > 0 { out.push(style(run.join())) }
       run = ()
       let start = if i == 0 { kind }
-      let drawing = not redline-textual(if c.func() == figure { c.body } else { c })
-      let f = redline-frame(c, stroke, cross: kind == "del" and drawing, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
-      out.push(if not drawing { frame-style(f) } else if c.func() == figure {
+      let b = if c.func() == figure { c.body } else { c }
+      let drawing = not redline-textual(b)
+      let own = drawing or redline-own-colours(b)
+      let cross = kind == "del" and drawing and repr(b.func()) not in ("context", "layout")
+      let f = redline-frame(c, stroke, cross: cross, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
+      out.push(if not own { frame-style(f) } else if c.func() == figure {
         show figure.caption: frame-style
         plain(f)
       } else { plain(f) })
@@ -219,7 +253,7 @@
       let cl = c.text.clusters()
       run += (text(cl.first()), redline-tag(kind, -0.8em, step: step, id: id), text(cl.slice(1).join()))
     } else {
-      if i == 0 { run.push(redline-tag(kind, -0.8em, step: step, id: id)) }
+      if i == 0 { run.push(redline-tag(kind, start-dy, step: step, id: id)) }
       run.push(if i == n - 1 and styled { redline-end-in(c) } else { c })
     }
   }
@@ -231,14 +265,24 @@
   // it would get a page of its own; such a tag has no width of its container.
   if n == 1 and block and not framed.last() and repr(ch.last().func()) in ("context", "layout") {
     context redline-tag("end", 0.3em, width: 0pt)
+  } else if roomless {
+    place(layout(size => redline-tag("end", -0.2em, width: size.width)))
   } else if n == 0 or not (framed.last() or styled) { redline-tag("end", 0.3em) }
   trail
 }
 
-// Whole new blocks are coloured; new words inside a kept block are also
-// filled and underlined, which stays visible in greyscale.
+// Whether the text colour in effect is light, as it is on a dark
+// background, where the colours of marks are hard to read.
+#let redline-light-text() = type(text.fill) == color and {
+  let (r, g, b) = text.fill.rgb().components(alpha: false)
+  0.2126 * r + 0.7152 * g + 0.0722 * b > 60%
+}
+
+// Whole new blocks are coloured, lighter on a dark background; new words
+// inside a kept block are also filled and underlined, which stays visible
+// in greyscale and on any background.
 #let redline-ins-rules(body, block, st: redline-style) = {
-  if block { return text(fill: st.ins, body) }
+  if block { return context text(fill: if redline-light-text() { st.ins.lighten(60%) } else { st.ins }, body) }
   set text(fill: st.ins)
   // A box keeps a fill behind math but stops it from breaking across lines.
   show math.equation.where(block: false): it => context if measure(it).width < 0.2 * page.width {
@@ -351,7 +395,9 @@
   }
   // A document's own text colours must not make a deletion look inserted.
   show text: set text(fill: st.del)
-  text(fill: st.del, strike(stroke: st.strike, body))
+  let struck = text(fill: st.del, strike(stroke: st.strike, body))
+  // On a dark background, a light one of its own keeps it legible.
+  context if redline-light-text() { highlight(fill: st.del-fill, struck) } else { struck }
 }
 
 #let redline-del-rules(body, st: redline-style) = redline-del-unlisted(redline-del-look(body, st: st))
@@ -742,6 +788,14 @@
     redline-page-bars("bg")
   }
   set page(foreground: { fg; redline-page-bars("fg") }, background: { bg; fallback })
+  // Marks in hidden content get no bars and count as not laid out. A query
+  // finds an element that a show rule replaced, so the visible tags are
+  // the ones labelled here.
+  show <redline-tag-at>: t => [#metadata(t.value)<redline-tag>]
+  show hide: it => {
+    show <redline-tag-at>: none
+    it
+  }
   body
 }
 
