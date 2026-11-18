@@ -1,5 +1,6 @@
 /target
-*.redline-tmp.typ
 *.redline.pdf
 vscode/node_modules
 vscode/out
+vscode/.vscode-test
+*.vsix

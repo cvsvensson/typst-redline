@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches Cargo.toml version
+        run: test "v$(cargo pkgid | sed 's/.*[#@]//')" = "$GITHUB_REF_NAME"
+      - run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  upload:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    env:
+      # Static CRT, so the Windows binary does not need the VC++ redistributable.
+      RUSTFLAGS: ${{ contains(matrix.target, 'windows') && '-C target-feature=+crt-static' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: typst-redline
+          target: ${{ matrix.target }}
+          # Pure-Rust dependencies: plain cargo cross-compiles every target here, no `cross` needed.
+          build-tool: cargo
+          locked: true
+          include: LICENSE,README.md
+          checksum: sha256

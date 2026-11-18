@@ -6,6 +6,10 @@ description = "Editor's proof for Typst: the new version of a document with chan
 license = "MIT"
 keywords = ["typst", "diff", "latexdiff"]
 categories = ["command-line-utilities", "text-processing"]
+repository = "https://github.com/cvsvensson/typst-redline"
+readme = "README.md"
+rust-version = "1.92"
+include = ["/src", "/README.md", "/LICENSE"]
 
 [dependencies]
 similar = "3.2.1"
