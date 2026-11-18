@@ -47,7 +47,7 @@ If your document uses files outside its own folder, such as `#import "../macros.
 - **Code:** a change inside the `[...]` content arguments of a call, such as a template's title or abstract, is marked like other text. A call whose other arguments change is marked whole: the old call deleted, the new one inserted. Code that does not show on the page, such as a function body or a `#set` rule, cannot be marked: the summary page lists the changed lines or arguments, old and new, as *changed code not marked*.
 - **Files the document reads:** when an image or data file changes while the call that reads it (`image`, `json`, `csv`, `read` and similar) stays the same, the summary page lists the file as changed. Files read through a computed path are not detected.
 
-With the deleted parts removed, the marked document has the same text, layout and numbering as the new version.
+With the deleted parts removed, the marked document has the same text, layout and numbering as the new version; states are the exception (see Known problems). Deleted figures and equations are numbered where they stand without shifting the numbers after them.
 
 ## Who changed what
 
@@ -91,6 +91,8 @@ This is the layout to use for slides. In the default layout the deleted content 
 - Paragraphs reordered inside a moved section show as deleted and inserted inside it.
 - A moved passage in a middle column of a page with three or more columns, and one in a narrow margin, has a bracket but no "moved" note.
 - Deleted content shifts line and page breaks compared with the new version.
+- Deleted content that updates a state, for example in a show rule of a package, leaves the state changed after it, because Typst records no initial value to set it back to. What reads the state later can differ from the new version; the summary page names such states. Counters are set back.
+- In deleted code, a label passed as a named argument or written in math is taken to be attached by the code and is renamed; a label passed positionally is taken to be a reference. Code that uses labels the other way makes the tool show deleted code by name.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
 - A citation added to or removed from a group such as `@a @b` marks the whole group, because Typst lays the group out as one piece.
 - Entries that appear in, disappear from or change in the bibliography are not marked there. The summary page names them.

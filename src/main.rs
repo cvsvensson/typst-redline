@@ -458,20 +458,32 @@ fn renamed(old: &Spec, to: Option<&str>) -> Option<String> {
 
 /// Tried in turn until one compiles: marks inside code can break
 /// functions that inspect their body, and deleted code can fail (the old
-/// version it is evaluated in fails on its own).
-const LADDER: [(Options, &str); 4] = [
+/// version it is evaluated in fails on its own). The flag keeps state updates
+/// in deleted content, which some code needs but which can change what
+/// reads the state after it.
+const LADDER: [(Options, bool, &str); 5] = [
     (
         Options {
             eval_deleted: true,
             content_blocks: true,
         },
+        false,
         "",
+    ),
+    (
+        Options {
+            eval_deleted: true,
+            content_blocks: true,
+        },
+        true,
+        "state updates in deleted content are kept",
     ),
     (
         Options {
             eval_deleted: false,
             content_blocks: true,
         },
+        false,
         "deleted code is shown by name",
     ),
     (
@@ -479,6 +491,7 @@ const LADDER: [(Options, &str); 4] = [
             eval_deleted: true,
             content_blocks: false,
         },
+        false,
         "changed code is marked whole",
     ),
     (
@@ -486,6 +499,7 @@ const LADDER: [(Options, &str); 4] = [
             eval_deleted: false,
             content_blocks: false,
         },
+        false,
         "deleted code is shown by name and changed code is marked whole",
     ),
 ];
@@ -630,13 +644,18 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
             &[&"--input", &input, &root.join(entry), &dir.join(pdf)],
         )
     };
-    for (i, (opts, note)) in LADDER.into_iter().enumerate() {
+    for (i, (opts, keep_states, note)) in LADDER.into_iter().enumerate() {
+        // The side-by-side layout shows no deleted content.
+        if keep_states && a.side_by_side {
+            continue;
+        }
+        let states = format!("redline-states={}", if keep_states { "keep" } else { "drop" });
         if i > 0 {
             result = redline(&old_v, &new_v, opts, &history, moves);
         }
         write(dir, &result.files)?;
         let out = if !a.side_by_side {
-            typst(&a, dir, "compile", &[&dir.join(&new.entry), &tmp])?
+            typst(&a, dir, "compile", &[&"--input", &states, &dir.join(&new.entry), &tmp])?
         } else {
             let back_history = History {
                 steps: history.steps.clone(),
@@ -672,7 +691,9 @@ fn run(a: Args, reviewed: Option<&str>) -> Result<PathBuf, String> {
                 // Bars are lost only where the document sets both, and asking
                 // where costs another compile. The summary page lists such
                 // pages in any case.
-                let args: [&dyn AsRef<OsStr>; 5] = [
+                let args: [&dyn AsRef<OsStr>; 7] = [
+                    &"--input",
+                    &states,
                     &dir.join(&new.entry),
                     &"<redline-unbarred>",
                     &"--field",

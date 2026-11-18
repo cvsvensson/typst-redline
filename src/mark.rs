@@ -1205,22 +1205,29 @@ impl<'a> Writer<'a> {
         s
     }
 
-    /// Source for deleted content: labels removed, references to unknown
-    /// targets turned into text. `None` if the code cannot be kept live:
-    /// deleted code is not evaluated (and then neither is math using removed
-    /// definitions), or it uses deleted labels.
+    /// Source for deleted content: labels removed or renamed, references to
+    /// unknown targets turned into text. `None` if the code cannot be kept
+    /// live: deleted code is not evaluated (and then neither is math using
+    /// removed definitions), or it uses deleted labels.
     fn sanitize(&self, nodes: &[SyntaxNode]) -> Option<String> {
         let mut out = String::new();
         for n in nodes {
-            self.sanitize_into(n, true, &mut out)?;
+            self.sanitize_into(n, K::Markup, &mut out)?;
         }
         Some(out)
     }
 
-    fn sanitize_into(&self, n: &SyntaxNode, markup: bool, out: &mut String) -> Option<()> {
+    fn sanitize_into(&self, n: &SyntaxNode, parent: K, out: &mut String) -> Option<()> {
         let eval = self.ctx.opts.eval_deleted;
         match n.kind() {
-            K::Label if markup => {}
+            K::Label if parent == K::Markup => {}
+            // A label passed as a named argument or written in math is one
+            // that code attaches, possibly at layout where the preamble cannot
+            // remove it; under another name it does not define the label a
+            // second time. A positional label is taken for a reference.
+            K::Label if matches!(parent, K::Named | K::Math) => {
+                out.push_str(&format!("<{}-del-label-{}>", self.ctx.prefix, label_name(n)));
+            }
             K::Label => {
                 if !self.ctx.new_targets.contains(&label_name(n)) {
                     return None;
@@ -1240,9 +1247,8 @@ impl<'a> Writer<'a> {
             K::MathIdent if !eval && self.file.removed.contains(n.leaf_text().as_str()) => return None,
             _ if n.children().len() == 0 => out.push_str(&old_leaf(n)),
             _ => {
-                let m = n.kind() == K::Markup;
                 for c in n.children() {
-                    self.sanitize_into(c, m, out)?;
+                    self.sanitize_into(c, n.kind(), out)?;
                 }
             }
         }

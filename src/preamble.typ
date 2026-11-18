@@ -207,18 +207,25 @@
   highlight(fill: st.ins-fill, stroke: (bottom: 0.5pt + st.ins), body)
 }
 
+// Whether state updates in deleted content are kept. A state cannot be set
+// back after the deletion (see `redline-restore`), so they are dropped unless
+// the document fails to compile without them.
+#let redline-keep-states = sys.inputs.at("redline-states", default: none) == "keep"
+
 // Whether content holds something that would affect the rest of the
-// document: a label, a footnote, a reference, a state or counter update.
+// document: a label, a footnote, a reference, a state update.
 #let redline-effect(c) = type(c) == content and (
-  c.func() in (footnote, ref) or c.has("label") or repr(c.func()) in ("state-update", "counter-update")
+  c.func() in (footnote, ref) or c.has("label") or not redline-keep-states and repr(c.func()) == "state-update"
     or c.fields().values().any(v => redline-effect(v) or type(v) == array and v.any(redline-effect))
 )
 
 // Deleted content without effects on the rest of the document: labels and
-// updates removed, footnotes inline, references to a target or citation
-// the new document lacks as text. Show rules cannot do this, because an
-// element is registered before they run, so the content is rebuilt; styles
-// on the way to such an element are lost.
+// state updates removed, footnotes inline, references to a target or
+// citation the new document lacks as text. Show rules cannot do this,
+// because an element is registered before they run, so the content is
+// rebuilt; styles on the way to such an element are lost. Counter updates
+// stay, so that the content is numbered as in the old version;
+// `redline-restore` undoes them.
 // Whether a deleted citation of `key` can be laid out here without changing
 // the new document's bibliography or numbering: the new document cites the
 // key, and cites no other key for the first time between here and its first
@@ -236,7 +243,7 @@
 #let redline-neutral(c) = {
   if not redline-effect(c) { return c }
   let f = c.func()
-  if repr(f) in ("state-update", "counter-update") { return [] }
+  if repr(f) == "state-update" { return [] }
   if f == footnote { return [ (#redline-neutral(c.body))] }
   if f == ref {
     let sup = c.at("supplement", default: none)
@@ -259,12 +266,39 @@
   f(..fs, ..positional, ..body, ..children)
 }
 
-// Deleted content must not step equation, figure or heading counters.
-#let redline-del-counters(body) = {
-  set math.equation(numbering: none)
-  set figure(numbering: none)
-  set heading(numbering: none, outlined: false, bookmarked: false)
+// Deleted figures and headings stay out of outlines and bookmarks.
+#let redline-del-unlisted(body) = {
+  set figure(outlined: false)
+  set heading(outlined: false, bookmarked: false)
   body
+}
+
+#let redline-counter-update = counter("").update(0).func()
+#let redline-state-update = state("").update(none).func()
+
+// Placed after deleted content: sets every counter that the content changed
+// back to its value before it, whoever keeps the counter. A state cannot be
+// set back, because its value before can depend on the initial value that
+// each reader passes, which nothing records; neither can the page counter,
+// which steps with the pages. The summary lists those that the content
+// updates, such as states that a show rule updates.
+#let redline-restore = context {
+  let start = query(selector(<redline-del-start>).before(here())).last().location()
+  let inside(s) = query(selector(s).after(start).before(here()))
+  let keys = query(redline-counter-update).map(u => u.key)
+  keys += (selector(heading), selector(math.equation)) + inside(figure).map(f => figure.where(kind: f.kind))
+  // By the change inside the content rather than to the value before it:
+  // that value depends on the updates of every earlier deletion, so that
+  // setting it would take a layout pass per deletion to settle.
+  for k in keys.dedup().filter(k => k != page) {
+    let (b, a) = (counter(k).at(start), counter(k).at(here()))
+    if a != b {
+      counter(k).update((..now) => b.enumerate().map(((i, v)) => calc.max(0, now.pos().at(i, default: 0) - a.at(i, default: 0) + v)))
+    }
+  }
+  let page-updates = inside(redline-counter-update).filter(u => u.key == page)
+  let lost = inside(redline-state-update).map(u => u.key).dedup() + if page-updates.len() > 0 { (page,) } else { () }
+  if lost.len() > 0 [#metadata(lost)<redline-unrestored>]
 }
 
 #let redline-del-look(body, st: redline-style) = {
@@ -280,7 +314,7 @@
   text(fill: st.del, strike(stroke: st.strike, body))
 }
 
-#let redline-del-rules(body, st: redline-style) = redline-del-counters(redline-del-look(body, st: st))
+#let redline-del-rules(body, st: redline-style) = redline-del-unlisted(redline-del-look(body, st: st))
 
 // The version laid out for the side-by-side layout, or none.
 #let redline-side = sys.inputs.at("redline-side", default: none)
@@ -340,6 +374,7 @@
     let spacing = if sys.version >= version(0, 12, 0) { par.spacing } else { 1.2em }
     block(above: spacing, below: spacing, width: 100%, layout(size => {
       set text(size: 0.85em, fill: redline-style.move, hyphenate: false)
+      [#metadata(none)<redline-del-start>]
       redline-move-tag("from", m.id, step: step)
       let pieces = redline-pieces(redline-neutral(note))
       let style = if m.heading { strong } else { emph }
@@ -365,8 +400,9 @@
         k = calc.floor(k * size.width / full)
         while k > 0 and (pieces.at(k - 1) == [ ] or measure(line(k)).width > size.width) { k -= 1 }
       }
-      let line = redline-del-counters(line(k))
+      let line = redline-del-unlisted(line(k))
       if to == none { line } else { link(to.location(), line) }
+      redline-restore
     }))
   }
   parbreak()
@@ -404,7 +440,9 @@
   } else { body }
   if block { parbreak() }
   let rules = redline-del-rules.with(st: st)
-  redline-mark("del", body, block, rules, st.del-frame, frame-style: rules, plain: redline-del-counters, step: step)
+  [#metadata(none)<redline-del-start>]
+  redline-mark("del", body, block, rules, st.del-frame, frame-style: rules, plain: redline-del-unlisted, step: step)
+  redline-restore
   if block { parbreak() } else if gap { h(0.25em) }
 }
 
@@ -770,6 +808,15 @@
         let unbarred = query(<redline-unbarred>).map(m => m.value).flatten()
         if unbarred.len() > 0 {
           block(text(fill: st.del)[Changes on these pages of this PDF have no bars in the margin, because the document sets its own page foreground and background there: #unbarred.map(str).join(", ").])
+        }
+        let lost = query(<redline-unrestored>)
+        if lost.len() > 0 {
+          let keys = lost.map(m => m.value).flatten().dedup()
+          let pages = lost.map(m => m.location().page()).dedup()
+          let names = keys.map(k => if k == page [the page counter] else { raw(k) }).join(", ")
+          let (it, that) = if keys.len() == 1 { ([a state], [that state]) } else { ([states], [those states]) }
+          let on = if pages.len() == 1 [page] else [pages]
+          block(below: 1.5em, text(fill: st.del)[Deleted content on #on #pages.map(str).join(", ") updates #it (#names). What reads #that afterwards can differ from the new version.])
         }
       }
       let min-level = calc.min(..info.entries.map(e => e.level), 9)

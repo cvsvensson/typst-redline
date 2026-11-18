@@ -799,6 +799,42 @@ New text.
 }
 
 #[test]
+fn counters_stepped_by_deleted_content_keep_the_new_numbers() {
+    if let Some(v) = probe("deleted-numbered") {
+        assert_eq!(v, "[[2]]");
+    }
+}
+
+#[test]
+fn label_passed_to_deleted_code_is_not_defined_twice() {
+    compile("label-argument", &run("label-argument").files);
+}
+
+#[test]
+fn deleted_environment_that_checks_its_state_is_evaluated() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("state-check");
+    let doc = |title: &str| {
+        format!(
+            "#let inside = state(\"inside\", false)
+#let algo(title: \"\", body) = block[*#title* #inside.update(true)#body#inside.update(false)]
+#let check = context assert(inside.get())
+Text.
+
+#algo(title: \"{title}\")[total #check]
+"
+        )
+    };
+    std::fs::write(dir.join("old.typ"), doc("Sum")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc("Total")).unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && !stderr.contains("by name"), "{stderr}");
+}
+
+#[test]
 fn citation_added_to_a_group_marks_the_group() {
     let r = run("citation-group");
     assert!(r.body.contains("#redline-ins()[@a @b]"), "{}", r.body);
