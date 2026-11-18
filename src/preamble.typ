@@ -361,28 +361,42 @@
 #let redline-counter-update = counter("").update(0).func()
 #let redline-state-update = state("").update(none).func()
 
-// Placed after deleted content: sets every counter that the content changed
-// back to its value before it, whoever keeps the counter. A state cannot be
-// set back, because its value before can depend on the initial value that
-// each reader passes, which nothing records; neither can the page counter,
-// which steps with the pages. The summary lists those that the content
-// updates, such as states that a show rule updates.
-#let redline-restore = context {
-  let start = query(selector(<redline-del-start>).before(here())).last().location()
-  let inside(s) = query(selector(s).after(start).before(here()))
+// The counters that deleted content can change: those that the document
+// updates by hand, and those of headings, equations and each kind of figure.
+// Calls of a function are cached, so this is one query per layout pass for
+// all deletions.
+#let redline-counter-keys() = {
   let keys = query(redline-counter-update).map(u => u.key)
-  keys += (selector(heading), selector(math.equation)) + inside(figure).map(f => figure.where(kind: f.kind))
+  keys += (selector(heading), selector(math.equation)) + query(figure).map(f => figure.where(kind: f.kind))
+  keys.dedup().filter(k => k != page)
+}
+
+// Placed after deleted content that starts at the last element labelled
+// `start`: sets every counter that the content changed back to its value
+// before it, whoever keeps the counter. A state cannot be set back, because
+// its value before can depend on the initial value that each reader passes,
+// which nothing records; neither can the page counter, which steps with the
+// pages. The summary lists those that the content updates, such as states
+// that a show rule updates.
+#let redline-restore(start) = context {
+  let start = query(selector(start).before(here())).last().location()
+  let inside(s) = query(selector(s).after(start).before(here()))
   // By the change inside the content rather than to the value before it:
   // that value depends on the updates of every earlier deletion, so that
-  // setting it would take a layout pass per deletion to settle.
-  for k in keys.dedup().filter(k => k != page) {
+  // setting it would take a layout pass per deletion to settle. The update
+  // holds only the change, so that it is the same in every pass.
+  for k in redline-counter-keys() {
     let (b, a) = (counter(k).at(start), counter(k).at(here()))
-    if a != b {
-      counter(k).update((..now) => b.enumerate().map(((i, v)) => calc.max(0, now.pos().at(i, default: 0) - a.at(i, default: 0) + v)))
+    let d = b.enumerate().map(((i, v)) => a.at(i, default: 0) - v)
+    if d.any(x => x != 0) or a.len() != b.len() {
+      counter(k).update((..now) => d.enumerate().map(((i, x)) => calc.max(0, now.pos().at(i, default: 0) - x)))
     }
   }
-  let page-updates = inside(redline-counter-update).filter(u => u.key == page)
-  let lost = inside(redline-state-update).map(u => u.key).dedup() + if page-updates.len() > 0 { (page,) } else { () }
+  // Counting the state updates before each end is cheaper than finding
+  // those inside every deletion.
+  let states = counter(redline-state-update)
+  let changed = if states.at(here()) != states.at(start) { inside(redline-state-update).map(u => u.key).dedup() } else { () }
+  let lost = changed + if inside(redline-counter-update.where(key: page)).len() > 0 { (page,) } else { () }
   if lost.len() > 0 [#metadata(lost)<redline-unrestored>]
 }
 
@@ -461,7 +475,6 @@
     let spacing = if sys.version >= version(0, 12, 0) { par.spacing } else { 1.2em }
     block(above: spacing, below: spacing, width: 100%, layout(size => {
       set text(size: 0.85em, fill: redline-style.move, hyphenate: false)
-      [#metadata(none)<redline-del-start>]
       redline-move-tag("from", m.id, step: step)
       let pieces = redline-pieces(redline-neutral(note))
       let style = if m.heading { strong } else { emph }
@@ -489,7 +502,7 @@
       }
       let line = redline-del-unlisted(line(k))
       if to == none { line } else { link(to.location(), line) }
-      redline-restore
+      redline-restore(label("redline-move-from-" + str(m.id)))
     }))
   }
   parbreak()
@@ -527,9 +540,11 @@
   let look = if heading == none { rules } else {
     b => rules(text(weight: "bold", size: if heading == 1 { 1.4em } else { 1.2em }, b))
   }
-  [#metadata(none)<redline-del-start>]
+  // A label of its own, which is found faster than the last of many.
+  let start = label("redline-del-start-" + repr(id))
+  [#metadata(none)#start]
   redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, step: step, id: id)
-  redline-restore
+  redline-restore(start)
   if block { parbreak() } else if gap { h(0.25em) }
 }
 
@@ -785,8 +800,13 @@
 // content, but the bars are in the margin.
 #let redline-bars(body) = context {
   let (fg, bg) = (page.foreground, page.background)
-  let fallback = context if query(<redline-page>).all(m => m.value != "fg" or m.location().page() != here().page()) {
-    redline-page-bars("bg")
+  // The foreground of a page comes after its background: the first bars
+  // drawn from a foreground after the background are this page's if its
+  // foreground drew them. Not a query of all pages, which would cost time
+  // with the square of their number.
+  let fallback = context {
+    let next = query(selector(<redline-page>).after(here())).find(m => m.value == "fg")
+    if next == none or next.location().page() != here().page() { redline-page-bars("bg") }
   }
   set page(foreground: { fg; redline-page-bars("fg") }, background: { bg; fallback })
   // Marks in hidden content get no bars and count as not laid out. A query
