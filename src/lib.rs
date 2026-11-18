@@ -42,6 +42,22 @@ pub struct Options {
     pub content_blocks: bool,
 }
 
+/// A commit as the summary lists it.
+pub struct Commit {
+    pub hash: String,
+    pub date: String,
+    pub subject: String,
+}
+
+/// How the new version came about from the old one, for the summary.
+#[derive(Default)]
+pub struct History {
+    /// The commits from the old version to the new one, oldest first.
+    pub commits: Vec<Commit>,
+    /// The new version has changes beyond the last commit.
+    pub uncommitted: bool,
+}
+
 pub struct Redline {
     /// The marked files, as (root-relative path, content), to lay over the
     /// new version with a preamble at [`PREAMBLE_PATH`]. If one is under
@@ -83,13 +99,13 @@ impl ChangeKind {
 /// The new version of the project with the changes against the old version
 /// marked in every file the entry includes or imports, and a summary page
 /// in the entry.
-pub fn redline(old: &Version, new: &Version, opts: Options) -> Redline {
+pub fn redline(old: &Version, new: &Version, opts: Options, history: &History) -> Redline {
     let mut warnings = vec![];
     let old_files = project(old, &mut warnings);
     let new_files = project(new, &mut warnings);
     let bib = bibliography(old, &old_files, new, &new_files);
     let ctx = mark::Ctx::new(old_files, new_files, opts);
-    let (files, changes) = mark::write(&ctx, &old.label, &new.label, &bib);
+    let (files, changes) = mark::write(&ctx, &old.label, &new.label, &bib, history);
     Redline {
         files,
         changes,
@@ -317,4 +333,31 @@ fn normalize(s: &str) -> String {
         .unwrap_or(s)
         .replace("\r\n", "\n")
         .replace('\r', "\n")
+}
+
+impl History {
+    /// The dictionary the preamble takes, with the latest commits if there
+    /// are many; `None` if there is nothing to list.
+    pub(crate) fn to_typst(&self) -> Option<String> {
+        const SHOWN: usize = 10;
+        if self.commits.is_empty() && !self.uncommitted {
+            return None;
+        }
+        let earlier = self.commits.len().saturating_sub(SHOWN);
+        let commits: String = self.commits[earlier..]
+            .iter()
+            .map(|c| {
+                format!(
+                    "(hash: {}, date: {}, subject: {}),",
+                    mark::typst_str(&c.hash),
+                    mark::typst_str(&c.date),
+                    mark::typst_str(&c.subject)
+                )
+            })
+            .collect();
+        Some(format!(
+            "(commits: ({commits}), earlier: {earlier}, uncommitted: {})",
+            self.uncommitted
+        ))
+    }
 }
