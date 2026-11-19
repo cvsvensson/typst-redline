@@ -2,6 +2,7 @@
 //! items, setup code), and a block body as a sequence of tokens.
 
 use std::collections::HashSet;
+use std::ops::Range;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
 use typst_syntax::{Span, SyntaxKind as K, SyntaxNode, ast};
@@ -23,9 +24,23 @@ pub struct Block {
     pub gap: String,
     pub nodes: Vec<SyntaxNode>,
     pub key: String,
+    /// The rest of the paragraph of the block before it, split off by
+    /// [`Doc::pair`].
+    pub joined: bool,
 }
 
 impl Block {
+    fn new(kind: Kind, gap: String, nodes: Vec<SyntaxNode>, joined: bool) -> Self {
+        let key = key(kind, &nodes);
+        Block {
+            kind,
+            gap,
+            nodes,
+            key,
+            joined,
+        }
+    }
+
     pub fn text(&self) -> String {
         text(&self.nodes)
     }
@@ -140,13 +155,8 @@ impl DocBuilder {
             return;
         }
         let nodes = std::mem::take(&mut self.cur);
-        let key = format!("{:?}:{}", self.kind, spaced(&nodes));
-        self.blocks.push(Block {
-            kind: self.kind,
-            gap: std::mem::take(&mut self.gap),
-            nodes,
-            key,
-        });
+        self.blocks
+            .push(Block::new(self.kind, std::mem::take(&mut self.gap), nodes, false));
         self.gap = text(&std::mem::take(&mut self.ws));
     }
 }
@@ -201,9 +211,73 @@ impl Doc {
         }
     }
 
+    /// Two versions as blocks. A paragraph runs on across a line break, so
+    /// where a heading, item or setup line between two paragraphs is deleted
+    /// or inserted, they are one block in one version and two in the other;
+    /// such a block is split at the line break, so that each part is
+    /// compared with its own paragraph.
+    pub fn pair(old: &[SyntaxNode], new: &[SyntaxNode]) -> (Doc, Doc) {
+        let (old, new) = (Doc::new(old), Doc::new(new));
+        (old.split_by(&new), new.split_by(&old))
+    }
+
+    /// Each paragraph split at a line break where the text before it is a
+    /// paragraph of `other` that another kind of block follows, or the text
+    /// after it one that another kind of block precedes.
+    fn split_by(&self, other: &Doc) -> Doc {
+        let b = &other.blocks;
+        let para = |i: usize| b.get(i).is_some_and(|b| b.kind == Kind::Para);
+        let ends = |side: &dyn Fn(usize) -> bool| -> HashSet<&str> {
+            (0..b.len())
+                .filter(|&i| para(i) && side(i))
+                .map(|i| b[i].key.as_str())
+                .collect()
+        };
+        let before = ends(&|i| i + 1 < b.len() && !para(i + 1));
+        let after = ends(&|i| i > 0 && !para(i - 1));
+        // Keys are built only where the length fits, so that a long
+        // paragraph is split in linear time.
+        let lens: HashSet<usize> = before.iter().chain(&after).map(|k| k.len()).collect();
+        let mut blocks = vec![];
+        for block in &self.blocks {
+            if block.kind != Kind::Para {
+                blocks.push(block.clone());
+                continue;
+            }
+            let nodes = &block.nodes;
+            let mut at = vec![key(Kind::Para, &[]).len()];
+            for n in nodes {
+                at.push(at.last().unwrap() + spaced(std::slice::from_ref(n)).len());
+            }
+            let fits = |set: &HashSet<&str>, r: Range<usize>| {
+                lens.contains(&(at[r.end] - at[r.start] + at[0])) && set.contains(key(Kind::Para, &nodes[r]).as_str())
+            };
+            let (mut gap, mut start) = (block.gap.clone(), 0);
+            for k in 0..nodes.len() {
+                if nodes[k].kind() == K::Space
+                    && nodes[k].leaf_text().contains('\n')
+                    && (fits(&before, start..k) || fits(&after, k + 1..nodes.len()))
+                {
+                    blocks.push(Block::new(Kind::Para, gap, nodes[start..k].to_vec(), start > 0));
+                    gap = nodes[k].leaf_text().to_string();
+                    start = k + 1;
+                }
+            }
+            blocks.push(Block::new(Kind::Para, gap, nodes[start..].to_vec(), start > 0));
+        }
+        Doc {
+            blocks,
+            trailing: self.trailing.clone(),
+        }
+    }
+
     pub fn keys(&self) -> Vec<&str> {
         self.blocks.iter().map(|b| b.key.as_str()).collect()
     }
+}
+
+fn key(kind: Kind, nodes: &[SyntaxNode]) -> String {
+    format!("{kind:?}:{}", spaced(nodes))
 }
 
 /// The node at `*i`, or a `#` with the expression after it and a semicolon

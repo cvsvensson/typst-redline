@@ -154,7 +154,7 @@ impl Ctx {
                 };
                 let (os, ns) = (parsed("old", old_src), parsed("new", new_src));
                 let children = |s: &Source| s.root().children().cloned().collect::<Vec<_>>();
-                let docs = (Doc::new(&children(&os)), Doc::new(&children(&ns)));
+                let docs = Doc::pair(&children(&os), &children(&ns));
                 let steps = match moves {
                     // The comparison back keeps what the forward one kept:
                     // moved blocks are not matched in place.
@@ -1298,7 +1298,7 @@ impl<'a> Writer<'a> {
                             let after_setup = k > 0
                                 && matches!(steps[k - 1], Step::Keep(Some(p), _) | Step::Pair(p, _)
                                     if p + 1 == o && old.blocks[p].kind == Kind::Setup);
-                            let inline = ob.kind == Kind::Para && after_setup && !parbreak(&ob.gap);
+                            let inline = ob.joined || ob.kind == Kind::Para && after_setup && !parbreak(&ob.gap);
                             let args = self.item_args(old, o, in_item).or(inline.then(String::new));
                             self.deleted(ob, list_ends, args)
                         }
@@ -1594,7 +1594,7 @@ impl<'a> Writer<'a> {
         let (ohead, onested) = split_nested(&obody);
         let (nhead, nnested) = split_nested(&nbody);
         self.diff_tokens(&tokenize(ohead), &tokenize(nhead));
-        let (odoc, ndoc) = (Doc::new(onested), Doc::new(nnested));
+        let (odoc, ndoc) = Doc::pair(onested, nnested);
         let gap = ndoc.blocks.first().or(odoc.blocks.first()).map_or("", |b| &b.gap);
         let indent = gap.rsplit('\n').next().unwrap().to_string();
         let outer = std::mem::replace(&mut self.file.indent, indent);
@@ -1634,7 +1634,7 @@ impl<'a> Writer<'a> {
             }
             None => self.open(nb, &prefix, marks.0),
         }
-        self.ins("block: true", &tokenize(&nodes));
+        self.ins(if nb.joined { "" } else { "block: true" }, &tokenize(&nodes));
         self.close(nb, marks.1, &(suffix + &label));
     }
 
@@ -1710,6 +1710,7 @@ impl<'a> Writer<'a> {
                             gap: String::new(),
                             nodes: root.children().cloned().collect(),
                             key: String::new(),
+                            joined: false,
                         },
                         list_ends,
                         None,
@@ -2108,7 +2109,8 @@ impl<'a> Writer<'a> {
                     .any(|c| c.kind() == K::Parbreak || c.kind() == K::Heading || is_item(c.kind()))
             };
             if blocks(&om) || blocks(&nm) {
-                self.docs(&Doc::new(&om), &Doc::new(&nm), false);
+                let (od, nd) = Doc::pair(&om, &nm);
+                self.docs(&od, &nd, false);
             } else {
                 self.diff_tokens(&tokenize(&om), &tokenize(&nm));
             }

@@ -488,6 +488,16 @@ fn deleted_block_after_a_list_is_not_part_of_its_last_item() {
     assert!(out.contains("second item\n#redline-del("), "{out}");
 }
 
+#[test]
+fn paragraphs_joined_by_a_deleted_heading_are_kept() {
+    let r = run("deleted-heading-in-paragraph");
+    assert!(
+        matches!(&r.changes[..], [c] if c.kind == ChangeKind::Del && c.text.contains("Gone heading")),
+        "{}",
+        r.body
+    );
+}
+
 /// Draws the markers of moves but nothing else.
 const MOVE_MARKERS: &str = "
 #let redline-del(..args) = none
