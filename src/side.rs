@@ -41,7 +41,8 @@ pub struct Pair {
 
 /// One version as laid out for the side-by-side layout: `pdf` is its
 /// root-relative path, `pages` its number of pages, `unbarred` the pages
-/// with changes but no change bars.
+/// with changes but no change bars, `looks` for each page a value that is
+/// the same for pages drawn the same, or nothing.
 pub struct Side<'a> {
     pub label: &'a str,
     pub pdf: &'a str,
@@ -49,6 +50,7 @@ pub struct Side<'a> {
     pub unbarred: &'a [usize],
     pub changes: &'a [Placed],
     pub headings: &'a [Heading],
+    pub looks: &'a [u64],
 }
 
 /// A heading as laid out in one version: an identity that is the same in
@@ -94,9 +96,16 @@ fn moves_of(side: &[Placed]) -> (HashMap<u64, Vec<usize>>, Vec<Option<u64>>) {
 /// the content would be. That place's page is not a counterpart if its
 /// headings, or the place of a passage moved from or to it, are on other
 /// pages in the version with the content: the content fills pages of its
-/// own. Consecutive pairs with the same marks are steps
-/// of one slide; only the last is kept.
-pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor])) -> (Vec<Pair>, Vec<(bool, Placed)>) {
+/// own. Pages without changes that are drawn differently (`looks`) between
+/// the same pages drawn alike are paired as well, unless a page among them
+/// has a change, which can explain the difference. Consecutive pairs with
+/// the same marks are steps of one slide; only the last is kept.
+pub fn pair_pages(
+    old: &[Placed],
+    new: &[Placed],
+    anchors: (&[Anchor], &[Anchor]),
+    looks: (&[u64], &[u64]),
+) -> (Vec<Pair>, Vec<(bool, Placed)>) {
     let unique = |a: &[Anchor]| {
         let mut m: HashMap<u64, Option<usize>> = HashMap::new();
         for &(id, page) in a {
@@ -177,6 +186,14 @@ pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor]
                     }
                 }
             }
+        }
+    }
+    for seg in segments(looks.0, looks.1).into_iter().filter(|s| !s.equal) {
+        let pages = |r: std::ops::Range<usize>| r.map(|i| i + 1).collect::<BTreeSet<_>>();
+        let (o, n) = (pages(seg.old), pages(seg.new));
+        let changed = |side: &[Placed], pages: &BTreeSet<usize>| side.iter().any(|c| pages.contains(&c.page));
+        if !changed(old, &o) && !changed(new, &n) {
+            groups.push((o, n));
         }
     }
     // A group with old pages only goes after the new pages that the old
@@ -260,7 +277,12 @@ fn join(groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>, o: Option<usize>, 
 /// its first heading, or else the last heading before it.
 pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history: &History) -> String {
     let anchors = |s: &Side| s.headings.iter().map(|h| (h.id, h.page)).collect::<Vec<_>>();
-    let (pairs, unpaired) = pair_pages(old.changes, new.changes, (&anchors(old), &anchors(new)));
+    let (pairs, unpaired) = pair_pages(
+        old.changes,
+        new.changes,
+        (&anchors(old), &anchors(new)),
+        (old.looks, new.looks),
+    );
     let title = |s: &Side, page: usize| {
         let hs = s.headings;
         let h = hs

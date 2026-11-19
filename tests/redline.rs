@@ -2066,7 +2066,7 @@ fn side_by_side_pairs_pages_with_the_same_changes() {
         c(false, 3, 4),
         c(false, 3, 5),
     ];
-    let (pairs, unpaired) = pair_pages(&old, &new, (&[], &[]));
+    let (pairs, unpaired) = pair_pages(&old, &new, (&[], &[]), (&[], &[]));
     let pair = |old: &[usize], new: &[usize], steps_old: &[usize], steps_new: &[usize]| Pair {
         old: old.to_vec(),
         new: new.to_vec(),
@@ -2101,7 +2101,7 @@ fn side_by_side_pairs_changes_written_differently() {
         c(false, 2, 4),
         c(false, 3, 5),
     ];
-    let (pairs, unpaired) = pair_pages(&old, &new, (&[], &[]));
+    let (pairs, unpaired) = pair_pages(&old, &new, (&[], &[]), (&[], &[]));
     let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone())).collect();
     assert_eq!(
         pages,
@@ -2124,7 +2124,7 @@ fn side_by_side_shows_an_inserted_or_deleted_page_without_a_counterpart() {
         page,
     };
     let pages = |ins, anchors| {
-        let (pairs, _) = pair_pages(&[c(ins, 7, 3)], &[c(ins, 7, 3)], anchors);
+        let (pairs, _) = pair_pages(&[c(ins, 7, 3)], &[c(ins, 7, 3)], anchors, (&[], &[]));
         pairs.iter().map(|p| (p.old.clone(), p.new.clone())).collect::<Vec<_>>()
     };
     // Page 3 of the new version is inserted; the old version marks its
@@ -2147,7 +2147,7 @@ fn side_by_side_shows_a_page_inserted_after_a_moved_one_without_a_counterpart() 
     // passage is on page 2 of the new version.
     let old = [c(mv, 5, 3), c(mv, 5, 3), c(ins, 7, 3)];
     let new = [c(mv, 5, 2), c(mv, 5, 2), c(ins, 7, 4)];
-    let (pairs, _) = pair_pages(&old, &new, (&[], &[]));
+    let (pairs, _) = pair_pages(&old, &new, (&[], &[]), (&[], &[]));
     let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone(), p.moved)).collect();
     assert_eq!(pages, [(vec![3], vec![2], true), (vec![], vec![4], false)]);
 }
@@ -2161,6 +2161,7 @@ fn side_by_side_summary_lists_bibliography_changes() {
         unbarred: &[],
         changes: &[],
         headings: &[],
+        looks: &[],
     };
     let bib = Bib {
         added: vec!["c".into()],
@@ -2260,6 +2261,25 @@ fn side_by_side_shows_two_pages_with_the_same_edit() {
 }
 
 #[test]
+fn side_by_side_shows_pages_changed_by_a_listed_change() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-listed");
+    let doc =
+        |n: &str| format!("#set page(height: 6cm)\n#set heading(numbering: \"{n}\")\n= One\n#pagebreak()\nTwo.\n");
+    std::fs::write(dir.join("old.typ"), doc("I.")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc("1.")).unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    // The summary and the page with the renumbered heading.
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
+}
+
+#[test]
 fn side_by_side_shows_a_pure_move() {
     if !typst_available() || typst_before_0_14() {
         return;
@@ -2313,7 +2333,7 @@ fn side_by_side_pairs_changes_around_a_move_in_either_order() {
     // the move.
     let old = [c(Move, 9, 2), c(Ins, 5, 2), c(Move, 9, 2), c(Ins, 1, 3)];
     let new = [c(Ins, 2, 3), c(Move, 9, 4), c(Ins, 5, 4), c(Move, 9, 4)];
-    let (pairs, unpaired) = pair_pages(&old, &new, (&[], &[]));
+    let (pairs, unpaired) = pair_pages(&old, &new, (&[], &[]), (&[], &[]));
     let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone(), p.moved)).collect();
     assert_eq!(pages, [(vec![3], vec![3], false), (vec![2], vec![4], true)]);
     assert!(unpaired.is_empty());

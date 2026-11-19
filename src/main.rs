@@ -1551,6 +1551,34 @@ fn compose(
             }
         }
     }
+    // A change that is only listed has no mark to find its pages by, so the
+    // pages are compared as drawn, each by a hash of its SVG.
+    let b = &results[1].bib;
+    let listed = changes.iter().any(|c| c.kind == ChangeKind::Unmarked)
+        || [&b.added, &b.removed, &b.changed, &b.files]
+            .iter()
+            .any(|l| !l.is_empty());
+    let looks = |(root, entry, side, _): (&Path, &String, &str, &str)| -> Vec<u64> {
+        let (input, entry) = (format!("redline-side={side}"), root.join(entry));
+        let svg = |p: &str| dir.join(format!(".redline-{side}-{p}.svg"));
+        let drawn = typst(a, root, "compile", &[&"--input", &input, &entry, &svg("{p}")]);
+        if !drawn.is_ok_and(|o| o.status.success()) {
+            return vec![];
+        }
+        (1..)
+            .map_while(|p| std::fs::read(svg(&p.to_string())).ok())
+            .map(|s| {
+                let mut h = std::hash::DefaultHasher::new();
+                std::hash::Hash::hash(&s, &mut h);
+                std::hash::Hasher::finish(&h)
+            })
+            .collect()
+    };
+    let (old_looks, new_looks) = if listed {
+        both(|| looks(sides[0]), || looks(sides[1]))
+    } else {
+        (vec![], vec![])
+    };
     let (old_pdf, new_pdf) = (format!("/{OLD_PDF}"), format!("/{NEW_PDF}"));
     let source = composite(
         &Side {
@@ -1560,6 +1588,7 @@ fn compose(
             unbarred: &old_unbarred,
             changes: &old,
             headings: &old_headings,
+            looks: &old_looks,
         },
         &Side {
             label: labels.1,
@@ -1568,6 +1597,7 @@ fn compose(
             unbarred: &new_unbarred,
             changes: &new,
             headings: &new_headings,
+            looks: &new_looks,
         },
         &changes,
         &results[1].bib,
