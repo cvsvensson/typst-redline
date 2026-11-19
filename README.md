@@ -119,6 +119,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 - In deleted code, a label passed as a named argument or written in math is taken to be attached by the code and is renamed; a label passed positionally is taken to be a reference. Code that uses labels the other way makes the tool show deleted code by name.
 - Deleted content is laid out under the new version's show and set rules, so where such a rule changed, deleted content does not look as it did in the old version. The side-by-side layout shows the old pages as they were.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
+- With Typst 0.11, the summary pages keep the document's header and footer.
 - With Typst 0.11, right-to-left text gets no change bars, and its changes can also be listed on the summary page as not reaching the page although they are marked, because that version orders the tags in such text by position.
 - A text show rule with a `regex` selector stops matching where a mark cuts its match. For a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
 - Deleted figures, equations and citations are still figures, equations and citations, so the document's own queries for them, such as a list of figures built with `query(figure)`, also find the deleted ones. `outline` leaves them out.
