@@ -673,6 +673,139 @@ fn render(name: &str, files: &[(String, String)]) -> Option<Vec<Vec<u8>>> {
     Some(pages.iter().map(|p| std::fs::read(p).unwrap()).collect())
 }
 
+/// A glyph or image on a page: what it shows and where, in points.
+#[derive(Debug)]
+struct Glyph {
+    id: String,
+    x: f64,
+    y: f64,
+}
+
+/// The glyphs and images on each page of a project, from its SVG rendering,
+/// whatever their colour.
+fn glyphs(name: &str, files: &[(String, String)]) -> Option<Vec<Vec<Glyph>>> {
+    let dir = compile_to(name, files, "page-{n}.svg")?;
+    let mut pages: Vec<PathBuf> = std::fs::read_dir(&*dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "svg"))
+        .collect();
+    pages.sort_by_key(|p| p.file_stem().unwrap().to_str().unwrap()[5..].parse::<usize>().unwrap());
+    Some(
+        pages
+            .iter()
+            .map(|p| svg_glyphs(&std::fs::read_to_string(p).unwrap()))
+            .collect(),
+    )
+}
+
+fn svg_glyphs(svg: &str) -> Vec<Glyph> {
+    type Affine = [f64; 6];
+    let then = |m: Affine, n: Affine| -> Affine {
+        [
+            m[0] * n[0] + m[2] * n[1],
+            m[1] * n[0] + m[3] * n[1],
+            m[0] * n[2] + m[2] * n[3],
+            m[1] * n[2] + m[3] * n[3],
+            m[0] * n[4] + m[2] * n[5] + m[4],
+            m[1] * n[4] + m[3] * n[5] + m[5],
+        ]
+    };
+    let attr = |tag: &str, key: &str| {
+        let i = tag.find(&format!(" {key}=\""))? + key.len() + 3;
+        Some(tag[i..i + tag[i..].find('"')?].to_string())
+    };
+    let transform = |tag: &str| -> Affine {
+        let Some(t) = attr(tag, "transform") else {
+            return [1., 0., 0., 1., 0., 0.];
+        };
+        let (kind, args) = t.trim_end_matches(')').split_once('(').unwrap();
+        let v: Vec<f64> = args
+            .split([' ', ','])
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse().unwrap())
+            .collect();
+        match (kind, v.as_slice()) {
+            ("matrix", &[a, b, c, d, e, f]) => [a, b, c, d, e, f],
+            ("translate", &[x]) => [1., 0., 0., 1., x, 0.],
+            ("translate", &[x, y]) => [1., 0., 0., 1., x, y],
+            ("scale", &[s]) => [s, 0., 0., s, 0., 0.],
+            ("scale", &[sx, sy]) => [sx, 0., 0., sy, 0., 0.],
+            _ => panic!("transform {t}"),
+        }
+    };
+    let mut out = Vec::new();
+    let mut stack = vec![[1., 0., 0., 1., 0., 0.]];
+    let mut defs = 0;
+    for tag in svg.split('<').skip(1).map(|t| &t[..t.find('>').unwrap()]) {
+        let closed = tag.ends_with('/');
+        let name = tag.split(' ').next().unwrap().trim_end_matches('/');
+        match name {
+            "defs" if !closed => defs += 1,
+            "/defs" => defs -= 1,
+            _ if defs > 0 => {}
+            "g" if !closed => stack.push(then(*stack.last().unwrap(), transform(tag))),
+            "/g" => {
+                stack.pop();
+            }
+            "use" | "image" => {
+                let m = then(*stack.last().unwrap(), transform(tag));
+                let num = |k| attr(tag, k).map_or(0., |v| v.parse().unwrap());
+                let (x, y) = (num("x"), num("y"));
+                let id = attr(tag, "xlink:href").or_else(|| attr(tag, "href")).unwrap();
+                // An image by its size and the start of its data.
+                let id = if name == "image" {
+                    format!("{}x{}:{}", num("width"), num("height"), &id[..id.len().min(200)])
+                } else {
+                    id
+                };
+                out.push(Glyph {
+                    id,
+                    x: m[0] * x + m[2] * y + m[4],
+                    y: m[1] * x + m[3] * y + m[5],
+                });
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Where the glyphs and images of `new` are not where `proof` has them, as
+/// lines naming page and place; `proof` may show more only outside the area
+/// that `new` fills on the page, in the margins. A mark's colour makes its
+/// text a run of its own, shaped without kerning against the text next to
+/// it, which moves a line's glyphs by less than a point sideways.
+fn moved_glyphs(mut proof: &[Vec<Glyph>], new: &[Vec<Glyph>]) -> Vec<String> {
+    // Typst 0.11 ends the proof with the page the summary starts.
+    if proof.len() == new.len() + 1 && typst_version().starts_with("0.11.") {
+        proof = &proof[..new.len()];
+    }
+    if proof.len() != new.len() {
+        return vec![format!("{} pages instead of {}", proof.len(), new.len())];
+    }
+    let mut out = Vec::new();
+    for (p, (proof, new)) in proof.iter().zip(new).enumerate() {
+        let near = |a: &Glyph, b: &Glyph| a.id == b.id && (a.x - b.x).abs() < 1.0 && (a.y - b.y).abs() < 0.01;
+        let mut used = vec![false; proof.len()];
+        for g in new {
+            match (0..proof.len()).find(|&i| !used[i] && near(&proof[i], g)) {
+                Some(i) => used[i] = true,
+                None => out.push(format!("page {}: {g:?} missing", p + 1)),
+            }
+        }
+        let fold = |f: fn(f64, f64) -> f64, init, v: fn(&Glyph) -> f64| new.iter().map(v).fold(init, f);
+        let (x0, x1) = (fold(f64::min, f64::MAX, |g| g.x), fold(f64::max, f64::MIN, |g| g.x));
+        let (y0, y1) = (fold(f64::min, f64::MAX, |g| g.y), fold(f64::max, f64::MIN, |g| g.y));
+        for (g, _) in proof.iter().zip(&used).filter(|(_, u)| !**u) {
+            if (x0..=x1).contains(&g.x) && (y0..=y1).contains(&g.y) {
+                out.push(format!("page {}: {g:?} extra", p + 1));
+            }
+        }
+    }
+    out
+}
+
 fn compile_to(name: &str, files: &[(String, String)], output: &str) -> Option<TempDir> {
     if !typst_available() {
         return None;
@@ -757,6 +890,14 @@ fn code_that_shows_the_same_after_a_change_is_listed_not_marked() {
         return;
     };
     assert_eq!(query_field(&dir, "<redline-lost>", "key"), r#"["0,1"]"#);
+}
+
+#[test]
+fn change_under_a_heading_that_a_template_drops_is_listed() {
+    let doc = |w: &str| format!("#show: doc => [Title.]\n= Draft\nThe {w} text.\n");
+    if let Some(lost) = lost_marks("dropped-heading", redline_of(&doc("old"), &doc("new"))) {
+        assert_eq!(lost, r#"["0,1"]"#);
+    }
 }
 
 #[test]
@@ -925,8 +1066,7 @@ fn insertion_of_content_that_takes_no_room_adds_no_space() {
         )
     };
     let r = redline_of(&doc("red"), &doc("blue"));
-    let without_deletions = format!("{PREAMBLE}\n#let redline-del(..args) = none\n#let redline-summary(info) = none\n");
-    let files = [r.files, vec![(PREAMBLE_PATH.into(), without_deletions)]].concat();
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), without_deletions())]].concat();
     let Some(marked) = compile("roomless-mark", &files) else {
         return;
     };
@@ -1084,17 +1224,17 @@ fn deleted_code_that_would_fail_compiles_when_shown_by_name() {
     compile("deleted-code", &generate("deleted-code", PREAMBLE, BY_NAME).files);
 }
 
-/// Renders insertions as plain content and deletions as nothing.
-const PLAIN: &str = "#let redline-ins(body, ..args) = body
-#let redline-del(..args) = none
-#let redline-summary(info) = none
-#let redline-bars(body) = body
-";
+/// The preamble with deletions and the summary left out: insertions, moves
+/// and bars as the proof shows them.
+fn without_deletions() -> String {
+    format!("{PREAMBLE}\n#let redline-del(..args) = none\n#let redline-summary(info) = none\n")
+}
 
 /// Every fixture: each change found is marked and on the summary's list of
 /// marks, from which the summary lists those not laid out; the proof with
-/// the deletions removed is the new document; and the binary makes a PDF in
-/// both layouts, whose layout converges.
+/// the deletions removed shows the new document's text and images where the
+/// new document has them; and the binary makes a PDF in both layouts, whose
+/// layout converges.
 #[test]
 fn every_fixture_keeps_the_contract() {
     let names: Vec<String> = fixtures().collect();
@@ -1115,7 +1255,9 @@ fn every_fixture_keeps_the_contract() {
 }
 
 fn keeps_the_contract(name: &str) {
-    let r = generate(name, PLAIN, BY_NAME);
+    // Its deleted code reads files that are gone.
+    let opts = if name == "deleted-code" { BY_NAME } else { FULL };
+    let r = generate(name, &without_deletions(), opts);
     assert!(name == "crlf" || !r.changes.is_empty(), "{name}: no change found");
     let marked = |i| r.files.iter().any(|(_, src)| src.contains(&format!("id: {i})[")));
     let entry = &r.files.iter().find(|(p, _)| p == "main.typ").unwrap().1;
@@ -1127,11 +1269,17 @@ fn keeps_the_contract(name: &str) {
             );
         }
     }
-    let Some(proof) = render(&format!("{name}-proof"), &r.files) else {
+    let Some(proof) = glyphs(&format!("{name}-proof"), &r.files) else {
         return;
     };
-    let new = render(&format!("{name}-new"), &tree(name, "new")).unwrap();
-    assert!(!new.is_empty() && proof == new, "{name}:\n{}", r.body);
+    let new = glyphs(&format!("{name}-new"), &tree(name, "new")).unwrap();
+    let moved = moved_glyphs(&proof, &new);
+    assert!(
+        new.iter().any(|p| !p.is_empty()) && moved.is_empty(),
+        "{name}: {}\n{}",
+        moved[..moved.len().min(5)].join("\n"),
+        r.body
+    );
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
     let side = |s: &str| match dir.join(s).is_dir() {
         true => dir.join(s).join("main.typ"),
@@ -2277,9 +2425,16 @@ fn side_by_side_shows_a_page_inserted_after_a_moved_one_without_a_counterpart() 
 
 /// Whether the typst on PATH is older than the side-by-side layout needs.
 fn typst_before_0_14() -> bool {
-    let version = Command::new("typst").arg("--version").output().unwrap().stdout;
-    let version = String::from_utf8_lossy(&version);
-    ["0.11.", "0.12.", "0.13."].iter().any(|v| version.contains(v))
+    ["0.11.", "0.12.", "0.13."]
+        .iter()
+        .any(|v| typst_version().starts_with(v))
+}
+
+/// The version of the typst on PATH, such as "0.14.2".
+fn typst_version() -> String {
+    let out = Command::new("typst").arg("--version").output().unwrap().stdout;
+    let out = String::from_utf8_lossy(&out);
+    out.split_whitespace().nth(1).unwrap_or_default().to_string()
 }
 
 #[test]
