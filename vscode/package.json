@@ -25,7 +25,7 @@
     "commands": [
       {
         "command": "typstRedline.showChanges",
-        "title": "Show changes since...",
+        "title": "Show changes...",
         "category": "Typst Redline"
       },
       {
@@ -84,7 +84,7 @@
         "typstRedline.contextMenu": {
           "type": "boolean",
           "default": true,
-          "description": "Show 'Typst Redline: Show changes since...' in the right-click menu of Typst files."
+          "description": "Show 'Typst Redline: Show changes...' in the right-click menu of Typst files."
         },
         "typstRedline.openPdf": {
           "type": "string",

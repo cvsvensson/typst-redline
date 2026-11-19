@@ -159,20 +159,22 @@ or use *Extensions: Install from VSIX...* in VS Code. VS Code finds `typst-redli
 To see what changed:
 
 1. Open the main `.typ` file of the document.
-2. Run *Typst Redline: Show changes since...* from the Command Palette, or from the right-click menu of a `.typ` file in the Explorer, the editor or its tab.
-3. Press Enter for the changes since the newest commit that touches the project, or since the last reviewed version once there is one; or pick another commit or *Another file...*. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
-4. When you have read it, run *Typst Redline: Mark as reviewed*. It marks the commit that is checked out; uncommitted changes are not part of it. Next time, *Last reviewed version* shows what changed since that commit.
+2. Run *Typst Redline: Show changes...* from the Command Palette, or from the right-click menu of a `.typ` file in the Explorer, the editor or its tab.
+3. Pick what to show, or press Enter for the first entry of the list. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
+4. When you have read it, run *Typst Redline: Mark as reviewed*. It marks the commit that is checked out; uncommitted changes are not part of it.
 
-**The view.** The first entry of the list, *View: Marked* at first, shows how the changes are shown. Picking it changes the view and returns to the list; the workspace keeps the view until you change it.
+The list starts with *Last reviewed version*, the changes since the commit you last marked, once there is one; then *Uncommitted changes*, when files git tracks in the project, or the file itself if git does not track it, differ from the checked-out commit; then the commits that touch the project, newest first. **A commit stands for its own change and every change after it**, here and in every other list of commits. The first commit of the repository has no version before it and is not listed. After the commits come *Another file...*, which compares with a `.typ` file of your choice, *Several commits...* and *More options...*.
+
+**The view.** *More options...* shows the current view, *Marked* at first, and *View* there changes it and returns to the list; the workspace keeps the view until you change it.
 
 - *Marked* ([picture](docs/gallery.md#text-formulas-and-figures)): the new version with the changes marked.
 - *Side by side* ([picture](docs/gallery.md#slides-side-by-side)): changed pages of the old and the new version next to each other. Needs Typst 0.14 or later.
 - *Marked, coloured by commit* ([picture](docs/gallery.md#who-changed-what)) and *Side by side, coloured by commit*: each change in the colour of the commit that made it. A second list chooses *One colour per commit* or *2 steps* to *6 steps*, which split the commits into groups of about equal change. One colour per commit with more than six commits gives six steps. Where there is nothing to colour, as with another file, the changes are shown in the same layout without colours, and a notification says so.
 
-**More ways to compare.** Changes *since* a commit are those made after it; a commit picked *from* or *to* has its own change included.
+**More ways to compare.**
 
 - *Several commits...* lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view.
-- *Between two commits...* asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. It uses the view, colours included.
+- *Between two commits...*, under *More options...*, asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. It uses the view, colours included.
 
 The run saves the open files of the project first, and its progress notification can cancel it. The PDF is written next to the file as `<name>.redline.pdf`. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.
 
