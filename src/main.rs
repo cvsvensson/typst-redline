@@ -7,7 +7,7 @@ use std::process::{Command, ExitCode, Output};
 
 use tree::{Tree, git, output};
 use typst_redline::{
-    Change, ChangeKind, Commit, Heading, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, PlacedKind,
+    Anchor, Change, ChangeKind, Commit, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, PlacedKind,
     Redline, Side, Version, composite, preamble_takes_moves, project_files, redline,
 };
 
@@ -1469,7 +1469,7 @@ fn compose(
     history: &History,
     to: &Path,
 ) -> Result<(), String> {
-    type Layout = (usize, usize, Vec<usize>, Vec<usize>, Vec<Placed>, Vec<Heading>);
+    type Layout = (usize, usize, Vec<usize>, Vec<usize>, Vec<Placed>, Vec<Anchor>);
     let query = |(root, entry, side, _): (&Path, &String, &str, &str)| {
         let input = format!("redline-side={side}");
         let entry = root.join(entry);
@@ -1502,7 +1502,7 @@ fn compose(
             }
         }
         let (lost, rest) = counted(rest);
-        let (quads, mut texts) = counted(rest);
+        let (quads, _) = counted(rest);
         let (mut changes, mut headings) = (vec![], vec![]);
         for &[kind, id, mark, page] in quads.as_chunks::<4>().0 {
             let kind = match kind {
@@ -1510,14 +1510,7 @@ fn compose(
                 1 => PlacedKind::Ins,
                 3 => PlacedKind::Move,
                 _ => {
-                    let (text, rest) = counted(texts);
-                    texts = rest;
-                    let title = text.iter().filter_map(|&c| char::from_u32(c as u32)).collect();
-                    headings.push(Heading {
-                        id: id as u64,
-                        page,
-                        title,
-                    });
+                    headings.push((id as u64, page));
                     continue;
                 }
             };
@@ -1545,7 +1538,7 @@ fn compose(
             let last = l.0.max(1);
             let pages = l.4.iter_mut().map(|c| &mut c.page);
             pages
-                .chain(l.5.iter_mut().map(|h| &mut h.page))
+                .chain(l.5.iter_mut().map(|h| &mut h.1))
                 .for_each(|p| *p = (*p).min(last));
         }
         l

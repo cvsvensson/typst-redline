@@ -51,20 +51,13 @@ pub struct Side<'a> {
     pub summary: usize,
     pub unbarred: &'a [usize],
     pub changes: &'a [Placed],
-    pub headings: &'a [Heading],
+    pub headings: &'a [Anchor],
     pub looks: &'a [u64],
 }
 
 /// A heading as laid out in one version: an identity that is the same in
 /// both versions if its text is, and its page.
 pub type Anchor = (u64, usize);
-
-/// A heading as laid out in one version, with its text.
-pub struct Heading {
-    pub id: u64,
-    pub page: usize,
-    pub title: String,
-}
 
 /// The pages of each move in one version, those of its marks and of the
 /// changes inside it, and for each change the move it is inside of, if any.
@@ -276,24 +269,14 @@ fn join(groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>, o: Option<usize>, 
 /// `redline-side-by-side` with the paired pages, the changes found in one
 /// version only, whether text moved, the changes that are not marked other
 /// than those the summary of the new version lists, and the commits if
-/// there are any. Each shown page is titled by its first heading, or else
-/// the last heading before it.
+/// there are any.
 pub fn composite(old: &Side, new: &Side, moved: bool, unmarked: &[Change], history: &History) -> String {
-    let anchors = |s: &Side| s.headings.iter().map(|h| (h.id, h.page)).collect::<Vec<_>>();
     let (pairs, unpaired) = pair_pages(
         old.changes,
         new.changes,
-        (&anchors(old), &anchors(new)),
+        (old.headings, new.headings),
         (old.looks, new.looks),
     );
-    let title = |s: &Side, page: usize| {
-        let hs = s.headings;
-        let h = hs
-            .iter()
-            .find(|h| h.page == page)
-            .or_else(|| hs.iter().rev().find(|h| h.page < page));
-        typst_str(h.map_or("", |h| h.title.as_str()))
-    };
     let list = |v: &[usize]| format!("({})", v.iter().map(|p| format!("{p},")).collect::<String>());
     let side = |s: &Side| {
         format!(
@@ -311,14 +294,8 @@ pub fn composite(old: &Side, new: &Side, moved: bool, unmarked: &[Change], histo
         side(new)
     );
     for p in &pairs {
-        let titles: String = (0..p.old.len().max(p.new.len()))
-            .map(|r| match p.new.get(r).or(p.new.last()) {
-                Some(&n) => title(new, n) + ",",
-                None => title(old, p.old[r]) + ",",
-            })
-            .collect();
         out.push_str(&format!(
-            "    (old: {}, new: {}, steps-old: {}, steps-new: {}, titles: ({titles}), moved: {}),\n",
+            "    (old: {}, new: {}, steps-old: {}, steps-new: {}, moved: {}),\n",
             list(&p.old),
             list(&p.new),
             list(&p.steps_old),
