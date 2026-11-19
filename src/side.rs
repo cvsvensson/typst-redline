@@ -101,24 +101,31 @@ pub fn pair_pages(
     anchors: (&[Anchor], &[Anchor]),
     looks: (&[u64], &[u64]),
 ) -> (Vec<Pair>, Vec<(bool, Placed)>) {
-    let unique = |a: &[Anchor]| {
-        let mut m: HashMap<u64, Option<usize>> = HashMap::new();
+    let pages_of = |a: &[Anchor]| {
+        let mut m: HashMap<u64, Vec<usize>> = HashMap::new();
         for &(id, page) in a {
-            m.entry(id).and_modify(|p| *p = None).or_insert(Some(page));
+            m.entry(id).or_default().push(page);
         }
         m
     };
-    let (ua, ub) = (unique(anchors.0), unique(anchors.1));
+    let (ua, ub) = (pages_of(anchors.0), pages_of(anchors.1));
     let ((om, oin), (nm, nin)) = (moves_of(old), moves_of(new));
     // Old and new pages that show the same headings, or the two places of a
-    // moved passage.
-    let mut same: Vec<(usize, usize)> = ua.iter().filter_map(|(id, o)| Some(((*o)?, (*ub.get(id)?)?))).collect();
+    // moved passage. A heading that is laid out as often in both versions,
+    // as on each step of a slide, is paired in order.
+    let mut same: Vec<(usize, usize)> = ua
+        .iter()
+        .filter_map(|(id, o)| Some((o, ub.get(id).filter(|n| n.len() == o.len())?)))
+        .flat_map(|(o, n)| o.iter().copied().zip(n.iter().copied()))
+        .collect();
     same.extend(om.iter().filter_map(|(key, o)| Some((o[0], nm.get(key)?[0]))));
+    let counterparts = |in_old: bool, page: usize| {
+        same.iter()
+            .filter(move |(o, n)| if in_old { *o == page } else { *n == page })
+            .map(move |(o, n)| if in_old { *n } else { *o })
+    };
     let elsewhere = |in_old: bool, page: usize, other: usize| {
-        let there = same
-            .iter()
-            .filter(|(o, n)| if in_old { *o == page } else { *n == page });
-        let mut there = there.map(|(o, n)| if in_old { *n } else { *o }).peekable();
+        let mut there = counterparts(in_old, page).peekable();
         there.peek().is_some() && !there.any(|p| p == other)
     };
     let mut groups: Vec<(BTreeSet<usize>, BTreeSet<usize>)> = vec![];
@@ -172,7 +179,7 @@ pub fn pair_pages(
                     if os.len() != ns.len() || i == j {
                         // An insertion's content is in the new version.
                         let (absent, real) = if ins { (c.page, d.page) } else { (d.page, c.page) };
-                        let alone = elsewhere(ins, absent, real);
+                        let alone = elsewhere(ins, absent, real) || elsewhere(!ins, real, absent);
                         join(
                             &mut groups,
                             (!(alone && ins)).then_some(c.page),
@@ -189,6 +196,19 @@ pub fn pair_pages(
         let changed = |side: &[Placed], pages: &BTreeSet<usize>| side.iter().any(|c| pages.contains(&c.page));
         if !changed(old, &o) && !changed(new, &n) {
             groups.push((o, n));
+        }
+    }
+    // A page without a counterpart is shown next to the page with its
+    // headings in the other version, if there is one.
+    let lone: Vec<(bool, usize)> = groups
+        .iter()
+        .filter(|(o, n)| o.is_empty() || n.is_empty())
+        .flat_map(|(o, n)| o.iter().map(|&p| (true, p)).chain(n.iter().map(|&p| (false, p))))
+        .collect();
+    for (in_old, page) in lone {
+        for other in counterparts(in_old, page).collect::<Vec<_>>() {
+            let (o, n) = if in_old { (page, other) } else { (other, page) };
+            join(&mut groups, Some(o), Some(n));
         }
     }
     // A group with old pages only goes after the new pages that the old

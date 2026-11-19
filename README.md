@@ -145,6 +145,7 @@ Each of these was tried with the current version.
 - In deleted code, a label passed as a named argument or written in math is taken to be attached by the code and is renamed; a label passed positionally is taken to be a reference, to the renamed label where the same deleted code passes it as a named argument. Code that uses labels the other way makes the tool show deleted code by name.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks. A text show rule with a `regex` selector stops matching where a mark cuts its match; for a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
+- The bracket of a moved passage that ends with a block, such as a framed box or a list, reaches down past the spacing below it to the next paragraph or heading.
 - A moved passage in a middle column of a page with three or more columns, and one in a narrow margin, has a bracket but no "moved" note. Changes in such a middle column have no number in the margin.
 - Side by side shows the numbers of changes on the new pages only, a deletion's number where the deleted content was.
 - In side by side, a document whose layout does not settle (Typst warns that it did not converge) can show other pages than those of its changes; the tool warns about it.

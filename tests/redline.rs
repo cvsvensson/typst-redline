@@ -1519,6 +1519,43 @@ fn summary_finds_sections_under_headings_inside_calls() {
 }
 
 #[test]
+fn inserted_slide_starts_on_its_own_page() {
+    let slides = "#set page(width: 12cm, height: 7cm)\n#let n = counter(\"slides\")\n#let slide(body) = { context if n.get().first() > 0 { pagebreak(weak: true) }; n.step(); body }\n#slide[= One\nFirst.]\n";
+    let r = redline_of(slides, &format!("{slides}#slide[= Two\nSecond.]\n"));
+    let mut files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    files[0].1 += "\n#import \"/.redline-preamble.typ\": redline-start-at\n#context [#metadata(redline-start-at(query(<redline-tag>).first().location(), 0).page())<probe>]\n";
+    let Some(dir) = compile("inserted-slide-page", &files) else {
+        return;
+    };
+    // On the slide's page, not at the end of the slide before.
+    assert_eq!(query(&dir, "<probe>"), "[2]");
+}
+
+#[test]
+fn inserted_item_of_a_tight_list_is_barred_below_the_item_before() {
+    let alpha = "- Alpha #metadata(none)<before>\n";
+    let r = redline_of(&format!("{alpha}- Gamma\n"), &format!("{alpha}- Beta\n- Gamma\n"));
+    let mut files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    files[0].1 += "\n#import \"/.redline-preamble.typ\": redline-value\n#context [#metadata({ let t = query(<redline-tag>).first(); t.location().position().y + redline-value(t).at(1).to-absolute() > query(<before>).first().location().position().y })<probe>]\n";
+    let Some(dir) = compile("tight-list-bar", &files) else {
+        return;
+    };
+    // The bar starts below the baseline of "Alpha".
+    assert_eq!(query(&dir, "<probe>"), "[true]");
+}
+
+#[test]
+fn inserted_footnote_is_marked_at_the_page_foot_once() {
+    let r = redline_of("Text.\n", "Text#footnote[A note.].\n");
+    let mut files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    files[0].1 += "\n#context [#metadata(query(footnote).map(f => f.body != [A note.]))<probe>]\n";
+    let Some(dir) = compile("inserted-footnote", &files) else {
+        return;
+    };
+    assert_eq!(query(&dir, "<probe>"), "[[true]]");
+}
+
+#[test]
 fn changes_are_numbered_once_each_in_reading_order() {
     let moved = "The moved paragraph has quite a few words in it so that it is found to move.";
     let old = format!("#set text(size: 11pt)\n= A\nAlpha beta gamma.\n\n{moved}\n\nDelta epsilon.\n= B\nZeta eta.\n");
@@ -2414,6 +2451,58 @@ fn side_by_side_shows_an_inserted_or_deleted_page_without_a_counterpart() {
     assert_eq!(pages(true, (&[(1, 3)], &[(1, 4)])), [(vec![], vec![3])]);
     // And the other way round for a deleted page.
     assert_eq!(pages(false, (&[(1, 4)], &[(1, 3)])), [(vec![3], vec![])]);
+}
+
+#[test]
+fn side_by_side_pairs_slides_by_their_headings_where_the_versions_mark_them_differently() {
+    let c = |ins, id, page| Placed {
+        kind: if ins { PlacedKind::Ins } else { PlacedKind::Del },
+        id,
+        mark: id as usize,
+        page,
+    };
+    // Old slides: title, "First", "Changes" in two steps, "Box". New slides:
+    // title, "Changes" in two steps, "Box", "New". Each version's own
+    // comparison takes the slides in between as replaced by each other.
+    let old = [
+        c(true, 1, 1),
+        c(false, 2, 1),
+        c(true, 10, 1),
+        c(true, 11, 1),
+        c(true, 12, 2),
+        c(false, 13, 2),
+        c(true, 14, 2),
+        c(false, 15, 2),
+        c(false, 16, 3),
+        c(false, 17, 5),
+    ];
+    let new = [
+        c(false, 2, 1),
+        c(true, 1, 1),
+        c(false, 20, 1),
+        c(false, 21, 2),
+        c(true, 22, 2),
+        c(false, 21, 3),
+        c(true, 22, 3),
+        c(false, 23, 4),
+        c(true, 24, 4),
+        c(true, 25, 5),
+    ];
+    let (title, first, changes, boxed, added) = (1, 2, 3, 4, 5);
+    let anchors_old = [(title, 1), (first, 2), (changes, 3), (changes, 4), (boxed, 5)];
+    let anchors_new = [(title, 1), (changes, 2), (changes, 3), (boxed, 4), (added, 5)];
+    let (pairs, _) = pair_pages(&old, &new, (&anchors_old, &anchors_new), (&[], &[]));
+    let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone())).collect();
+    assert_eq!(
+        pages,
+        [
+            (vec![1], vec![1]),
+            (vec![3], vec![2]),
+            (vec![4], vec![3]),
+            (vec![5], vec![4]),
+            (vec![2], vec![5])
+        ]
+    );
 }
 
 #[test]
