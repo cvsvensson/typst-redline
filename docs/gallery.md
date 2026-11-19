@@ -16,13 +16,13 @@ Files: [paper/old.typ](paper/old.typ), [paper/new.typ](paper/new.typ).
 
 ## Moved text
 
-The camera paragraph moved from *Setup* to *Analysis*, and its frame rate changed on the way. It is shown once, at its new place, with a grey bracket in the margin, which here is too narrow for a "moved" note next to so short a bracket; the edit is marked as usual. At the old place, a grey line names its first words and links to it. Both places show the move's number, 1.
+The camera paragraph moved from *Setup* to *Analysis*, and its frame rate changed on the way. It is shown once, at its new place, with a grey bracket and a "moved" note in the margin; the edit is marked as usual. At the old place, a grey line names its first words and links to it. Both places show the move's number, 1.
 
 ```
 typst-redline old.typ new.typ
 ```
 
-<img src="moved.png" width="560" alt="A page where a paragraph that moved to another section has a grey bracket and the number 1, its changed number marked, and a grey line with the same number at its old place">
+<img src="moved.png" width="560" alt="A page where a paragraph that moved to another section has a grey bracket, a moved note and the number 1, its changed number marked, and a grey line with the same number at its old place">
 
 Files: [moved/old.typ](moved/old.typ), [moved/new.typ](moved/new.typ).
 

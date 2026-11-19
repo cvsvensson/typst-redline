@@ -143,7 +143,7 @@ Each of these was tried with the current version.
 - In deleted code, a label passed as a named argument or written in math is taken to be attached by the code and is renamed; a label passed positionally is taken to be a reference. Code that uses labels the other way makes the tool show deleted code by name.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks. A text show rule with a `regex` selector stops matching where a mark cuts its match; for a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
-- A moved passage in a middle column of a page with three or more columns, and one in a narrow margin, has a bracket but no "moved" note; so does a passage of a line or two whose bracket is too short for both its number and the note. Changes in such a middle column have no number in the margin.
+- A moved passage in a middle column of a page with three or more columns, and one in a narrow margin, has a bracket but no "moved" note. Changes in such a middle column have no number in the margin.
 - Side by side shows the numbers of changes on the new pages only, a deletion's number where the deleted content was; its summary lists changes without numbers.
 - In side by side, an inserted or deleted page is shown next to an empty one only when the pages have headings or a moved passage on them; otherwise it can be paired with a neighbouring page.
 - Files outside the project root and package files are not checked for changes.
