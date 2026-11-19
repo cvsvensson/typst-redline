@@ -187,10 +187,13 @@
 
 // A frame around a block-level element, outside it so that nothing moves;
 // as wide as the element. It carries the mark's tags when the element
-// starts or ends the mark, so that the bar spans the frame.
+// starts or ends the mark, so that the bar spans the frame. Deleted content
+// that is not struck is `cross`ed if it is a picture high enough for the
+// cross to stand clear, or else, like other such content, `tint`ed, so
+// that text in it stays legible.
 // A deleted element (`whole`) that fits on a page is not split across
 // pages, where the frame would hold only its last part.
-#let redline-frame(it, stroke, cross: false, whole: false, start: none, end: none, step: none, id: none) = layout(region => block(width: 100%, breakable: not whole or measure(block(width: region.width, it)).height > region.height, layout(size => {
+#let redline-frame(it, stroke, cross: false, tint: false, whole: false, start: none, end: none, step: none, id: none) = layout(region => block(width: 100%, breakable: not whole or measure(block(width: region.width, it)).height > region.height, layout(size => {
   let st = redline-style
   let eq = it.func() == math.equation
   // Twice the width tells content that fills its width as unbounded room
@@ -217,16 +220,18 @@
   it
   // Content of no height, such as an empty header, gets no frame.
   let empty = h == 0pt and repr(it.func()) != "line"
+  // The cross covers a figure's body and leaves its caption, which is
+  // struck, alone.
+  let (cw, ch) = if it.func() == figure { (body-w, measure(block(width: size.width, it.body)).height) } else { (w, h) }
+  let cross = cross and not empty and ch >= 0.3 * cw
+  let fill = if (cross or tint) and not cross { stroke.paint.transparentize(90%) }
   place(top + a, box(width: w, height: h, {
-    if not empty { place(rect(width: 100%, height: 100%, stroke: stroke, outset: st.outset)) }
-    // The cross covers a figure's body and leaves its caption, which is
-    // struck, alone.
-    if cross and not empty and it.func() == figure {
-      let ch = measure(block(width: size.width, it.body)).height
+    if not empty { place(rect(width: 100%, height: 100%, stroke: stroke, fill: fill, outset: st.outset)) }
+    if cross and it.func() == figure {
       let caption = it.at("caption", default: none)
       let above = caption != none and caption.at("position", default: figure.caption.position) == top
-      place(center, dy: if above { h - ch } else { 0pt }, box(width: body-w, height: ch, redline-cross(stroke, body-w, ch)))
-    } else if cross and not empty { redline-cross(stroke, w, h) }
+      place(center, dy: if above { h - ch } else { 0pt }, box(width: cw, height: ch, redline-cross(stroke, cw, ch)))
+    } else if cross { redline-cross(stroke, w, h) }
     place(top + left, if start != none { redline-tag(start, -st.outset.top, step: step, id: id) })
     place(bottom + left, if end != none { redline-tag("end", st.outset.bottom, width: size.width) })
   }))
@@ -260,10 +265,11 @@
 // text. A drawing, an image, or content with colours of its own is drawn as
 // written, with only `plain` applied: its frame is the mark. A colour would
 // reach the labels of a drawing but not its lines. Deleted content that is
-// not struck, such content or a displayed equation, is crossed. A box in
-// the text that shows no text is a drawing too, framed at its own size. A
-// figure's caption is styled all the same. The tags around content that
-// takes no room are placed, so that they do not form a line.
+// not struck, such content or a displayed equation, is crossed or tinted
+// (see `redline-frame`). A box in the text that shows no text is a drawing
+// too, framed at its own size. A figure's caption is styled all the same.
+// The tags around content that takes no room are placed, so that they do
+// not form a line.
 #let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, whole: false, step: none, id: none) = {
   let (lead, ch, trail) = redline-parts(body)
   let n = ch.len()
@@ -281,10 +287,11 @@
       run = ()
       let start = if i == 0 { kind }
       let b = if c.func() == figure { c.body } else { c }
-      let own = not redline-textual(b) or redline-own-colours(b)
+      let picture = not redline-textual(b)
+      let own = picture or redline-own-colours(b)
       // A strike reaches only the words of an equation.
       let eq = kind == "del" and c.func() == math.equation
-      let f = redline-frame(c, stroke, cross: kind == "del" and (own or eq), whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
+      let f = redline-frame(c, stroke, cross: kind == "del" and picture, tint: kind == "del" and (own or eq), whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
       out.push(if eq { plain(text(fill: stroke.paint, f)) } else if not own { frame-style(f) } else if c.func() == figure {
         show figure.caption: frame-style
         plain(f)
@@ -842,9 +849,9 @@
     (k, cols, cw, g)
   }
   // The distance of the bars from the text in a margin `m` wide, smaller in
-  // a narrow margin, so that a move's bracket three lanes out stays clear
-  // of the page edge.
-  let gap(m) = calc.max(3pt, calc.min(st.bar-gap, m / 2, m - 3 * st.lane - 6pt))
+  // a narrow margin, so that a move's bracket three lanes out and a number
+  // beyond it stay clear of the page edge.
+  let gap(m) = calc.max(3pt, calc.min(st.bar-gap, m / 2, m - 3 * st.lane - 13pt))
   let bar-x(s, e, cw, g, n, lane) = {
     let (k, cols, cw, g) = column(s, e, cw, g, n)
     let at = calc.min(s.x, e.x) - left
@@ -867,7 +874,7 @@
     if cols > 1 and k == cols - 1 {
       (left + body + calc.min(st.bar-gap, right / 2) + 3 * st.lane, true)
     } else if cols == 1 or k == 0 {
-      let (x, r, _) = bar-x(s, e, cw, g, n, 2.5)
+      let (x, r, _) = bar-x(s, e, cw, g, n, 3)
       (if r { x + 3pt } else { x - 3pt }, r)
     }
   }
@@ -1425,14 +1432,14 @@
   let steps = info.at("history", default: (steps: false)).steps
   let st = if steps { redline-style + redline-colours(luma(70)) } else { redline-style }
   let frame(stroke) = box(width: 1.4em, height: 0.75em, stroke: stroke)
-  let bar(paint, dash) = box(height: 0.9em, baseline: 0.1em, line(angle: 90deg, length: 0.9em, stroke: (paint: paint, thickness: redline-style.bar-width, dash: dash)))
+  let bar(paint, width, dash) = box(height: 0.9em, baseline: 0.1em, line(angle: 90deg, length: 0.9em, stroke: (paint: paint, thickness: width, dash: dash)))
   let items = (
     (redline-ins-rules([text], false, st: st), [inserted text]),
     (redline-del-rules(st: st)[text], [deleted text]),
     (frame(st.ins-frame), [inserted block]),
     (frame(st.del-frame), [deleted block]),
     ..if not steps { ((text(fill: st.ins)[Text], [new paragraph]),) },
-    ([#bar(st.ins, none)#h(3pt)#bar(st.del, (2pt, 1.5pt))], [changed lines]),
+    ([#bar(st.ins, st.bar-width, none)#h(3pt)#bar(st.del, st.del-bar-width, (2.5pt, 1.5pt))], [changed lines]),
     (text(fill: redline-style.number)[3], [change number]),
   )
   if info.at("moved", default: 0) > 0 {
