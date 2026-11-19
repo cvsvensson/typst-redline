@@ -129,5 +129,7 @@ jobs:
           cache-dependency-path: vscode/package-lock.json
       - run: npm ci
       - run: npm run compile
+      # Packaging with the binary inside; the package is checked and not kept.
+      - run: ./package-vsix.sh linux-x64 ../target/release/typst-redline && ls -l typst-redline-linux-x64.vsix
       # The tests start VS Code, which needs a display.
       - run: xvfb-run -a npm test
