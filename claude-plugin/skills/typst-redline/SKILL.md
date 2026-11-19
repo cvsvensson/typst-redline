@@ -12,17 +12,28 @@ The document is the `.typ` file the user names. Otherwise, take the one that is 
 ## Make the PDFs
 
 - The current version: `typst compile <file.typ>` writes `<file>.pdf`.
-- The changes: `typst-redline <file.typ> [--since <rev>]` writes `<file>.redline.pdf` and prints its path on stdout. Without `--since` it shows the uncommitted changes.
-  - The user names a time ("since yesterday", "since Monday"): `--since $(git rev-list -1 --before="<time>" HEAD)`.
+- The changes: `typst-redline <file.typ> --since <rev>` writes `<file>.redline.pdf` next to the file and prints its path on stdout. The new version is the file on disk, uncommitted changes included; without `--since`, the old version is the last commit. `-o <path>` writes the PDF elsewhere, for example outside the user's repository.
   - A commit, tag or branch: `--since <rev>`; between two: `--since <a> --to <b>`; since a branch left main: `--since main...HEAD`.
-  - Two files, or a file at a revision: `typst-redline <old> <new>`, each a path or `REV:PATH`.
+  - A time ("since Monday", "since last week"): work out the calendar date from today's date, then find the last commit before it: `git log -1 --format='%h %ad %s' --date=short --before='<YYYY-MM-DD> 00:00'`. Do not pass a weekday name to git: it reads it loosely and can return the latest commit. If a commit is printed, use its hash with `--since` and tell the user which commit (date and subject) you compared with. If nothing is printed, no commit is that old: compare with the first commit, `git rev-list --max-parents=0 HEAD`, and tell the user that what the first commit contained is not marked.
+  - Two files, or a file at a revision: `typst-redline <old> <new>`, each a path or `REV:PATH`. Quote paths with spaces. The PDF goes next to the new file.
+  - Files outside the document's folder (`#include "../x.typ"`): add `--root <folder holding all of them>`.
   - Who changed what: `--each-commit` colours each change by its commit (at most 6); for more commits, `--steps <n>` or `--steps <rev>,<rev>` colours them in groups.
+  - Slides: add `--layout side-by-side` (needs Typst 0.14 or later).
   - What changed since the user last reviewed it: `--since reviewed`; once they have read it, `typst-redline <file.typ> --mark-reviewed` records the last commit as reviewed.
 - `typst-redline --help` lists the rest.
 
-When the user only asks for the changes, the redline alone is enough: it is the new version with changes marked. Moved text appears once, at its new place, with a grey bracket and a "moved" note in the margin; its old place is a single grey line with an arrow, linking there; edits made while moving are marked as usual. `--no-moves` shows it as deleted and inserted instead.
+When the user only asks for the changes, the redline alone is enough: it is the new version with changes marked.
 
-Diagnostics go to stderr. Pass on to the user any note that changes were *not marked* or that a fallback was used; the last page is a summary, and the first page says where; the summary also lists changes that are not marked in place and says when a fallback was used. If the summary lists no changes, say so and don't send an empty redline.
+## Read the result before you report it
+
+Diagnostics go to stderr; pass on any warning or note. Then read the last page of the PDF, the summary (`pdftotext` or reading the PDF works):
+
+- *No changes found between the two versions*: say so and do not send the PDF as if it showed changes. Check that you compared with the right revision.
+- *Changes by section*: the number after each section counts changes, not pages.
+- *Not marked in place*: changes with no mark on the pages, such as a changed title string, a `#set` rule, a function body or a replaced data file. A `#set` rule or function can change the whole document. Tell the user about each in words; they are easy to miss in the PDF.
+- *What this PDF shows differently*: notes such as coarser marks or pages without bars. Mention them.
+
+Report what the summary says, not more: do not describe changes you did not see in it or on the pages.
 
 ## Give them to the user
 
