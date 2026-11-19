@@ -63,7 +63,7 @@ If the document reads files outside its own folder, such as `#include "../shared
 
 Each item links to a picture in the gallery.
 
-- **Text** ([picture](docs/gallery.md#text-formulas-and-figures)): deleted words are struck out in red, new words highlighted in blue, and a wholly new paragraph is blue. This also works inside headings, list items, captions, bold and emphasized text.
+- **Text** ([picture](docs/gallery.md#text-formulas-and-figures)): deleted words are struck out in red, new words highlighted in blue, and a wholly new paragraph is blue. This also works inside headings, list items, captions, bold and emphasized text. A deleted list item stays in its list, with its old marker or number in red, and a deleted line break shows as a struck ↵ instead of breaking the line.
 - **Formulas, figures, code blocks and drawings** ([picture](docs/gallery.md#text-formulas-and-figures)) are shown whole: the old one in a dashed red frame, crossed out where it cannot be struck through, the new one in a blue frame. A drawing in a box in the text, such as an icon, gets a frame of its own size. Code blocks and filled boxes keep their colours inside the frame. Where the text is light, as on a dark slide, deleted words get a light background and new paragraphs a lighter blue.
 - **Bars in the margin** point to every changed line: dashed for deletions, solid for insertions.
 - **Numbers**: next to the bars, each change has a small grey number, counted in the reading order of the new version, so that a co-author can write "change 14 is wrong". Changes that start on one line share a label such as *3–5*. The summary page uses the same numbers, also for changes that have no mark on the pages.
@@ -132,7 +132,8 @@ Only the first and the last version are compared, so text that one commit added 
 Each of these was tried with the current version.
 
 - Some moved text shows as deleted at one place and inserted at the other: a sentence moved within or between paragraphs (text after a display equation belongs to the paragraph of the equation), paragraphs reordered inside a moved section, a nested list item moved on its own, a passage of fewer than four words unless it moves with a longer one next to it, text inside a call's content argument such as `#slide[...]`, text moved into or out of a file that is not shown in order (imported, included by code, or no longer included), a passage rewritten so much that it keeps less than about 60% of its words, and moved setup code such as `#set` and `#let`.
-- Deleted content shifts line and page breaks compared with the new version.
+- Deleted content shifts line and page breaks compared with the new version. A deleted figure, table or drawing that fits on a page is kept whole, so on a full slide it and the new one each take a page of their own.
+- A reference or citation in deleted text to a label or bibliography entry that the new version lacks shows the label or key, not the number the old version printed. A deleted citation of an entry that the new version keeps shows that entry's number in the new bibliography.
 - Deleted content is laid out under the new version's show and set rules, so where such a rule changed, deleted content does not look as it did in the old version. Side by side shows the old pages as they were.
 - Deleted content that updates a state, for example in a show rule of a package, leaves the state changed after it, because Typst records no initial value to set it back to; the summary page names such states. Counters are set back.
 - Deleted figures, equations and citations are still figures, equations and citations, so the document's own queries for them, such as a count with `query(figure)`, also find the deleted ones. `outline` leaves them out.

@@ -2,10 +2,14 @@
 // --preamble. The marked files import four names from it:
 // - redline-ins(body, block: false): inserted content; `block` when it is a
 //   whole paragraph, item, heading or code expression.
-// - redline-del(body, block: false, heading: none, gap: false): deleted
-//   content; `heading` is the level of a deleted heading, `gap` says that an
-//   insertion follows. A deleted block is written as a continuation of the
-//   block before it, so a block deletion must start its own paragraph.
+// - redline-del(body, block: false, heading: none, item: none, gap: false):
+//   deleted content; `heading` is the level of a deleted heading, `gap` says
+//   that an insertion follows. A deleted list or enum item is a block with
+//   `item`: (depth: its nesting level, number: its number in the old
+//   enumeration or none in a list, inside: whether it is written in the body
+//   of the item before it, tight: whether its list is tight). A deleted
+//   block is written as a continuation of the block before it, so a block
+//   deletion must start its own paragraph.
 // - Moved text: `redline-del(move: m)[first words]` stands at its old place,
 //   and `redline-ins(move: m)[]` at the start and, with `m.end`, at the end
 //   of its new place, which holds it unmarked or with its edits marked.
@@ -179,7 +183,9 @@
 // A frame around a block-level element, outside it so that nothing moves;
 // as wide as the element. It carries the mark's tags when the element
 // starts or ends the mark, so that the bar spans the frame.
-#let redline-frame(it, stroke, cross: false, start: none, end: none, step: none, id: none) = block(width: 100%, layout(size => {
+// A deleted element (`whole`) that fits on a page is not split across
+// pages, where the frame would hold only its last part.
+#let redline-frame(it, stroke, cross: false, whole: false, start: none, end: none, step: none, id: none) = layout(region => block(width: 100%, breakable: not whole or measure(block(width: region.width, it)).height > region.height, layout(size => {
   let st = redline-style
   let eq = it.func() == math.equation
   // Twice the width tells content that fills its width as unbounded room
@@ -219,7 +225,7 @@
     place(top + left, if start != none { redline-tag(start, -st.outset, step: step, id: id) })
     place(bottom + left, if end != none { redline-tag("end", st.outset, width: size.width) })
   }))
-}))
+})))
 
 // Content with the end tag appended inside its set rules, which can set the
 // page: after them, the tag would get a page of its own.
@@ -252,11 +258,11 @@
 // crossed. A box in the text that shows no text is a drawing too, framed at
 // its own size. A figure's caption is styled all the same. The tags around
 // content that takes no room are placed, so that they do not form a line.
-#let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, step: none, id: none) = {
+#let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, whole: false, step: none, id: none) = {
   let (lead, ch, trail) = redline-parts(body)
   let n = ch.len()
   let framed = ch.map(c => redline-framed(c, block and n == 1))
-  let roomless = block and n > 0 and ch.all(redline-roomless)
+  let roomless = block and ch.all(redline-roomless)
   let styled = n > 0 and not roomless and not framed.last() and repr(ch.last().func()) == "styled"
   // A tag between blocks is at the top of the next line; the bar goes in
   // the gap above it.
@@ -271,7 +277,7 @@
       let b = if c.func() == figure { c.body } else { c }
       let drawing = not redline-textual(b)
       let own = drawing or redline-own-colours(b)
-      let f = redline-frame(c, stroke, cross: kind == "del" and drawing, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
+      let f = redline-frame(c, stroke, cross: kind == "del" and drawing, whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
       out.push(if not own { frame-style(f) } else if c.func() == figure {
         show figure.caption: frame-style
         plain(f)
@@ -291,13 +297,14 @@
   }
   if run.len() > 0 { out.push(style(run.join())) }
   lead
-  if n == 0 { redline-tag(kind, -0.8em, step: step, id: id) }
+  if n == 0 { redline-tag(kind, start-dy, step: step, id: id) }
   out.join()
   // Content computed at layout can set the page, and anything visible after
   // it would get a page of its own; such a tag has no width of its container.
   if n == 1 and block and not framed.last() and repr(ch.last().func()) in ("context", "layout") {
     context redline-tag("end", 0.3em, width: 0pt)
-  } else if roomless {
+  } else if roomless or block and ch.last().func() in (list.item, enum.item, terms.item) {
+    // After a list, a tag in the text would start a line of its own.
     place(layout(size => redline-tag("end", -0.2em, width: size.width)))
   } else if n == 0 or not (framed.last() or styled) { redline-tag("end", 0.3em) }
   trail
@@ -643,26 +650,52 @@
   }
 }
 
+// A deleted list or enum item, `item` as in redline-del, spaced as its list
+// spaces items and with its marker in `fill` where the list puts markers.
+#let redline-item(item, fill, body) = context {
+  let numbered = item.number != none
+  let marker = if numbered { numbering(enum.numbering, item.number) } else {
+    let m = list.marker
+    if type(m) == array { m.at(calc.rem(item.depth - 1, m.len())) } else if type(m) == function { m(item.depth - 1) } else { m }
+  }
+  let (indent, gap, spacing) = if numbered { (enum.indent, enum.body-indent, enum.spacing) } else { (list.indent, list.body-indent, list.spacing) }
+  let spacing = if spacing != auto { spacing } else if item.tight { par.leading } else if sys.version >= version(0, 12, 0) { par.spacing } else { 1.2em }
+  let w = measure(marker).width
+  set par(first-line-indent: 0pt)
+  block(above: spacing, below: spacing, inset: (left: if item.inside { 0pt } else { indent + w + gap }), {
+    h(-w - gap)
+    text(fill: fill, marker)
+    h(gap)
+    body
+  })
+}
+
 // On a side of the side-by-side layout, a deletion is content the version
 // does not have: the page next to it shows it.
-#let redline-del(body, block: false, heading: none, gap: false, step: none, move: none, id: none) = {
+#let redline-del(body, block: false, heading: none, item: none, gap: false, step: none, move: none, id: none) = {
   let st = redline-step-style(step)
   // The binary pairs the pages of a move's two places by the marks around
   // its content, which each side has.
   if redline-side != none and move != none { return }
   if redline-side != none { return redline-side-mark("del", body, id: id) }
   if move != none { return redline-move-line(move, body, step) }
-  let block = block or heading != none
+  let block = block or heading != none or item != none
   let body = redline-neutral(body)
   if block { parbreak() }
   let rules = redline-del-rules.with(st: st)
-  let look = if heading == none { rules } else {
+  // A deleted line break inside a paragraph is shown by a sign, as breaking
+  // the line would move the text after it. The sign can come from a font
+  // with a taller line; its edges keep it from raising the line.
+  let look = if heading != none {
     b => rules(text(weight: "bold", size: if heading == 1 { 1.4em } else { 1.2em }, b))
+  } else if block { rules } else {
+    b => { show linebreak: text(top-edge: "x-height", bottom-edge: "baseline", "\u{21B5}"); rules(b) }
   }
   // A label of its own, which is found faster than the last of many.
   let start = label("redline-del-start-" + repr(id))
   redline-meta(none, start)
-  redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, step: step, id: id)
+  let mark = redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, whole: true, step: step, id: id)
+  if item == none { mark } else { redline-item(item, st.del, mark) }
   redline-restore(start)
   if block { parbreak() } else if gap { h(0.25em) }
 }

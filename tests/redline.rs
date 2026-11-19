@@ -210,7 +210,7 @@ fn changes_stay_inside_nested_items() {
     let out = body("nested-list");
     assert!(out.contains("\n  - Nested one #redline-ins"), "{out}");
     assert!(
-        out.contains("\n  - Nested two\n    #redline-del(block: true)[#sym.bullet Nested gone];\n- Third item"),
+        out.contains("\n  - Nested two\n    #redline-del(item: (depth: 2, number: none, inside: true, tight: true))[Nested gone];\n- Third item"),
         "{out}"
     );
     assert!(out.contains("\n/ Term: A #redline-ins"), "{out}");
@@ -834,6 +834,80 @@ fn insertion_of_content_that_takes_no_room_adds_no_space() {
     };
     let new = compile("roomless-new", &[("main.typ".into(), doc("blue"))]).unwrap();
     assert_eq!(query(&marked, "<probe>"), query(&new, "<probe>"));
+}
+
+/// The `<probe>` values of the marked document and of the old version.
+fn old_probes(name: &str, old: &str, new: &str) -> Option<(String, String)> {
+    let r = redline_of(old, new);
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let marked = compile(&format!("{name}-marked"), &files)?;
+    let plain = compile(&format!("{name}-old"), &[("main.typ".into(), old.into())]).unwrap();
+    Some((query(&marked, "<probe>"), query(&plain, "<probe>")))
+}
+
+const PROBE_Y: &str = "#context [#metadata(here().position().y)<probe>]";
+
+#[test]
+fn deleted_line_break_does_not_break_the_line() {
+    if let Some((marked, new)) = probes(
+        "line-break",
+        &format!("One \\ two.{PROBE_Y}\n"),
+        &format!("One two.{PROBE_Y}\n"),
+    ) {
+        assert_eq!(marked, new);
+    }
+}
+
+#[test]
+fn deleted_update_takes_no_room() {
+    let doc = |u: &str| format!("#let st = state(\"s\", 0)\n{u}\n= Head\nNow.{PROBE_Y}\n");
+    if let Some((marked, new)) = probes("deleted-update", &doc("\n#st.update(5)\n"), &doc("")) {
+        assert_eq!(marked, new);
+    }
+}
+
+#[test]
+fn deleted_items_take_the_room_of_items() {
+    let (old, new) = (
+        format!("- one\n- two\n- three{PROBE_Y}\n\n+ one\n+ two\n+ three{PROBE_Y}\n"),
+        format!("- one\n- three{PROBE_Y}\n\n+ one\n+ three{PROBE_Y}\n"),
+    );
+    if let Some((marked, old)) = old_probes("deleted-items", &old, &new) {
+        assert_eq!(marked, old);
+    }
+}
+
+#[test]
+fn deleted_text_after_setup_code_stays_in_its_paragraph() {
+    let doc = |w: &str| format!("Keep #let x = 1\n{w}\n\nNext.{PROBE_Y}\n");
+    if let Some((marked, old)) = old_probes("after-setup", &doc("old words."), &doc("")) {
+        assert_eq!(marked, old);
+    }
+}
+
+#[test]
+fn deleted_include_of_a_computed_path_is_listed() {
+    let r = redline_of("A.\n\n#include \"p\" + \".typ\"\n", "A.\n");
+    assert!(
+        r.changes
+            .iter()
+            .any(|c| c.kind == ChangeKind::Unmarked && c.old.contains("#include")),
+        "{:?}",
+        r.changes
+    );
+}
+
+#[test]
+fn deleted_drawing_that_fits_on_a_page_is_not_split() {
+    let doc = |chart: &str| {
+        format!(
+            "#set page(height: 6cm, margin: 1cm)\n#show rect.where(fill: red): it => context [#metadata(here().page())<probe>#it]\n#lorem(25)\n\n{chart}\n"
+        )
+    };
+    let chart = "#grid(rect(height: 1.8cm, fill: red), rect(height: 1.8cm, fill: red))";
+    if let Some((marked, _)) = probes("unsplit-drawing", &doc(chart), &doc("")) {
+        assert_eq!(marked, "[2,2]");
+    }
 }
 
 #[test]
