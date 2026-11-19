@@ -1144,7 +1144,8 @@
     let free = if right-side { edge - 2pt - x - 3pt } else { x - 3pt - edge - 2pt }
     let sst = redline-step-style(redline-value(a).step)
     // The note grows with the text, as on slides. Where the margin is too
-    // narrow for it, it runs up along the bracket, or else is small.
+    // narrow for it, it runs up along the bracket, or else is small; where
+    // the left margin has no room even then, it is in the right margin.
     let size = calc.min(calc.max(v.at("size", default: 0pt).to-absolute() * 6.5 / 11, 6.5pt), 14pt)
     let styled(notes, size) = notes.map(n => {
       set par(leading: 0.4em)
@@ -1160,6 +1161,13 @@
       along-notes.push((right-side, y0, y0 + w))
     } else if note != none {
       place(redline-top-left, dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0 + below, box(width: free, align(if right-side { start } else { end }, link-to(note))))
+    } else if not right-side {
+      let (x, free) = (left + body + 3pt, right - 5pt)
+      let note = styled(notes, 6.5pt).find(n => measure(n).width <= free)
+      let turned = styled(along, 6.5pt).find(n => measure(n).height <= free and measure(n).width <= y1 - y0)
+      if note != none { place(redline-top-left, dx: x, dy: y0, link-to(note)) } else if turned != none {
+        place(redline-top-left, dx: x, dy: y0 + measure(turned).width, rotate(-90deg, origin: redline-top-left, link-to(turned)))
+      }
     }
   }
   // The old place of a move has its number too.
