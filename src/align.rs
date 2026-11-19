@@ -10,8 +10,8 @@ use crate::syntax::{Block, Doc, Kind, most_similar, similarity, split_nested, to
 /// One step of writing the new file, by block index.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Step {
-    /// A new block written as it is.
-    Keep(usize),
+    /// A new block written as it is, and the old block it equals, if any.
+    Keep(Option<usize>, usize),
     /// An old block and the new block it changed into.
     Pair(usize, usize),
     Del(usize),
@@ -24,7 +24,9 @@ pub fn align(old: &Doc, new: &Doc) -> Vec<Step> {
     let mut steps = vec![];
     for op in capture_diff_slices(Algorithm::Patience, &old.keys(), &new.keys()) {
         match op {
-            DiffOp::Equal { .. } => steps.extend(op.new_range().map(Step::Keep)),
+            DiffOp::Equal { .. } => {
+                steps.extend(op.old_range().zip(op.new_range()).map(|(o, n)| Step::Keep(Some(o), n)))
+            }
             _ => region(&old.blocks, &new.blocks, op.old_range(), op.new_range(), &mut steps),
         }
     }
@@ -89,7 +91,7 @@ fn unpaired(old: &[Block], new: &[Block], or: Range<usize>, nidx: &[usize], step
     let new_content = ns < nidx.len();
     let insert = |steps: &mut Vec<Step>, j: usize| {
         steps.push(if new[j].is_break() && new_content {
-            Step::Keep(j)
+            Step::Keep(None, j)
         } else {
             Step::Ins(j)
         })

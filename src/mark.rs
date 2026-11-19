@@ -17,6 +17,40 @@ use crate::{
     Bib, Change, ChangeKind, History, Move, Moves, OLD_DIR, Options, PREAMBLE_PATH, What, pair_files, resolve,
 };
 
+/// Whether item `i` of `doc` is spaced as part of a run with the paragraph
+/// or item of its kind before it, across setup code, which a blank line
+/// between them ends: that block (`None` for the text of the item the
+/// document is nested in, if `head`) and whether a blank line separates
+/// them. `None` if `i` is not an item or the block before it is laid out as
+/// a block of its own whatever the gap.
+fn attachment(doc: &Doc, i: usize, head: bool) -> Option<(Option<usize>, bool)> {
+    let b = &doc.blocks[i];
+    if b.kind != Kind::Item {
+        return None;
+    }
+    let parbreak = |gap: &str| parse(gap).children().any(|c| c.kind() == K::Parbreak);
+    let mut apart = parbreak(&b.gap);
+    for j in (0..i).rev() {
+        let p = &doc.blocks[j];
+        let joins = match p.kind {
+            Kind::Setup => {
+                apart |= parbreak(&p.gap);
+                continue;
+            }
+            Kind::Para => p
+                .toks()
+                .iter()
+                .rev()
+                .find(|t| t.kind != TK::Space && t.kind != TK::Comment)
+                .is_some_and(|t| !t.block),
+            Kind::Item => p.nodes[0].kind() == b.nodes[0].kind(),
+            Kind::Heading => false,
+        };
+        return joins.then_some((Some(j), apart));
+    }
+    head.then_some((None, apart))
+}
+
 /// Text that closes what comes before it.
 const CLOSING: [char; 13] = [
     ',', '.', ';', ':', '!', '?', ')', ']', '}', '\'', '"', '\u{2019}', '\u{201d}',
@@ -578,7 +612,7 @@ impl<'a> Writer<'a> {
         };
         let outer = std::mem::replace(&mut self.file, file);
         let out = std::mem::take(&mut self.out);
-        self.write_steps(&a.docs.0, &a.docs.1, &a.steps, true);
+        self.write_steps(&a.docs.0, &a.docs.1, &a.steps, true, false);
         let marked = std::mem::replace(&mut self.out, out);
         self.file = outer;
         if entry {
@@ -987,16 +1021,25 @@ impl<'a> Writer<'a> {
         label
     }
 
-    fn docs(&mut self, old: &Doc, new: &Doc) {
-        self.write_steps(old, new, &align(old, new), false);
+    /// Write `new` marked against `old`; `head` if both follow the text of
+    /// an item, as its nested items do.
+    fn docs(&mut self, old: &Doc, new: &Doc, head: bool) {
+        self.write_steps(old, new, &align(old, new), false, head);
     }
 
     /// Write `new` by `steps`; at the top level of a file (`top`), blocks
     /// that moved are written as moves.
-    fn write_steps(&mut self, old: &Doc, new: &Doc, steps: &[Step], top: bool) {
+    fn write_steps(&mut self, old: &Doc, new: &Doc, steps: &[Step], top: bool, head: bool) {
         let ctx = self.ctx;
         let file = self.file.index;
         let moved = |map: &'a HashMap<(usize, usize), usize>, b: usize| map.get(&(file, b)).filter(|_| top);
+        let old_of: HashMap<usize, usize> = steps
+            .iter()
+            .filter_map(|s| match *s {
+                Step::Keep(Some(o), n) | Step::Pair(o, n) => Some((n, o)),
+                _ => None,
+            })
+            .collect();
         // Only a deleted section's own blocks count with it.
         let mut outer = None;
         for (k, &s) in steps.iter().enumerate() {
@@ -1016,7 +1059,7 @@ impl<'a> Writer<'a> {
                     // A list that ends here in the new version ends before
                     // a deleted block that is not an item.
                     let next = steps[k + 1..].iter().find_map(|s| match *s {
-                        Step::Keep(n) | Step::Pair(_, n) | Step::Ins(n) => Some(&new.blocks[n]),
+                        Step::Keep(_, n) | Step::Pair(_, n) | Step::Ins(n) => Some(&new.blocks[n]),
                         Step::Del(_) => None,
                     });
                     let list_ends = self.after_item && next.is_none_or(|b| b.kind != Kind::Item);
@@ -1031,7 +1074,10 @@ impl<'a> Writer<'a> {
                     Some(_) => {}
                     None => self.write_new(old, new, s, ("", "")),
                 },
-                _ => self.write_new(old, new, s, ("", "")),
+                _ => {
+                    let spacing = self.spacing(old, new, s, &old_of, head);
+                    self.write_new(old, new, s, (&spacing, ""))
+                }
             }
         }
         if let Some(c) = outer {
@@ -1040,11 +1086,41 @@ impl<'a> Writer<'a> {
         self.out.push_str(&new.trailing);
     }
 
+    /// For a kept or changed item whose separation from the paragraph or item
+    /// before it changed, from a blank line to none or back, which spaces the
+    /// items differently: the change listed, and an empty mark for the start
+    /// of the item, which draws a bar there.
+    fn spacing(&mut self, old: &Doc, new: &Doc, s: Step, old_of: &HashMap<usize, usize>, head: bool) -> String {
+        let (Step::Keep(Some(o), n) | Step::Pair(o, n)) = s else {
+            return String::new();
+        };
+        let nb = &new.blocks[n];
+        let (Some((np, apart)), Some((op, was_apart))) = (attachment(new, n, head), attachment(old, o, head)) else {
+            return String::new();
+        };
+        if apart == was_apart || np.map(|p| old_of.get(&p).copied()) != op.map(Some) {
+            return String::new();
+        }
+        let note = if apart {
+            "Blank line added before this item: it is spaced apart from the text before it."
+        } else {
+            "Blank line before this item removed: it is spaced close to the text before it."
+        };
+        let line = nb.text().trim().lines().next().unwrap_or_default().to_string();
+        self.list_what(&line, &line, vec![What::Note(note.into())]);
+        let start = self.changes.len() - 1;
+        let step = self.step(&[]).map_or(String::new(), |s| format!("step: {s}, "));
+        let call = format!("#{}-ins({step}id: {})[];", self.ctx.prefix, self.changes.len());
+        self.record(ChangeKind::Ins, String::new());
+        self.join_from(start);
+        call
+    }
+
     /// A step with `marks` at the start and the end of the new block's
     /// body; a deletion inside a passage that goes on after it.
     fn write_new(&mut self, old: &Doc, new: &Doc, s: Step, marks: (&str, &str)) {
         match s {
-            Step::Keep(n) => self.kept(&new.blocks[n], marks),
+            Step::Keep(_, n) => self.kept(&new.blocks[n], marks),
             Step::Pair(o, n) => self.pair(&old.blocks[o], &new.blocks[n], marks),
             Step::Ins(n) => self.inserted(&new.blocks[n], marks),
             Step::Del(o) => self.deleted(&old.blocks[o], false),
@@ -1277,7 +1353,8 @@ impl<'a> Writer<'a> {
         let gap = ndoc.blocks.first().or(odoc.blocks.first()).map_or("", |b| &b.gap);
         let indent = gap.rsplit('\n').next().unwrap().to_string();
         let outer = std::mem::replace(&mut self.file.indent, indent);
-        self.docs(&odoc, &ndoc);
+        let text = |toks: Vec<Tok>| toks.iter().any(|t| t.kind != TK::Space && t.kind != TK::Comment);
+        self.docs(&odoc, &ndoc, text(tokenize(ohead)) && text(tokenize(nhead)));
         self.file.indent = outer;
         self.close(nb, marks.1, &(suffix + &label));
     }
@@ -1607,7 +1684,7 @@ impl<'a> Writer<'a> {
                     .any(|c| c.kind() == K::Parbreak || c.kind() == K::Heading || is_item(c.kind()))
             };
             if blocks(&om) || blocks(&nm) {
-                self.docs(&Doc::new(&om), &Doc::new(&nm));
+                self.docs(&Doc::new(&om), &Doc::new(&nm), false);
             } else {
                 self.diff_tokens(&tokenize(&om), &tokenize(&nm));
             }

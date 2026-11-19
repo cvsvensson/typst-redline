@@ -927,7 +927,7 @@
   let value(v, fill, f) = if "text" in v {
     ["] + v.text.map(((t, changed)) => if changed { text(fill: fill, f(t)) } else { t }).join() + ["]
   } else { mono(size: 0.9em, fill: fill, v.code) }
-  let words = c.at("what", default: ()).map(w => if "file" in w [#mono(size: 0.9em, w.file) changed] else {
+  let words = c.at("what", default: ()).map(w => if "file" in w [#mono(size: 0.9em, w.file) changed] else if "note" in w { w.note } else {
     let name = mono(size: 0.9em, w.name)
     if w.old == none [#name: #value(w.new, st.ins, x => x) added] else if w.new == none [#name: #value(w.old, st.del, x => x) removed] else [#name: #value(w.old, st.del, strike) → #value(w.new, st.ins, underline)]
   })
