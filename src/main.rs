@@ -53,6 +53,8 @@ Options:
   --typst <path>        typst executable (default: typst)
   --mark-reviewed       Record HEAD as reviewed for the file (see above)
   --show-reviewed       Print the commit --since reviewed uses (see above)
+  --list-files          Print the files the document is made of, one path per
+                        line, and make no PDF
   --keep-typ            Keep the generated project and print its path on stderr;
                         the marked source is at the new file's path inside it
   -V, --version         Print the version
@@ -75,6 +77,7 @@ struct Args {
     steps: Option<StepArg>,
     mark_reviewed: bool,
     show_reviewed: bool,
+    list_files: bool,
     no_moves: bool,
     typst_args: Vec<String>,
 }
@@ -137,6 +140,7 @@ fn parse_args() -> Result<Parsed, String> {
         steps: None,
         mark_reviewed: false,
         show_reviewed: false,
+        list_files: false,
         no_moves: false,
         typst_args: vec![],
     };
@@ -167,6 +171,7 @@ fn parse_args() -> Result<Parsed, String> {
             }
             "--mark-reviewed" => a.mark_reviewed = true,
             "--show-reviewed" => a.show_reviewed = true,
+            "--list-files" => a.list_files = true,
             "--no-moves" => a.no_moves = true,
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
@@ -198,12 +203,18 @@ fn parse_args() -> Result<Parsed, String> {
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
         return Err("--to cannot be combined with a range in --since".into());
     }
-    if a.mark_reviewed && a.show_reviewed {
-        return Err("give one of --mark-reviewed and --show-reviewed".into());
+    if [a.mark_reviewed, a.show_reviewed, a.list_files]
+        .iter()
+        .filter(|s| **s)
+        .count()
+        > 1
+    {
+        return Err("give one of --mark-reviewed, --show-reviewed and --list-files".into());
     }
     for (set, opt) in [
         (a.mark_reviewed, "--mark-reviewed"),
         (a.show_reviewed, "--show-reviewed"),
+        (a.list_files, "--list-files"),
     ] {
         if set && (a.files.len() != 1 || a.since.is_some() || a.to.is_some()) {
             return Err(format!("{opt} takes one file and no --since or --to"));
@@ -456,6 +467,27 @@ fn since_reviewed(a: &Args) -> Result<Option<String>, String> {
             a.files[0]
         )
     })
+}
+
+/// The paths of the files the document in the working tree is made of.
+fn list_files(a: &Args) -> Result<String, String> {
+    let spec = spec(Path::new(&a.files[0]), None, a.root.as_deref(), String::new())?;
+    let read = |p: &str| spec.tree.read(p);
+    let version = Version {
+        label: String::new(),
+        entry: spec.entry.clone(),
+        read: &read,
+    };
+    let paths: Vec<String> = project_files(&version, None)
+        .iter()
+        .map(|f| {
+            f.split('/')
+                .fold(spec.root.clone(), |p, c| p.join(c))
+                .display()
+                .to_string()
+        })
+        .collect();
+    Ok(paths.join("\n"))
 }
 
 /// Record HEAD as reviewed for the file and say so.
@@ -1762,6 +1794,8 @@ fn main() -> ExitCode {
         mark_reviewed(&args)
     } else if args.show_reviewed {
         show_reviewed(&args)
+    } else if args.list_files {
+        list_files(&args)
     } else {
         let file = args.files[0].clone();
         since_reviewed(&args).and_then(|reviewed| {
