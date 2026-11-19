@@ -154,12 +154,33 @@ npm run package     # makes typst-redline-0.1.0.vsix
 code --install-extension typst-redline-0.1.0.vsix
 ```
 
-or use *Extensions: Install from VSIX…* in VS Code. VS Code finds `typst-redline` on the `PATH` it started with, so restart it after installing the tool. The extension is turned off in Restricted Mode, because it runs git and the programs its settings name. It adds two commands:
+or use *Extensions: Install from VSIX...* in VS Code. VS Code finds `typst-redline` on the `PATH` it started with, so restart it after installing the tool. The extension is turned off in Restricted Mode, because it runs git and the programs its settings name.
 
-- *Typst Redline: Show changes since…* lists the recent commits that changed the project, the last reviewed version and *Another file…*; picking one makes the PDF and opens it. Run it on the main file of a multi-file document. *Options…* at the end of the list sets side by side, colour by commit, colour by step and no moves for this and later runs. It saves the open files of the project first; a progress notification can cancel the run. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.
-- *Typst Redline: Mark as reviewed* runs `--mark-reviewed` for the open file.
+To see what changed:
 
-The settings are `typstRedline.executable` and `typstRedline.typst` for the paths of the two programs, `typstRedline.root` for `--root`, `typstRedline.extraArgs` for further arguments, such as `["--", "--font-path", "fonts"]`, and `typstRedline.openPdf`. The root is by default the workspace folder, or the git repository if the workspace folder contains it. The PDF opens beside the document when a PDF viewer extension is installed, otherwise in the system viewer.
+1. Open the main `.typ` file of the document.
+2. Run *Typst Redline: Show changes since...* from the Command Palette.
+3. Pick what to compare with: *Last reviewed version* (once there is one), a commit, *Several commits...* or *Another file...*.
+4. Pick the view. The one used last is at the top, so Enter repeats it.
+5. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
+6. When you have read it, run *Typst Redline: Mark as reviewed*. Next time, *Last reviewed version* compares with the commit you read.
+
+The views:
+
+- *Marked PDF* ([picture](docs/gallery.md#text-formulas-and-figures)): the new version with the changes marked.
+- *Side by side* ([picture](docs/gallery.md#slides-side-by-side)): changed pages of the old and the new version next to each other. Needs Typst 0.14 or later.
+- *Coloured by commit* ([picture](docs/gallery.md#who-changed-what)) and *Side by side, coloured by commit*: each change in the colour of the commit that made it; with more than six commits, six colours for groups of commits. They are offered when there are at least two commits, or a commit and uncommitted changes, to colour.
+- *Several commits...* lets you tick commits: the changes since the oldest ticked one are shown, in a new colour after each ticked commit.
+
+The run saves the open files of the project first, and its progress notification can cancel it. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.
+
+Settings, with their defaults:
+
+- `typstRedline.view`: `ask`. Set `marked`, `side-by-side`, `by-commit` or `side-by-side-by-commit` to skip step 4.
+- `typstRedline.executable`: `typst-redline`, and `typstRedline.typst`: empty, for `typst` on `PATH`.
+- `typstRedline.root`: empty, for the workspace folder, or the git repository if the workspace folder contains it.
+- `typstRedline.openPdf`: `auto`; `editor` or `external` choose one place.
+- `typstRedline.extraArgs`: empty; further arguments, such as `["--no-moves"]` or `["--", "--font-path", "fonts"]`.
 
 ## Claude Code
 

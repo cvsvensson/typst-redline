@@ -25,7 +25,7 @@
     "commands": [
       {
         "command": "typstRedline.showChanges",
-        "title": "Show changes sinceâ€¦",
+        "title": "Show changes since...",
         "category": "Typst Redline"
       },
       {
@@ -71,6 +71,19 @@
           "default": [],
           "scope": "resource",
           "markdownDescription": "Arguments added to every `typst-redline` run, one per item. Arguments after `--` go to `typst compile`, for example `[\"--\", \"--font-path\", \"fonts\"]`."
+        },
+        "typstRedline.view": {
+          "type": "string",
+          "enum": ["ask", "marked", "side-by-side", "by-commit", "side-by-side-by-commit"],
+          "default": "ask",
+          "enumDescriptions": [
+            "Ask each time, with the last used view first",
+            "Marked PDF: the new version with the changes marked",
+            "Side by side: changed pages of the old and the new version next to each other",
+            "Coloured by commit: each change in the colour of the commit that made it",
+            "Side by side, coloured by commit"
+          ],
+          "description": "How to show the changes. A view coloured by commit falls back to the one with the same layout when there are no commits to colour, as for another file."
         },
         "typstRedline.openPdf": {
           "type": "string",
