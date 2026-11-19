@@ -918,9 +918,8 @@
 }
 
 // Changed code that is not marked, (old, new, what): what changed in words,
-// then, unless the words say all of it, the old code in the colour of
-// deletions and the new in that of insertions, or the code once if only a
-// file it reads changed. Text, not raw, so that the document's show rules on
+// then the old code in the colour of deletions and the new in that of
+// insertions, or the code once in grey if the words say all of it. Text, not raw, so that the document's show rules on
 // raw leave it alone.
 #let redline-code(c) = {
   let st = redline-style
@@ -938,12 +937,16 @@
   let what = c.at("what", default: ())
   let elided(v) = v != none and v.at("code", default: none) == "…"
   let args = what.filter(w => "name" in w)
-  if what.len() > 0 and not args.any(w => elided(w.old) or elided(w.new)) and (c.old == c.new or args.len() > 0) { return }
-  let rows = if c.old == c.new { ((c.new, "", none),) } else { ((c.old, "−", st.del), (c.new, "+", st.ins)).filter(r => r.first() != "") }
+  let complete = what.len() > 0 and not args.any(w => elided(w.old) or elided(w.new)) and (c.old == c.new or args.len() > 0)
+  // Where the words say it all, the code that changed is shown once, grey,
+  // to say where; the words do not name what is called.
+  let rows = if complete or c.old == c.new { ((if c.new == "" { c.old } else { c.new }, "", luma(110)),) } else { ((c.old, "−", st.del), (c.new, "+", st.ins)).filter(r => r.first() != "") }
   let paint(fill, t) = if fill == none { t } else { text(fill: fill, t) }
   set text(font: "DejaVu Sans Mono", size: 0.8em, hyphenate: false)
   set par(justify: false)
-  grid(columns: (auto, 1fr), column-gutter: 0.5em, row-gutter: 0.5em, ..rows.map(((code, sign, fill)) => (paint(fill, sign), paint(fill, code))).flatten())
+  if rows.len() == 1 and rows.first().at(1) == "" { block(above: 0.4em, paint(rows.first().at(2), rows.first().first())) } else {
+    grid(columns: (auto, 1fr), column-gutter: 0.5em, row-gutter: 0.5em, ..rows.map(((code, sign, fill)) => (paint(fill, sign), paint(fill, code))).flatten())
+  }
 }
 
 // A bibliography entry: as the document prints it if `printed` and the
@@ -981,7 +984,7 @@
   let group(title, body) = block(below: 0.9em, { block(below: 0.55em, emph(title)); pad(left: 1.2em, body) })
   redline-head[Not marked in place]
   if groups.len() > 0 {
-    block(below: 0.9em)[These changes are in the source of the document but have no mark on its pages, such as a changed setting or a title that a template prints. Each says what changed, old in red and new in blue; where words cannot say it all, the source text follows, the old after #text(fill: st.del)[−] and the new after #text(fill: st.ins)[+].]
+    block(below: 0.9em)[These changes are in the source but have no mark on the pages, such as a changed setting or a title that a template prints. Each says what changed, old in red and new in blue, above its source text in grey; where words cannot say it all, the old source follows after #text(fill: st.del)[−] and the new after #text(fill: st.ins)[+].]
     for (title, code) in groups { group(title, code.map(redline-code).join(v(0.3em))) }
   }
   for (title, lines) in bib { group(title, lines.join(linebreak())) }
