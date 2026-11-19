@@ -2,7 +2,7 @@
 name = "typst-redline"
 version = "0.1.0"
 edition = "2024"
-description = "Editor's proof for Typst: the new version of a document with changes against an old version marked"
+description = "Shows what changed between two versions of a Typst document, as a PDF with the changes marked. Like latexdiff, for Typst."
 license = "MIT"
 keywords = ["typst", "diff", "latexdiff"]
 categories = ["command-line-utilities", "text-processing"]
