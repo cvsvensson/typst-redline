@@ -12,7 +12,7 @@ chmod +x "bin/$name"
 npx --no-install vsce package --no-dependencies --target "$target" -o "$vsix"
 rm -rf bin
 
-unzip -Z "$vsix" "extension/bin/$name" extension/LICENSE
+unzip -Z1 "$vsix" | grep -qx extension/LICENSE.txt || { echo "no licence in $vsix" >&2; exit 1; }
 case $target in
   win32-*) ;;
   *) unzip -Z "$vsix" "extension/bin/$name" | grep -q '^-rwx' || { echo "$name in $vsix is not executable" >&2; exit 1; } ;;
