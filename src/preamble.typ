@@ -1194,7 +1194,7 @@
   let files = bib.at("files", default: ())
   let number(i) = if first != none { first + i }
   let lines = lines.enumerate().map(((i, l)) => redline-numbered(number(i), l))
-  let files = if first == none { (files.map(redline-mono).join[, ],) } else {
+  let files = if first == none { if files.len() > 0 { (files.map(redline-mono).join[, ],) } else { () } } else {
     files.enumerate().map(((i, f)) => redline-numbered(number(lines.len() + i), redline-mono(f)))
   }
   let out = ()
@@ -1397,9 +1397,7 @@
 // that were not laid out, each change's kind (0
 // deleted, 1 inserted, 3 the start or end of a move's place), identity, mark
 // (its id plus one, or 0) and page, and the same for each heading (kind 2),
-// whose identity is its text,
-// then each heading's text as its length and code points, all as one flat
-// array of integers.
+// whose identity is its text, all as one flat array of integers.
 #let redline-layout() = {
   let drawn = query(<redline-page>).map(m => m.location().page())
   let unbarred = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location().page()).dedup().filter(p => p not in drawn)
@@ -1410,24 +1408,12 @@
       let start = if kind == "move" and id != none { redline-move-start(id) }
       ((del: 0, ins: 1, move: 3).at(kind), identity, if id == none { 0 } else { id + 1 }, if start != none { start.page() } else { m.location().page() })
     })
-    let hs = query(heading)
-    let headings = hs.map(h => (2, redline-hash(3, h.body), 0, h.location().page()))
-    let titles = hs.map(h => {
-      let t = redline-plain(h.body).trim()
-      // The text of an inserted heading is inside its mark, the first
-      // change after the heading's start.
-      if t.find(regex("\w")) == none {
-        let m = query(selector(<redline-change>).after(h.location())).at(0, default: none)
-        t = if m != none and m.location().page() == h.location().page() { redline-plain(redline-value(m).at(3)).trim() } else { "" }
-      }
-      let t = if t.clusters().len() > 40 { t.clusters().slice(0, 39).join() + "…" } else { t }
-      (t.codepoints().len(), ..t.codepoints().map(str.to-unicode))
-    })
+    let headings = query(heading).map(h => (2, redline-hash(3, h.body), 0, h.location().page()))
     let triples = (..changes, ..headings).flatten()
     let lost = query(<redline-lost>).map(redline-value).flatten()
     let (start, end) = (query(<redline-summary>), query(<redline-summary-end>)).map(q => q.map(m => m.location().page()))
     let (pages, summary) = if start.len() > 0 and end.len() > 0 { (start.first() - 1, end.first() - start.first() + 1) } else { (drawn.len() + unbarred.len(), 0) }
-    redline-ints((pages, summary, unbarred.len(), ..unbarred, lost.len(), ..lost, triples.len(), ..triples, ..titles.flatten()), <redline-layout>)
+    redline-ints((pages, summary, unbarred.len(), ..unbarred, lost.len(), ..lost, triples.len(), ..triples), <redline-layout>)
   }
 }
 
@@ -1640,8 +1626,7 @@
 // pages after them, unbarred: pages with changes but no
 // bars), pairs: array of (old, new: pages
 // shown next to each other, steps-old, steps-new: pages of earlier steps of
-// the same slide, not shown, titles: the heading of each row of pages,
-// moved: whether they hold both places of moved text), unpaired: array of
+// the same slide, not shown, moved: whether they hold both places of moved text), unpaired: array of
 // (side, ins, page): changes
 // found in one version only, unmarked: array of (file, old, new): changes
 // that are not marked and not in the summary, moved: whether text moved).
@@ -1665,7 +1650,8 @@
   let sample = if steps { st + redline-colours(luma(70)) } else { st }
   set page(width: auto, height: auto, margin: gap)
   set text(size: size)
-  block(width: width + gap, align(center, block(width: calc.min(width + gap, 36 * size), align(left, {
+  // The first page is as large as what it says.
+  block(width: calc.min(width + gap, 36 * size), {
     block(text(size: 1.4em, weight: "bold")[Changes from #o.label to #n.label])
     let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
     let shown = info.pairs.map(p => calc.max(p.old.len(), p.new.len())).sum(default: 0)
@@ -1675,8 +1661,7 @@
       #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
       #if summary != none [The summary of the changes follows on #summary.]
     ]
-    // One row per shown page, with its heading and whether text moved there.
-    let titled = info.pairs.any(p => p.moved or p.titles.any(t => t != ""))
+    // One row per shown page.
     let at = 2
     let rows = ()
     for p in info.pairs {
@@ -1686,18 +1671,18 @@
           let pg = row-page(ps, r)
           if pg == none [–] else [#pg#if r == k - 1 and steps.len() > 0 [ (last step of #pages(steps + ps))]]
         }
-        let title = [#p.titles.at(r)#if p.moved [ #text(fill: st.move)[(moved)]]]
-        rows += (cell(p.old, p.steps-old), cell(p.new, p.steps-new), ..if titled { (title,) }, link((page: at + r, x: 0pt, y: 0pt), underline[#(at + r)]))
+        let moved = if p.moved [ #text(fill: st.move)[(moved)]]
+        rows += (cell(p.old, p.steps-old), [#cell(p.new, p.steps-new)#moved], link((page: at + r, x: 0pt, y: 0pt), underline[#(at + r)]))
       }
       at += k
     }
     if rows.len() > 0 {
-      let head = ([Page of #name(o)], [Page of #name(n)], ..if titled { ([Heading],) }, [Shown on page])
+      let head = ([Page of #name(o)], [Page of #name(n)], [Shown on page])
       table(
         columns: head.len(),
         stroke: none,
         inset: (x: 0.5em, y: 0.3em),
-        align: (left, left, ..if titled { (left,) }, right),
+        align: (left, left, right),
         table.header(..head.map(strong)),
         table.hline(stroke: 0.5pt),
         ..rows,
@@ -1716,7 +1701,7 @@
     let files = info.unmarked.map(u => u.file).dedup()
     redline-not-marked(files.map(f => ([In #redline-mono(f)], info.unmarked.filter(u => u.file == f))), (added: (), removed: (), changed: ()))
     if o.unbarred.len() > 0 { redline-notes(([Changes on pages #pages(o.unbarred) of #name(o) have no bars in the margin, because the document sets its own page foreground and background there.],)) }
-  }))))
+  })
   let head(side, pg, s, ps) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]] else if ps.len() == 0 [Not in #name(side)]
   // A side without a page shows an empty outline as large as the page next
   // to it, so that the other stays in place.

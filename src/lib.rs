@@ -14,7 +14,7 @@ use std::ops::Range;
 use typst_syntax::ast::AstNode;
 use typst_syntax::{SyntaxKind, SyntaxNode, ast, parse};
 
-pub use side::{Anchor, Heading, Pair, Placed, PlacedKind, Side, composite, pair_pages};
+pub use side::{Anchor, Pair, Placed, PlacedKind, Side, composite, pair_pages};
 
 use syntax::{collapse_ws, label_name, most_similar, ref_name, similarity, tokenize, walk, words};
 
