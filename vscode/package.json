@@ -15,6 +15,12 @@
   "keywords": ["typst", "diff", "latexdiff", "git"],
   "main": "./out/extension.js",
   "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Typst Redline runs git and the programs named in its settings on the workspace."
+    }
+  },
   "contributes": {
     "commands": [
       {
@@ -57,7 +63,7 @@
           "type": "string",
           "default": "",
           "scope": "resource",
-          "description": "Project root passed as --root, absolute or relative to the workspace folder of the file. Empty: that workspace folder, or the file's directory if it is in none."
+          "description": "Project root passed as --root, absolute or relative to the workspace folder of the file. Empty: that workspace folder, or the git repository of the file if the workspace folder contains it, or the file's directory if it is in no workspace folder."
         },
         "typstRedline.extraArgs": {
           "type": "array",

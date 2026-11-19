@@ -37,18 +37,29 @@ function runCli(doc: vscode.TextDocument, args: string[], token?: vscode.Cancell
   return run(exe, args, path.dirname(doc.fileName), exeHint, token).then(({ stdout, stderr }) => {
     if (stderr.trim()) {
       output.appendLine(stderr.trim());
-      notify(vscode.window.showWarningMessage, stderr);
+    }
+    // Hints name command-line flags, which mean little in the editor; they stay in the output.
+    const shown = stderr.split("\n").find((l) => /^(warning|note):/.test(l));
+    if (shown) {
+      notify(vscode.window.showWarningMessage, shown, true);
     }
     return stdout.trim();
   });
 }
 
-// The CLI's message is the first "error:" line; typst diagnostics and usage text follow it.
-function notify(show: (message: string, ...items: string[]) => Thenable<string | undefined>, text: string) {
-  const lines = text.trim().split("\n");
-  const main = lines.find((l) => l.startsWith("error:")) ?? lines[0];
-  const more = lines.length > 1 ? ["Show Output"] : [];
-  show(`Typst Redline: ${main.replace(/^error: /, "")}`, ...more).then((choice) => choice && output.show(true));
+function notify(
+  show: (message: string, ...items: string[]) => Thenable<string | undefined>,
+  message: string,
+  more: boolean,
+) {
+  show(`Typst Redline: ${message.replace(/^(error|warning|note): /, "")}`, ...(more ? ["Show Output"] : [])).then(
+    (choice) => choice && output.show(true),
+  );
+}
+
+function inside(file: string, dir: string) {
+  const rel = path.relative(dir, file);
+  return !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
 function activeTypstDocument() {
@@ -59,53 +70,89 @@ function activeTypstDocument() {
   return doc;
 }
 
-type Base = { rev: string } | { file: string };
-type BaseItem = vscode.QuickPickItem & { base?: Base | "other" };
+type Project = { root: string; repo?: string; why: string };
 
-async function pickBase(file: string): Promise<Base | undefined> {
-  let items: BaseItem[] = [];
+async function project(doc: vscode.TextDocument): Promise<Project> {
+  const folder = vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.fsPath ?? path.dirname(doc.fileName);
+  let repo: string | undefined;
   let why = "";
   try {
     const { stdout } = await run(
       "git",
-      ["log", "-n", "40", "--date=short", "--format=%h%x09%ad%x09%s", "--", path.basename(file)],
-      path.dirname(file),
+      ["rev-parse", "--show-toplevel"],
+      path.dirname(doc.fileName),
       "Install git and put it on PATH.",
     );
-    items = stdout
-      .split("\n")
-      .filter((l) => l.trim())
-      .map((l) => {
-        const [hash, date, ...subject] = l.split("\t");
-        return { label: subject.join("\t"), description: `${hash}  ${date}`, base: { rev: hash } };
-      });
-    why = items.length ? "" : "This file has no commits yet. ";
+    repo = path.resolve(stdout.trim());
+  } catch (e) {
+    const message = (e as Error).message;
+    why = message.includes("was not found") ? message : "Not in a git repository.";
+  }
+  const setting = vscode.workspace.getConfiguration("typstRedline", doc.uri).get<string>("root");
+  // A git revision holds only files of its repository, so the default root must not lie above it.
+  const root = setting ? path.resolve(folder, setting) : repo && !inside(folder, repo) ? repo : folder;
+  return { root, repo, why };
+}
+
+type Base = { rev: string } | { file: string };
+type BaseItem = vscode.QuickPickItem & { base?: Base | "other" | "options" };
+
+async function pickBase(file: string, { root, repo, why }: Project): Promise<Base | undefined> {
+  let items: BaseItem[] = [];
+  if (repo) {
+    try {
+      const { stdout } = await run(
+        "git",
+        ["log", "-n", "40", "--date=short", "--format=%h%x09%ad%x09%s", "--", root],
+        path.dirname(file),
+        "",
+      );
+      items = stdout
+        .split("\n")
+        .filter((l) => l.trim())
+        .map((l) => {
+          const [hash, date, ...subject] = l.split("\t");
+          return { label: subject.join("\t"), description: `${hash}  ${date}`, base: { rev: hash } };
+        });
+      why = items.length ? "" : "No commits yet.";
+    } catch (e) {
+      why = (e as Error).message.split("\n")[0];
+    }
     items.push(
       { label: "", kind: vscode.QuickPickItemKind.Separator },
       {
         label: "$(eye) Last reviewed version",
-        description: "set with Typst Redline: Mark as reviewed",
+        description: "the commit marked with Typst Redline: Mark as reviewed",
         base: { rev: "reviewed" },
       },
     );
-  } catch (e) {
-    why = `${(e as Error).message.split("\n")[0]} `;
   }
   items.push({ label: "$(file) Another file…", description: "compare with a .typ file of your choice", base: "other" });
-  const pick = await vscode.window.showQuickPick(items, {
-    title: "Typst Redline: show changes since…",
-    placeHolder: `${why}Compare the working copy with…`,
-    matchOnDescription: true,
-  });
-  if (pick?.base !== "other") {
-    return pick?.base;
+  for (;;) {
+    const current = selectedOptions(!!repo).map((o) => o.label);
+    const pick = await vscode.window.showQuickPick<BaseItem>(
+      [...items, { label: "$(settings-gear) Options…", description: current.join(", ") || "none", base: "options" }],
+      {
+        title: "Typst Redline: show changes since…",
+        placeHolder: `${why ? `${why} ` : ""}Compare the working copy with…`,
+        matchOnDescription: true,
+      },
+    );
+    const choice = pick?.base;
+    if (choice === "options") {
+      await pickOptions(!!repo);
+      continue;
+    }
+    if (choice !== "other") {
+      return choice;
+    }
+    const other = await vscode.window.showOpenDialog({
+      title: "Old version to compare with",
+      defaultUri: vscode.Uri.file(path.dirname(file)),
+      filters: { Typst: ["typ"] },
+    });
+    return other && { file: other[0].fsPath };
   }
-  const other = await vscode.window.showOpenDialog({
-    title: "Old version to compare with",
-    defaultUri: vscode.Uri.file(path.dirname(file)),
-    filters: { Typst: ["typ"] },
-  });
-  return other && { file: other[0].fsPath };
 }
 
 type OptionItem = vscode.QuickPickItem & { args: string[]; git?: boolean };
@@ -123,7 +170,7 @@ const options: OptionItem[] = [
     git: true,
   },
   {
-    label: "Colour by step…",
+    label: "Colour by step",
     detail: "Group the commits into 2 to 6 steps, each in its own colour",
     args: ["--steps"],
     git: true,
@@ -135,23 +182,32 @@ const options: OptionItem[] = [
   },
 ];
 
-async function pickOptions(git: boolean): Promise<string[] | undefined> {
+function selectedOptions(git: boolean) {
+  const labels = state.get<string[]>("options", []);
+  return options.filter((o) => labels.includes(o.label) && (git || !o.git));
+}
+
+function optionArgs(git: boolean) {
+  return selectedOptions(git).flatMap((o) => (o.args[0] === "--steps" ? ["--steps", state.get("steps", "3")] : o.args));
+}
+
+async function pickOptions(git: boolean) {
   const last = state.get<string[]>("options", []);
-  const items = options
-    .filter((o) => git || !o.git)
-    .map((o) => ({ ...o, picked: last.includes(o.label) }));
+  const items = options.filter((o) => git || !o.git).map((o) => ({ ...o, picked: last.includes(o.label) }));
   const picked = await vscode.window.showQuickPick(items, {
-    title: "Typst Redline: options (Enter to run)",
-    placeHolder: "Tick options, or press Enter for the plain marked-up PDF",
+    title: "Typst Redline: options",
+    placeHolder: "Tick the options for this and later runs",
     canPickMany: true,
   });
   if (!picked) {
     return;
   }
-  const hidden = last.filter((label) => !items.some((o) => o.label === label));
-  await state.update("options", [...hidden, ...picked.map((o) => o.label)]);
-  const args = picked.flatMap((o) => o.args);
-  if (args.includes("--steps")) {
+  const labels = picked.map((o) => o.label);
+  if (labels.includes("Colour by commit") && labels.includes("Colour by step")) {
+    vscode.window.showWarningMessage("Typst Redline: pick either Colour by commit or Colour by step.");
+    return;
+  }
+  if (labels.includes("Colour by step")) {
     const steps = await vscode.window.showInputBox({
       title: "Typst Redline: steps",
       prompt: "A number of steps from 2 to 6, or the revisions where steps end, separated by commas",
@@ -161,9 +217,9 @@ async function pickOptions(git: boolean): Promise<string[] | undefined> {
       return;
     }
     await state.update("steps", steps);
-    args.splice(args.indexOf("--steps") + 1, 0, steps);
   }
-  return args;
+  const hidden = last.filter((label) => !items.some((o) => o.label === label));
+  await state.update("options", [...hidden, ...labels]);
 }
 
 function hasPdfEditor() {
@@ -177,32 +233,27 @@ function hasPdfEditor() {
 async function showChanges() {
   const doc = activeTypstDocument();
   const file = doc.fileName;
-  const base = await pickBase(file);
+  const proj = await project(doc);
+  const base = await pickBase(file, proj);
   if (!base) {
     return;
   }
-  const optionArgs = await pickOptions("rev" in base);
-  if (!optionArgs) {
-    return;
-  }
+  const { root } = proj;
+  // Save what the run reads: open documents of the project.
   for (const d of vscode.workspace.textDocuments) {
-    if (d.isDirty && d.fileName.endsWith(".typ")) {
+    if (d.isDirty && d.uri.scheme === "file" && (d === doc || inside(d.fileName, root))) {
       await d.save();
     }
   }
   const config = vscode.workspace.getConfiguration("typstRedline", doc.uri);
-  const folder = vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.fsPath ?? path.dirname(file);
-  const root = path.resolve(folder, config.get<string>("root") || "");
-  const rel = "file" in base ? path.relative(root, base.file) : "";
   // An old file outside the default root gets the CLI's default, the directory of each file.
-  const outside = rel.startsWith("..") || path.isAbsolute(rel);
-  const rootArgs = outside && !config.get<string>("root") ? [] : ["--root", root];
+  const rootArgs = "file" in base && !inside(base.file, root) && !config.get<string>("root") ? [] : ["--root", root];
   const typst = config.get<string>("typst");
   const args = [
     ...("rev" in base ? [file, "--since", base.rev] : [base.file, file]),
     ...rootArgs,
     ...(typst ? ["--typst", typst] : []),
-    ...optionArgs,
+    ...optionArgs("rev" in base),
     ...config.get<string[]>("extraArgs", []),
   ];
   const title = "rev" in base ? `changes since ${base.rev}` : `changes since ${path.basename(base.file)}`;
@@ -236,8 +287,11 @@ function command(name: string, body: () => Promise<void>) {
       if (e instanceof vscode.CancellationError) {
         return;
       }
-      output.appendLine((e as Error).message);
-      notify(vscode.window.showErrorMessage, (e as Error).message);
+      const message = (e as Error).message;
+      output.appendLine(message);
+      // The CLI's message is the first "error:" line; typst diagnostics and usage text follow it.
+      const lines = message.trim().split("\n");
+      notify(vscode.window.showErrorMessage, lines.find((l) => l.startsWith("error:")) ?? lines[0], lines.length > 1);
     }
   });
 }
