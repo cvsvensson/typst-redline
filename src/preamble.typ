@@ -1359,7 +1359,8 @@
 // The text of content without its deletions, whose marks must not be laid
 // out again.
 #let redline-plain(c) = if type(c) == str { c } else if type(c) != content { "" } else if c.func() in (strike, footnote, metadata) { "" } else if c.has("text") and type(c.text) == str { c.text } else if c.func() == [ ].func() { " " } else if c.has("children") {
-  c.children.map(redline-plain).join()
+  // An empty sequence joins to none.
+  ("", ..c.children.map(redline-plain)).join()
 } else if c.has("body") { redline-plain(c.body) } else if c.has("child") { redline-plain(c.child) } else { "" }
 
 // The marks among `marks` that are laid out, grouped by the last heading of
