@@ -5,10 +5,10 @@
   <text x="40" y="162" text-anchor="middle" font-size="11">10</text>
   <text x="170" y="162" text-anchor="middle" font-size="11">100</text>
   <text x="300" y="162" text-anchor="middle" font-size="11">1000</text>
-  <polyline points="40,145 105,128 170,85 235,40 270,14" fill="none" stroke="#222" stroke-width="1.6"/>
-  <polyline points="40,138 105,124 170,104 235,80 300,52" fill="none" stroke="#222" stroke-width="1.6" stroke-dasharray="6 3"/>
-  <polyline points="40,141 105,127 170,110 235,92 300,70" fill="none" stroke="#222" stroke-width="1.6" stroke-dasharray="1.5 2.5"/>
-  <text x="180" y="24" font-size="12">insertion</text>
-  <text x="250" y="46" font-size="12">merge</text>
-  <text x="270" y="86" font-size="12">heap</text>
+  <polyline points="40,148 90,138 140,100 190,50 215,14" fill="none" stroke="#222" stroke-width="1.6"/>
+  <polyline points="40,134 105,118 170,96 235,72 300,46" fill="none" stroke="#222" stroke-width="1.6" stroke-dasharray="6 3"/>
+  <polyline points="40,138 105,124 170,116 235,110 300,104" fill="none" stroke="#222" stroke-width="1.6" stroke-dasharray="1.5 2.5"/>
+  <text x="222" y="24" font-size="12">insertion</text>
+  <text x="262" y="40" font-size="12">merge</text>
+  <text x="270" y="96" font-size="12">heap</text>
 </svg>
