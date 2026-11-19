@@ -41,7 +41,8 @@ sweep() {
       if [ -n "$kept" ]; then
         if command -v cygpath > /dev/null; then kept=$(cygpath -u "$kept"); fi
         mv "$kept" "$d/typ"
-        mv "$d/typ/.redline-preamble.typ" "$d/preamble.typ" 2> /dev/null || true
+        find "$d/typ" -name .redline-preamble.typ | sort | xargs -r cat > "$d/preamble.typ"
+        find "$d/typ" -name .redline-preamble.typ -delete
         find "$d/typ" \( -name .redline-deps -o -name '.redline-*.pdf' \) -delete
       fi
       { echo "exit $code"; grep -v '^kept ' "$d/stderr" | sed -E 's/typst-redline-[0-9]+/typst-redline-N/g' || true; } > "$d/result"
