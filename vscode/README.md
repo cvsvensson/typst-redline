@@ -8,7 +8,7 @@ To see what changed:
 
 1. Open the main `.typ` file of the document.
 2. Run **Typst Redline: Show changes since...** from the Command Palette, or from the right-click menu of a `.typ` file in the Explorer, the editor or its tab.
-3. Press Enter for the changes since the newest commit, or since the last reviewed version once there is one; or pick another commit or *Another file...*. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
+3. Press Enter for the changes since the newest commit that touches the project, or since the last reviewed version once there is one; or pick another commit or *Another file...*. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
 4. When you have read it, run **Typst Redline: Mark as reviewed**. It marks the commit that is checked out; uncommitted changes are not part of it. Next time, *Last reviewed version* shows what changed since that commit.
 
 **The view.** The first entry of the list, *View: Marked* at first, shows how the changes are shown. Picking it changes the view and returns to the list; the workspace keeps the view until you change it.
@@ -19,7 +19,7 @@ To see what changed:
 
 **More ways to compare.** Changes *since* a commit are those made after it; a commit picked *from* or *to* has its own change included.
 
-- *Several commits...* (with at least two commits) lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view.
+- *Several commits...* lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view.
 - *Between two commits...* asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. It uses the view, colours included.
 
 The PDF is written next to the file as `<name>.redline.pdf`. Messages of the tool are in the *Typst Redline* output.

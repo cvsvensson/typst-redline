@@ -2286,6 +2286,14 @@ fn mark_reviewed_needs_the_file_in_the_last_commit() {
 }
 
 #[test]
+fn show_reviewed_with_mark_reviewed_is_a_usage_error() {
+    let dir = repo("show-and-mark", &["alpha"]);
+    let out = cli(&dir, &["doc/main.typ", "--show-reviewed", "--mark-reviewed"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(git(&dir, &["for-each-ref", "refs/typst-redline/"]).is_empty());
+}
+
+#[test]
 fn mark_reviewed_with_steps_is_a_usage_error() {
     let dir = temp_dir("mark-reviewed-steps");
     let out = cli(&dir, &["main.typ", "--mark-reviewed", "--each-commit"]);

@@ -262,7 +262,7 @@ suite("Typst Redline commands", () => {
     await show();
     assertOpenedPdf();
     assert.deepStrictEqual(runs[1].slice(5), ["--steps", "6"]);
-    assert.match(infos[0], /more than 6 commits/);
+    assert.match(infos[0], /more than 6 colours/);
   });
 
   test("changes between two commits include both and nothing after", async () => {
@@ -271,7 +271,7 @@ suite("Typst Redline commands", () => {
     await show();
     assertOpenedPdf();
     assert.deepStrictEqual(labels(lists[2]), ["third – ändrad “här”", "second"]);
-    const args = [file, "--since", `${hash("second")}^`, "--to", hash("third.*"), "--root"];
+    const args = [file, "--since", hash("first"), "--to", hash("third.*"), "--root"];
     assert.deepStrictEqual(runs[0].slice(0, 6), args);
     assert.deepStrictEqual(runs[0].slice(7), ["--each-commit"]);
     // The summary names the commits it colours.
@@ -291,8 +291,8 @@ suite("Typst Redline commands", () => {
     assertOpenedPdf();
     // The first commit has no parent to compare with.
     assert.deepStrictEqual(labels(lists[1]), ["third – ändrad “här”", "second"]);
-    assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", `${hash("second")}^`]);
-    assert.deepStrictEqual(runs[0].slice(5), ["--layout", "side-by-side", "--steps", `${hash("third.*")}^`]);
+    assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", hash("first")]);
+    assert.deepStrictEqual(runs[0].slice(5), ["--layout", "side-by-side", "--steps", hash("second")]);
   });
 
   test("too many ticks are refused and none goes back", async () => {
@@ -344,7 +344,7 @@ suite("Typst Redline commands", () => {
     await show();
     assertOpenedPdf();
     assert.deepStrictEqual(infos, [
-      'Typst Redline: no commit since "first" changes this document, so the changes are not coloured.',
+      'Typst Redline: no commit in this range changes this document, so the changes are not coloured.',
     ]);
     assert.strictEqual(runs[1].length, 5);
   });
@@ -421,8 +421,7 @@ suite("Typst Redline commands", () => {
     await show();
     assertOpenedPdf();
     assert.match(actives[1]!.label, /Last reviewed/);
-    assert.strictEqual(runs[1][1], "--since");
-    assert.ok(git(path.dirname(file), "rev-parse", "HEAD").startsWith(runs[1][2]));
+    assert.deepStrictEqual(runs[1].slice(1, 3), ["--since", "reviewed"]);
   });
 
   test("diagnostics of a successful run are shown", async () => {
@@ -484,7 +483,7 @@ suite("Typst Redline commands", () => {
     assert.match(errors[0], /not found.*typstRedline\.executable/);
   });
 
-  test("a second run waits for the first, and cancelling ends typst, which the CLI runs as a child", async () => {
+  test("a second run is refused while one runs, and cancelling ends typst, which the CLI runs as a child", async () => {
     const win = process.platform === "win32";
     const tick = path.join(tmp, "tick");
     const fake = path.join(tmp, win ? "fake-typst.cmd" : "fake-typst");
