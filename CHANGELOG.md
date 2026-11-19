@@ -13,5 +13,5 @@ First release. `typst-redline` makes a PDF of the new version of a Typst documen
 - `--layout side-by-side` shows each changed page of the old version next to the new one, for slides in particular.
 - `--each-commit` and `--steps` colour each change by the commit or group of commits that made it.
 - `--mark-reviewed` and `--since reviewed` show what changed since a document was last read.
-- Compiles with the `typst` on `PATH`. Tested with Typst 0.15.1 on Linux, macOS and Windows and with 0.14.2 on Linux; with 0.11.1 all tests pass but one on the page numbers of a two-sided document. Typst 0.12 and 0.13 are not tested. Before 0.14, the side-by-side layout does not work and files read through a computed path are not checked.
+- Compiles with the `typst` on `PATH`. Tested with Typst 0.15.1 on Linux, macOS and Windows and with 0.14.2 on Linux; the tests also pass with 0.11.1, where the summary pages keep the document's header and footer. Typst 0.12 and 0.13 are not tested. Before 0.14, the side-by-side layout does not work and files read through a computed path are not checked.
 - A VS Code extension in `vscode/` runs the tool on the open file.

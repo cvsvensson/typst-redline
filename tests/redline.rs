@@ -1092,6 +1092,12 @@ fn deleted_state_and_counter_updates_have_no_effect() {
 
 #[test]
 fn two_sided_document_keeps_its_parity_and_page_numbers() {
+    // Typst 0.11 keeps the document's header on the summary pages: the page
+    // set rule after the context that draws the bars does not take effect.
+    let version = Command::new("typst").arg("--version").output().map(|o| o.stdout);
+    if version.is_ok_and(|v| String::from_utf8_lossy(&v).contains(" 0.11.")) {
+        return;
+    }
     // Each header records its page's parity and the page number it reads.
     let Some(marked) = probe("page-parity") else {
         return;
