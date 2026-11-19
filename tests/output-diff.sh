@@ -4,12 +4,15 @@
 # differ. Writes <outdir>/summary.md, and for each difference the pictures before, after and their
 # difference and the source diff under <outdir>/changes. Needs typst, git and pdftoppm on PATH;
 # difference pictures also need ImageMagick's compare.
-# Usage: tests/output-diff.sh <old-binary> <new-binary> <outdir>
+# Cases whose directory is missing from the old checkout <old-repo> (optional) are marked as new.
+# The preamble the binaries embed is compared once; the kept sources are compared without it.
+# Usage: tests/output-diff.sh <old-binary> <new-binary> <outdir> [<old-repo>]
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 bin_old=$(realpath "$1")
 bin_new=$(realpath "$2")
 mkdir -p "$3"
+old_repo=${4:-${OLD_REPO:-}}
 out=$(cd "$3" && pwd)
 rm -rf "${out:?}"/{old,new,changes,cases,report,summary.md}
 export TYPST_IGNORE_SYSTEM_FONTS=${TYPST_IGNORE_SYSTEM_FONTS:-true}
@@ -38,6 +41,7 @@ sweep() {
       if [ -n "$kept" ]; then
         if command -v cygpath > /dev/null; then kept=$(cygpath -u "$kept"); fi
         mv "$kept" "$d/typ"
+        mv "$d/typ/.redline-preamble.typ" "$d/preamble.typ" 2> /dev/null || true
         find "$d/typ" \( -name .redline-deps -o -name '.redline-*.pdf' \) -delete
       fi
       { echo "exit $code"; grep -v '^kept ' "$d/stderr" | sed -E 's/typst-redline-[0-9]+/typst-redline-N/g' || true; } > "$d/result"
@@ -53,12 +57,15 @@ sweep old "$bin_old" &
 sweep new "$bin_new"
 wait $!
 
-pages=0 same=0
+pages=0 same=0 preamble=""
 rows=""
-while read -r name _; do
+while read -r name dir _; do
   for layout in inline side-by-side; do
     a="$out/old/$name/$layout" b="$out/new/$name/$layout" c="$out/changes/$name/$layout"
     changed="" new="" removed="" notes=""
+    rel=${dir#"$repo"/}
+    if [ -n "$old_repo" ] && [ "$rel" != "$dir" ] && [ ! -d "$old_repo/$rel" ]; then notes="new case"; fi
+    if [ -e "$a/preamble.typ" ] && ! cmp -s "$a/preamble.typ" "$b/preamble.typ"; then preamble=" The preamble differs between the two builds; the sources are compared without it."; fi
     for p in $( (ls "$a" "$b" 2> /dev/null | grep '^p[0-9]*$' | tr -d p | sort -nu) || true); do
       pages=$((pages + 1))
       if [ ! -e "$a/p$p" ]; then new="$new $p"
@@ -70,7 +77,7 @@ while read -r name _; do
       mkdir -p "$c"; cp "$b/p$p" "$c/$p-after.png"
     done
     if { [ -d "$a/typ" ] || [ -d "$b/typ" ]; } && ! diff -r "$a/typ" "$b/typ" > "$out/typ.diff" 2>&1; then
-      mkdir -p "$c"; mv "$out/typ.diff" "$c/source.diff"; notes="source"
+      mkdir -p "$c"; mv "$out/typ.diff" "$c/source.diff"; notes="$notes source"
     fi
     if ! cmp -s "$a/result" "$b/result"; then
       mkdir -p "$c"; diff "$a/result" "$b/result" > "$c/result.diff" || true; notes="$notes result"
@@ -86,10 +93,12 @@ cases=$(wc -l < "$out/cases")
 {
   echo "## Output differences"
   echo
-  if [ -z "$rows" ]; then
+  if [ -z "$rows" ] && [ -z "$preamble" ]; then
     echo "No output changed: $cases cases in two layouts, $pages pages."
   else
-    echo "$same of $pages pages unchanged, over $cases cases in two layouts. Pictures and source diffs of the differences are in the artifact."
+    echo "$(printf '%s' "$rows" | grep -c . || true) rows differ; $same of $pages pages unchanged, over $cases cases in two layouts.$preamble"
+    echo
+    echo "Pictures and source diffs of the differences are in the artifact."
     echo
     echo "| case | layout | changed pages | new pages | removed pages | also differs |"
     echo "|---|---|---|---|---|---|"
