@@ -9,7 +9,17 @@ categories = ["command-line-utilities", "text-processing"]
 repository = "https://github.com/cvsvensson/typst-redline"
 readme = "README.md"
 rust-version = "1.92"
-include = ["/src", "/README.md", "/LICENSE"]
+include = ["/src", "/README.md", "/LICENSE", "/CHANGELOG.md"]
+
+# The archives of the release workflow hold the binary at their top level.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.zip"
+pkg-fmt = "zip"
 
 [dependencies]
 similar = "3.2.1"
