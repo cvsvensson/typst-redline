@@ -128,7 +128,8 @@ pub struct Change {
     /// Continues the change before it at the same place, as the insertion
     /// that replaces a deletion does: the summary counts them as one.
     pub joined: bool,
-    /// For a change that is not marked, what it changes, in words.
+    /// For a change that is not marked, or a mark that shows only a bar,
+    /// what it changes, in words.
     pub what: Vec<What>,
 }
 

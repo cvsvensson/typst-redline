@@ -23,7 +23,8 @@
 //   moves: moves into or out of the section other than its own, before:
 //   the changes before the first heading at the top level, deleted,
 //   new, moved, code: array of (old, new): changed code that is not
-//   marked, either empty if inserted or deleted, marks: array of (id,
+//   marked, either empty if inserted or deleted, bars: array of (old, new,
+//   what): marks that show only a bar, said in `what`, marks: array of (id,
 //   move: number of the move if it is one, joined: true if it continues
 //   the mark before it, old, new): its marks), bib: (added, removed,
 //   changed: arrays of citation keys whose bibliography entry is new, gone
@@ -1277,6 +1278,16 @@
           ..rows,
         )
       })
+    }
+
+    // Changes marked only by a bar, such as a blank line that spaces items
+    // apart, said in words.
+    let bars = info.entries.filter(e => e.at("bars", default: ()).len() > 0)
+    if bars.len() > 0 {
+      redline-head[Marked with a bar only]
+      for e in bars {
+        block(below: 0.9em, { block(below: 0.55em, emph(e.title)); pad(left: 1.2em, e.bars.map(redline-code).join(v(0.3em))) })
+      }
     }
 
     let groups = info.entries.zip(lost).filter(((e, l)) => e.code.len() + l.len() > 0)
