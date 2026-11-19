@@ -1147,6 +1147,31 @@ fn tool_text_keeps_its_look_under_the_documents_text_rules() {
 }
 
 #[test]
+fn inserted_text_has_its_colour_under_the_documents_text_colour() {
+    let fills = |name: &str, rules: &str| {
+        let r = redline_of(
+            &format!("{rules}Alpha.\n\nOmega.\n"),
+            &format!("{rules}Alpha beta.\n\nA new paragraph.\n\nOmega.\n"),
+        );
+        let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+        let page = glyphs(name, &files)?.remove(0);
+        Some(
+            page.into_iter()
+                .filter(|g| g.x > 60. && g.y > 60.)
+                .map(|g| g.fill)
+                .collect::<Vec<_>>(),
+        )
+    };
+    let Some(plain) = fills("ins-colour-plain", "") else {
+        return;
+    };
+    let styled = fills("ins-colour-styled", "#show text: set text(fill: rgb(\"#335\"))\n").unwrap();
+    let marked =
+        |fs: &[Option<String>], own: &str| fs.iter().map(|f| f.clone().filter(|f| f != own)).collect::<Vec<_>>();
+    assert_eq!(marked(&plain, "#000000"), marked(&styled, "#333355"));
+}
+
+#[test]
 fn change_number_on_a_page_without_margins_is_clear_of_its_bar() {
     let doc = |w: &str| {
         format!(
