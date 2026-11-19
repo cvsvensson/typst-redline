@@ -1336,6 +1336,19 @@ fn two_sided_document_keeps_its_parity_and_page_numbers() {
 }
 
 #[test]
+fn summary_takes_one_page_after_small_pages() {
+    // Typst 0.11 lays the summary out on the document's pages.
+    let version = Command::new("typst").arg("--version").output().map(|o| o.stdout);
+    if version.is_ok_and(|v| String::from_utf8_lossy(&v).contains(" 0.11.")) {
+        return;
+    }
+    let Some(dir) = compile("page-parity", &run("page-parity").files) else {
+        return;
+    };
+    assert_eq!(pdf_pages(&dir.join("main.pdf")), 3);
+}
+
+#[test]
 fn document_reads_the_physical_page_numbers_of_the_new_version() {
     let Some(marked) = probe("physical-page") else {
         return;

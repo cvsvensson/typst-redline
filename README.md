@@ -86,14 +86,14 @@ The last page lists what changed, so that nothing is missed when a change cannot
 From the top:
 
 - One sentence counts the changes and how many of them are not marked on the pages. When the versions do not differ, it says *No changes found between the two versions*, the line on the first page says so too, and so does a note on stderr.
-- **Changes by section**: each section with changes, the numbers of its changes, how many changes it has (not a page count), how many passages moved, and the page where the section starts. Changes before the first heading, such as in `#set` rules or a template call, are under *Start of the document*. Page numbers are the ones printed on the page; a page without a printed number is given as its PDF page.
+- **Changes by section**: each section with changes, the numbers of its changes, how many changes it has (not a page count), how many passages moved, and the pages of its changes, or for a deleted section where it was. Changes before the first heading, such as in `#set` rules or a template call, are under *Start of the document*. Pages are numbered as in the PDF; the column is headed *PDF page* when the document prints other page numbers.
 - **Marked with a bar only**: changes that have a bar in the margin but nothing else to show, such as a blank line added before a list item, which spaces it apart; each is explained in words, after its number.
-- **Not marked in place**: each change that has no mark on the pages, after its number, said in words with old in red and new in blue, above its source in grey. Bibliography entries that changed are listed here too.
+- **Not marked in place**: each change that has no mark on the pages, after its number, said in words with old in red and new in blue where it can be (a changed argument, a label, a definition or a rule), and its source. Bibliography entries that changed are listed here too.
 - **What this PDF shows differently**: notes on where this PDF differs from a plain proof, for example pages without bars or coarser marks; see Known problems.
 - **Commits**: for a comparison with git, the commits between the two versions that change the document or a file it reads.
-- **How changes are marked**: the legend.
+- **How changes are marked**: the legend, a sample of each kind of mark.
 
-The summary uses the page size and margins of the document's leading `#set page` rule, but not its template, header or footer.
+The summary is one page in the document's font, without its template, header, footer, foreground or background. The page is as wide as the document's, or wider where that leaves less than about 25 em for text, as high as the document's or higher where the summary needs it, with margins in Typst's default proportion.
 
 ## Slides and side by side
 
@@ -148,7 +148,7 @@ Each of these was tried with the current version.
 - Side by side shows the numbers of changes on the new pages only, a deletion's number where the deleted content was; its summary lists changes without numbers.
 - In side by side, an inserted or deleted page is shown next to an empty one only when the pages have headings or a moved passage on them; otherwise it can be paired with a neighbouring page.
 - Files outside the project root and package files are not checked for changes.
-- Typst 0.12 and 0.13 are not tested. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked. With Typst 0.11, the summary keeps the document's header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.
+- Typst 0.12 and 0.13 are not tested. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked. With Typst 0.11, the summary is laid out on the document's pages, with its header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.
 
 ## Styling
 
