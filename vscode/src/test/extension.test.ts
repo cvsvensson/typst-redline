@@ -13,8 +13,9 @@ const release = path.resolve(
 const binary = fs.existsSync(release) ? release : "typst-redline";
 
 function git(cwd: string, ...args: string[]) {
+  const config = ["user.name=test", "user.email=test@example.com", "commit.gpgsign=false"];
   return childProcess
-    .execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd })
+    .execFileSync("git", [...config.flatMap((c) => ["-c", c]), ...args], { cwd })
     .toString()
     .trim();
 }
@@ -27,7 +28,6 @@ suite("Typst Redline commands", () => {
   const cp = childProcess as any;
   const original = {
     showQuickPick: window.showQuickPick,
-    showInputBox: window.showInputBox,
     showOpenDialog: window.showOpenDialog,
     showErrorMessage: window.showErrorMessage,
     showWarningMessage: window.showWarningMessage,
@@ -37,13 +37,15 @@ suite("Typst Redline commands", () => {
   };
   const spawn = cp.spawn;
   const config = vscode.workspace.getConfiguration("typstRedline");
-  const settings = ["executable", "typst", "extraArgs", "openPdf", "view"];
+  const settings = ["executable", "typst", "extraArgs", "openPdf", "view", "root"];
   let tmp: string;
   let file: string;
   // The labels to pick in the lists shown, in order; a missing one cancels.
   let picks: string[];
-  let ticks: string[];
+  // The labels to tick in each list of commits to tick, in order.
+  let ticks: string[][];
   let lists: Item[][];
+  let placeholders: string[];
   let otherFile: string;
   let opened: { uri: vscode.Uri; options: any }[];
   let runs: string[][];
@@ -58,6 +60,7 @@ suite("Typst Redline commands", () => {
 
   const hash = (subject: string) => git(path.dirname(file), "log", "--format=%h", "-n", "1", `--grep=^${subject}$`);
   const labels = (list: Item[]) => list.map((i) => i.label);
+  const show = () => vscode.commands.executeCommand("typstRedline.showChanges");
 
   setup(async () => {
     // Inside the open folder, which is then above the repository.
@@ -77,9 +80,10 @@ suite("Typst Redline commands", () => {
     git(dir, "commit", "-q", "-am", "third – ändrad “här”");
     await open(doc);
 
-    picks = ["first", "Marked PDF"];
+    picks = ["first", "Marked"];
     ticks = [];
     lists = [];
+    placeholders = [];
     otherFile = "";
     opened = [];
     runs = [];
@@ -88,8 +92,10 @@ suite("Typst Redline commands", () => {
     infos = [];
     window.showQuickPick = async (items: Item[], opts: vscode.QuickPickOptions) => {
       lists.push(items);
+      placeholders.push(opts.placeHolder ?? "");
       if (opts.canPickMany) {
-        return items.filter((i) => ticks.includes(i.label));
+        const t = ticks.shift();
+        return t && items.filter((i) => t.includes(i.label));
       }
       const label = picks.shift();
       return label === undefined
@@ -99,7 +105,7 @@ suite("Typst Redline commands", () => {
     window.showOpenDialog = async () => (otherFile ? [vscode.Uri.file(otherFile)] : undefined);
     // VS Code's own extensions may show messages in the test instance too.
     const own = (list: string[]) => async (message: string) =>
-      void (message.startsWith("Typst Redline:") && list.push(message));
+      void (message.startsWith("Typst Redline") && list.push(message));
     window.showErrorMessage = own(errors);
     window.showWarningMessage = own(warnings);
     window.showInformationMessage = own(infos);
@@ -108,7 +114,7 @@ suite("Typst Redline commands", () => {
         ? void opened.push({ uri: args[0], options: args[1] })
         : original.executeCommand(command, ...args);
     cp.spawn = (cmd: string, args: string[], ...rest: any[]) => {
-      if (cmd === binary) {
+      if (cmd === binary && !args.includes("--show-reviewed")) {
         runs.push(args);
       }
       return spawn(cmd, args, ...rest);
@@ -147,12 +153,12 @@ suite("Typst Redline commands", () => {
 
   test("lists commits by their subject as written", async () => {
     picks = [];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assert.deepStrictEqual(labels(lists[0]).slice(0, 3), ["third – ändrad “här”", "second", "first"]);
   });
 
   test("opens a PDF of the changes since the picked commit beside the editor", async () => {
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assertOpenedPdf();
     assert.strictEqual(opened[0].options.viewColumn, vscode.ViewColumn.Beside);
     assert.deepStrictEqual(runs[0].slice(0, 4), [file, "--since", hash("first"), "--root"]);
@@ -163,81 +169,161 @@ suite("Typst Redline commands", () => {
     const expected: [string, string[]][] = [
       ["Side by side, coloured by commit", ["--layout", "side-by-side", "--each-commit"]],
       ["Side by side", ["--layout", "side-by-side"]],
-      ["Coloured by commit", ["--each-commit"]],
-      ["Marked PDF", []],
+      ["Marked, coloured by commit", ["--each-commit"]],
+      ["Marked", []],
     ];
     for (const [view, args] of expected) {
-      picks = ["first", view];
+      picks = ["first", view, "One colour per commit"];
       opened = [];
       runs = [];
-      await vscode.commands.executeCommand("typstRedline.showChanges");
+      await show();
       assertOpenedPdf();
       assert.deepStrictEqual(runs[0].slice(5), args, view);
     }
   });
 
-  test("the last used view is offered first", async () => {
+  test("the last used view is offered first, and the same views after a run", async () => {
     picks = ["first", "Side by side"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     picks = ["first"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assert.strictEqual(lists[3][0].label, "Side by side");
+    // The PDF of the first run lies next to the file now.
+    const shown = (list: Item[]) => list.map((i) => `${i.label}: ${i.detail}`).sort();
+    assert.deepStrictEqual(shown(lists[3]), shown(lists[1]));
   });
 
   test("the view setting skips the choice of view", async () => {
     await config.update("view", "side-by-side-by-commit", vscode.ConfigurationTarget.Global);
     picks = ["first"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assertOpenedPdf();
     assert.strictEqual(lists.length, 1);
     assert.deepStrictEqual(runs[0].slice(5), ["--layout", "side-by-side", "--each-commit"]);
   });
 
-  test("the views coloured by commit need two commits or changes", async () => {
-    picks = ["second"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
-    assert.deepStrictEqual(labels(lists[1]).sort(), ["Marked PDF", "Side by side"]);
-    fs.writeFileSync(file, "= Title\n\nUncommitted.\n");
-    picks = ["second"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
-    assert.strictEqual(lists[3].length, 4);
-  });
-
-  test("more commits than colours are grouped", async () => {
+  test("more commits than colours are split into steps", async () => {
     const dir = path.dirname(file);
     for (let i = 0; i < 6; i++) {
       fs.appendFileSync(file, `\nLine ${i}.\n`);
       git(dir, "commit", "-q", "-am", `line ${i}`);
     }
-    picks = ["first", "Coloured by commit"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    picks = ["first", "Marked, coloured by commit", "6 steps"];
+    await show();
     assertOpenedPdf();
+    assert.ok(!labels(lists[2]).includes("One colour per commit"));
     assert.deepStrictEqual(runs[0].slice(5), ["--steps", "6"]);
   });
 
-  test("ticked commits start a colour each", async () => {
-    picks = ["Several commits", "Coloured by commit"];
-    ticks = ["third – ändrad “här”", "first"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+  test("a number of steps is passed, and offered first the next time", async () => {
+    picks = ["first", "Marked, coloured by commit", "2 steps"];
+    await show();
     assertOpenedPdf();
-    assert.deepStrictEqual(labels(lists[2]).sort(), ["Coloured by commit", "Side by side, coloured by commit"]);
-    assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", hash("first")]);
-    assert.deepStrictEqual(runs[0].slice(5), ["--steps", hash("third.*")]);
+    assert.deepStrictEqual(runs[0].slice(5), ["--steps", "2"]);
+    picks = ["first", "Marked, coloured by commit"];
+    await show();
+    assert.strictEqual(lists[5][0].label, "2 steps");
   });
 
-  test("cancelling at any step runs nothing", async () => {
-    for (const p of [[], ["first"], ["Several commits"], ["Another file"]]) {
-      picks = [...p];
-      await vscode.commands.executeCommand("typstRedline.showChanges");
+  test("changes between two commits include both and nothing after", async () => {
+    picks = ["Between two commits", "second", "third", "Marked, coloured by commit"];
+    await show();
+    assertOpenedPdf();
+    assert.deepStrictEqual(labels(lists[2]), ["third – ändrad “här”", "second"]);
+    const args = [file, "--since", `${hash("second")}^`, "--to", hash("third.*"), "--root"];
+    assert.deepStrictEqual(runs[0].slice(0, 6), args);
+    assert.deepStrictEqual(runs[0].slice(7), ["--each-commit"]);
+    // The summary names the commits it colours.
+    const kept = childProcess.spawnSync(binary, [...runs[0], "--keep-typ", "-o", path.join(tmp, "k.pdf")]);
+    const dir = kept.stderr.toString().match(/^kept (.*)$/m)![1].trim();
+    const src = fs.readFileSync(path.join(dir, path.basename(file)), "utf8");
+    fs.rmSync(dir, { recursive: true, force: true });
+    const subjects = [...src.matchAll(/subject: "([^"]*)"/g)].map((m) => m[1]);
+    assert.deepStrictEqual(subjects.sort(), ["second", "third – ändrad “här”"]);
+  });
+
+  test("ticked commits start a colour each, their own change included", async () => {
+    picks = ["Several commits", "Marked, coloured by commit"];
+    ticks = [["third – ändrad “här”", "second"]];
+    await show();
+    assertOpenedPdf();
+    // The first commit has no parent to compare with.
+    assert.deepStrictEqual(labels(lists[1]), ["third – ändrad “här”", "second"]);
+    assert.deepStrictEqual(labels(lists[2]).sort(), ["Marked, coloured by commit", "Side by side, coloured by commit"]);
+    assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", `${hash("second")}^`]);
+    assert.deepStrictEqual(runs[0].slice(5), ["--steps", `${hash("third.*")}^`]);
+  });
+
+  test("too many ticks are refused and none goes back", async () => {
+    const dir = path.dirname(file);
+    for (let i = 0; i < 6; i++) {
+      fs.appendFileSync(file, `\nLine ${i}.\n`);
+      git(dir, "commit", "-q", "-am", `line ${i}`);
     }
+    const seven = ["line 0", "line 1", "line 2", "line 3", "line 4", "line 5", "second"];
+    picks = ["Several commits", "Several commits"];
+    ticks = [seven, [], []];
+    await show();
+    assert.strictEqual(warnings.length, 1);
+    assert.deepStrictEqual(lists[2].filter((i) => i.picked).length, 7);
+    // No tick returns to the first list, where the second pick leads to the ticks again.
+    assert.strictEqual(lists[3], lists[0]);
     assert.deepStrictEqual(runs, []);
-    assert.deepStrictEqual(errors, []);
+  });
+
+  test("a merge lists the commits of the first parent, which can be ticked", async () => {
+    const dir = path.dirname(file);
+    git(dir, "checkout", "-q", "-b", "side", "HEAD~1");
+    fs.writeFileSync(path.join(dir, "side.txt"), "side\n");
+    git(dir, "add", ".");
+    git(dir, "commit", "-q", "-m", "side work");
+    git(dir, "checkout", "-q", "-");
+    git(dir, "merge", "-q", "--no-ff", "side", "-m", "merge side");
+    picks = ["Several commits", "Marked, coloured by commit"];
+    ticks = [["merge side", "second"]];
+    await show();
+    assert.ok(!labels(lists[0]).includes("side work"));
+    assertOpenedPdf();
+  });
+
+  test("extra arguments that the command sets itself are refused", async () => {
+    await config.update("extraArgs", ["--steps", "3"], vscode.ConfigurationTarget.Global);
+    await show();
+    assert.deepStrictEqual(runs, []);
+    assert.strictEqual(errors.length, 1);
+    assert.match(errors[0], /typstRedline\.extraArgs holds --steps.*typstRedline\.view/);
+  });
+
+  test("an untracked document has nothing to colour, said plainly", async () => {
+    const dir = path.dirname(file);
+    fs.writeFileSync(path.join(dir, "new.typ"), "New.\n");
+    await open(path.join(dir, "new.typ"));
+    picks = ["first", "Marked, coloured by commit", "One colour per commit"];
+    await show();
+    assert.strictEqual(opened.length, 0);
+    assert.deepStrictEqual(errors, ['Typst Redline: Nothing to colour: no commit since "first" changes this document.']);
+  });
+
+  test("the list says when there are no commits", async () => {
+    const empty = path.join(tmp, "empty");
+    fs.mkdirSync(path.join(empty, "sub"), { recursive: true });
+    git(empty, "init", "-q");
+    fs.writeFileSync(path.join(empty, "a.typ"), "A.\n");
+    await open(path.join(empty, "a.typ"));
+    picks = [];
+    await show();
+    assert.match(placeholders[0], /^No commits yet\. /);
+    git(empty, "add", ".");
+    git(empty, "commit", "-q", "-m", "a");
+    await config.update("root", path.join(empty, "sub"), vscode.ConfigurationTarget.Global);
+    await show();
+    assert.match(placeholders[1], /^No commits touch this folder\. /);
   });
 
   test("unsaved changes are saved and compared", async () => {
     const editor = vscode.window.activeTextEditor!;
     await editor.edit((e) => e.insert(new vscode.Position(0, 0), "Unsaved.\n\n"));
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assertOpenedPdf();
     assert.match(fs.readFileSync(file, "utf8"), /^Unsaved\./);
   });
@@ -250,21 +336,21 @@ suite("Typst Redline commands", () => {
     git(dir, "commit", "-q", "-m", "add chapter");
     fs.writeFileSync(path.join(dir, "chapter.typ"), "New chapter.\n");
     git(dir, "commit", "-q", "-am", "edit chapter");
-    picks = ["edit chapter", "Marked PDF"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    picks = ["edit chapter", "Marked"];
+    await show();
     assertOpenedPdf();
   });
 
   test("a usage error shows the CLI's message", async () => {
     await config.update("extraArgs", ["--nosuchoption"], vscode.ConfigurationTarget.Global);
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assert.strictEqual(opened.length, 0);
     assert.deepStrictEqual(errors, ["Typst Redline: unknown option --nosuchoption"]);
   });
 
   test("a compile error shows typst's message", async () => {
     fs.writeFileSync(file, "= Title\n\nThe #nosuchvariable sentence.\n");
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assert.strictEqual(opened.length, 0);
     assert.strictEqual(errors.length, 1);
     assert.match(errors[0], /unknown variable: nosuchvariable/);
@@ -274,23 +360,25 @@ suite("Typst Redline commands", () => {
     const out = path.join(tmp, "out.pdf");
     fs.writeFileSync(file, "= Title\n\nThe new sentence by #sys.inputs.who.\n");
     await config.update("extraArgs", ["-o", out, "--", "--input", "who=me"], vscode.ConfigurationTarget.Global);
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assertOpenedPdf();
     assert.strictEqual(opened[0].uri.fsPath, vscode.Uri.file(out).fsPath);
   });
 
   test("the last reviewed version is offered first once mark as reviewed set it", async () => {
     picks = [];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assert.ok(!labels(lists[0]).some((l) => l.includes("Last reviewed")));
     await vscode.commands.executeCommand("typstRedline.markReviewed");
-    assert.match(infos[0], /marked \w+ as reviewed/);
+    const head = hash("third.*");
+    assert.deepStrictEqual(infos, [`Typst Redline: marked ${head} as reviewed`]);
     fs.writeFileSync(file, "= Title\n\nAfter the review.\n");
-    picks = ["Last reviewed", "Marked PDF"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    picks = ["Last reviewed", "Marked"];
+    await show();
     assertOpenedPdf();
     assert.match(lists[1][0].label, /Last reviewed/);
-    assert.deepStrictEqual(runs[1].slice(1, 3), ["--since", "reviewed"]);
+    assert.strictEqual(runs[1][1], "--since");
+    assert.ok(git(path.dirname(file), "rev-parse", "HEAD").startsWith(runs[1][2]));
   });
 
   test("diagnostics of a successful run are shown", async () => {
@@ -308,23 +396,41 @@ suite("Typst Redline commands", () => {
     fs.writeFileSync(otherFile, "Old text.\n");
     fs.writeFileSync(path.join(dir, "new.typ"), "New text.\n");
     await open(path.join(dir, "new.typ"));
-    picks = ["Another file", "Marked PDF"];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    picks = ["Another file", "Marked"];
+    await show();
     assertOpenedPdf();
-    assert.deepStrictEqual(labels(lists[1]).sort(), ["Marked PDF", "Side by side"]);
+    assert.deepStrictEqual(labels(lists[1]).sort(), ["Marked", "Side by side"]);
     assert.deepStrictEqual(runs[0].slice(0, 2), [otherFile, file]);
     // A view coloured by commit set in the settings gives the same layout without colours.
     await config.update("view", "by-commit", vscode.ConfigurationTarget.Global);
     picks = ["Another file"];
     opened = [];
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assertOpenedPdf();
     assert.deepStrictEqual(runs[1], runs[0]);
   });
 
+  test("cancelling at any step runs nothing", async () => {
+    const steps = [
+      [],
+      ["first"],
+      ["first", "Marked, coloured by commit"],
+      ["Several commits"],
+      ["Between two commits"],
+      ["Between two commits", "second"],
+      ["Another file"],
+    ];
+    for (const p of steps) {
+      picks = [...p];
+      await show();
+    }
+    assert.deepStrictEqual(runs, []);
+    assert.deepStrictEqual(errors, []);
+  });
+
   test("the typst setting is passed to the CLI", async () => {
     await config.update("typst", "no-such-typst", vscode.ConfigurationTarget.Global);
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assert.strictEqual(opened.length, 0);
     assert.strictEqual(errors.length, 1);
     assert.match(errors[0], /no-such-typst/);
@@ -332,13 +438,13 @@ suite("Typst Redline commands", () => {
 
   test("a missing executable is reported with a hint at the setting", async () => {
     await config.update("executable", "no-such-typst-redline", vscode.ConfigurationTarget.Global);
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+    await show();
     assert.strictEqual(opened.length, 0);
     assert.strictEqual(errors.length, 1);
     assert.match(errors[0], /not found.*typstRedline\.executable/);
   });
 
-  test("cancelling ends typst, which the CLI runs as a child", async () => {
+  test("a second run waits for the first, and cancelling ends typst, which the CLI runs as a child", async () => {
     const win = process.platform === "win32";
     const tick = path.join(tmp, "tick");
     const fake = path.join(tmp, win ? "fake-typst.cmd" : "fake-typst");
@@ -354,11 +460,15 @@ suite("Typst Redline commands", () => {
     window.withProgress = (_: unknown, task: Function) => task(undefined, cancel.token);
     const size = () => (fs.existsSync(tick) ? fs.statSync(tick).size : 0);
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    const run = vscode.commands.executeCommand("typstRedline.showChanges");
+    const run = show();
     for (let i = 0; i < 100 && size() === 0; i++) {
       await sleep(100);
     }
     assert.ok(size() > 0, "typst did not start");
+    picks = ["first", "Marked"];
+    await show();
+    assert.deepStrictEqual(warnings, ["Typst Redline is still running for this file."]);
+    assert.strictEqual(runs.length, 1);
     cancel.cancel();
     await run;
     await sleep(1000);

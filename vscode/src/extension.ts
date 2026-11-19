@@ -120,12 +120,15 @@ async function project(doc: vscode.TextDocument): Promise<Project> {
   return { root, repo, why };
 }
 
-// A commit base also carries the number of commits after it and whether there are
-// uncommitted changes, which bound the number of colours of the per-commit views.
+// `what` completes "changes ..." in titles and messages. A commit base runs from `rev` to
+// `to`, or to the file as it is now; `ends` are the revisions where ticked colour steps end.
+// `most` bounds the number of steps one colour per commit takes: the commits the CLI can
+// colour, and the uncommitted changes.
 type Base =
-  | { rev: string; label: string; commits: number; uncommitted: boolean; ends?: string[] }
-  | { file: string; label: string };
-type BaseItem = vscode.QuickPickItem & { base?: Base | "other" | "several" };
+  | { rev: string; to?: string; ends?: string[]; most: number; what: string }
+  | { file: string; what: string };
+type Commit = { hash: string; date: string; subject: string; root: boolean };
+type BaseItem = vscode.QuickPickItem & { base?: Base | "other" | "several" | "between" };
 
 function unsaved(doc: vscode.TextDocument, root: string) {
   return vscode.workspace.textDocuments.filter(
@@ -134,163 +137,207 @@ function unsaved(doc: vscode.TextDocument, root: string) {
 }
 
 async function git(dir: string, ...args: string[]) {
-  return (await run("git", args, dir, "")).stdout;
+  return (await run("git", ["-c", "log.showSignature=false", ...args], dir, "")).stdout;
 }
 
-// The commit that Mark as reviewed recorded for the file: the CLI keeps it in a ref named
-// after the file's path in the repository, percent-encoded.
-async function reviewedCommit(dir: string, file: string) {
-  const rel = (await git(dir, "rev-parse", "--show-prefix")).trim() + path.basename(file);
-  const prefix = "refs/typst-redline/reviewed/";
-  const refs = await git(dir, "for-each-ref", "--format=%(objectname) %(refname)", prefix);
-  const fold = (s: string) => (process.platform === "linux" ? s : s.toLowerCase());
-  for (const line of refs.split(/\r?\n/)) {
-    const [hash, ref] = line.split(" ");
-    try {
-      if (ref && fold(decodeURIComponent(ref.slice(prefix.length))) === fold(rel)) {
-        return hash;
-      }
-    } catch {}
+function exe(doc: vscode.TextDocument) {
+  return vscode.workspace.getConfiguration("typstRedline", doc.uri).get<string>("executable") || "typst-redline";
+}
+
+// The commit that the CLI compares with for --since reviewed, if there is one.
+async function reviewedCommit(doc: vscode.TextDocument) {
+  try {
+    const dir = path.dirname(doc.fileName);
+    const hash = (await run(exe(doc), [doc.fileName, "--show-reviewed"], dir, "")).stdout.trim();
+    return hash || undefined;
+  } catch {
+    return undefined;
   }
 }
 
-async function pickBase(doc: vscode.TextDocument, { root, repo, why }: Project): Promise<Base | undefined> {
-  const file = doc.fileName;
-  const dir = path.dirname(file);
-  const items: BaseItem[] = [];
-  let commits: BaseItem[] = [];
-  if (repo) {
-    try {
-      const uncommitted =
-        unsaved(doc, root).length > 0 || (await git(dir, "status", "--porcelain", "--", root)).trim() !== "";
-      const log = await git(dir, "log", "-n", "40", "--date=short", "--format=%h%x09%ad%x09%s", "--", root);
-      commits = log
-        .split(/\r?\n/)
-        .filter((l) => l.trim())
-        .map((l, i) => {
-          const [hash, date, ...subject] = l.split("\t");
-          return {
-            label: subject.join("\t"),
-            description: `${hash}  ${date}`,
-            base: { rev: hash, label: hash, commits: i, uncommitted },
-          };
-        });
-      why = commits.length ? "" : "No commits yet.";
-      const reviewed = await reviewedCommit(dir, file);
-      if (reviewed) {
-        const count = await git(dir, "rev-list", "--count", `${reviewed}..HEAD`, "--", root);
-        items.push({
-          label: "$(eye) Last reviewed version",
-          description: `${reviewed.slice(0, 7)}  marked with Mark as reviewed`,
-          base: { rev: "reviewed", label: "the last reviewed version", commits: Number(count), uncommitted },
-        });
-      }
-    } catch (e) {
-      why = (e as Error).message.split("\n")[0];
+// The CLI follows the first parent, so every commit listed is one it accepts as a base, as
+// the end of a step or of a range, and colours at most the commits listed after a base.
+async function commits(dir: string, root: string): Promise<{ list: Commit[]; why: string }> {
+  try {
+    const log = await git(dir, "log", "--first-parent", "-n", "40", "--date=short", "--format=%h%x09%p%x09%ad%x09%s", "--", root);
+    const list = log
+      .split(/\r?\n/)
+      .filter((l) => l.trim())
+      .map((l) => {
+        const [hash, parents, date, ...subject] = l.split("\t");
+        return { hash, date, subject: subject.join("\t"), root: !parents };
+      });
+    return { list, why: list.length ? "" : "No commits touch this folder." };
+  } catch (e) {
+    const message = (e as Error).message;
+    if (/does not have any commits/.test(message)) {
+      return { list: [], why: "No commits yet." };
     }
-    items.push(...commits, { label: "", kind: vscode.QuickPickItemKind.Separator });
-    if (commits.length > 1) {
+    output.appendLine(message);
+    return { list: [], why: "Could not read the git history; see the Typst Redline output." };
+  }
+}
+
+const quote = (c: Commit) => `"${c.subject}"`;
+const commitItem = (c: Commit) => ({ label: c.subject, description: `${c.date}  ${c.hash}`, c });
+
+async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promise<Base | undefined> {
+  const dir = path.dirname(doc.fileName);
+  const [{ root, repo, why: noRepo }, reviewed] = await Promise.all([proj, reviewedCommit(doc)]);
+  const items: BaseItem[] = [];
+  let list: Commit[] = [];
+  let why = noRepo;
+  if (repo) {
+    const [log, date, after] = await Promise.all([
+      commits(dir, root),
+      reviewed ? git(dir, "log", "-1", "--date=short", "--format=%ad", reviewed).catch(() => "") : "",
+      reviewed
+        ? git(dir, "rev-list", "--first-parent", "--count", `${reviewed}..HEAD`, "--", root).catch(() => "")
+        : "",
+    ]);
+    ({ list, why } = log);
+    if (reviewed) {
+      items.push({
+        label: "$(eye) Last reviewed version",
+        description: `${date.trim()} \u00b7 marked with Mark as reviewed`,
+        base: { rev: reviewed, most: (after ? Number(after) : Infinity) + 1, what: "since the last reviewed version" },
+      });
+    }
+    items.push(
+      ...list.map((c, i) => ({
+        ...commitItem(c),
+        base: { rev: c.hash, most: i + 1, what: `since ${quote(c)}` },
+      })),
+      { label: "", kind: vscode.QuickPickItemKind.Separator },
+    );
+    const tickable = list.filter((c) => !c.root).length;
+    if (tickable > 1) {
       items.push({
         label: "$(list-selection) Several commits...",
-        description: "a colour for the changes after each ticked commit",
+        description: "tick commits to colour the changes in steps",
         base: "several",
+      });
+    }
+    if (tickable > 0) {
+      items.push({
+        label: "$(git-compare) Between two commits...",
+        description: "from one commit to another, not to the file as it is now",
+        base: "between",
       });
     }
   }
   items.push({ label: "$(file) Another file...", description: "compare with a .typ file of your choice", base: "other" });
-  const pick = await vscode.window.showQuickPick<BaseItem>(items, {
-    title: "Typst Redline: show changes since...",
-    placeHolder: `${why ? `${why} ` : ""}Compare the working copy with...`,
-    matchOnDescription: true,
-  });
-  const choice = pick?.base;
-  if (choice === "several") {
-    return pickSeveral(commits);
+  for (;;) {
+    const pick = await vscode.window.showQuickPick<BaseItem>(items, {
+      title: "Typst Redline: Show changes since...",
+      placeHolder: `${why ? `${why} ` : ""}Compare the file as it is now with...`,
+      matchOnDescription: true,
+    });
+    const choice = pick?.base;
+    if (choice === "several" || choice === "between") {
+      const base = await (choice === "several" ? pickSeveral(list) : pickBetween(list));
+      if (base === "back") {
+        continue;
+      }
+      return base;
+    }
+    if (choice !== "other") {
+      return choice;
+    }
+    const other = await vscode.window.showOpenDialog({
+      title: "Old version to compare with",
+      defaultUri: vscode.Uri.file(dir),
+      filters: { Typst: ["typ"] },
+    });
+    return other && { file: other[0].fsPath, what: `since ${path.basename(other[0].fsPath)}` };
   }
-  if (choice !== "other") {
-    return choice;
-  }
-  const other = await vscode.window.showOpenDialog({
-    title: "Old version to compare with",
-    defaultUri: vscode.Uri.file(dir),
-    filters: { Typst: ["typ"] },
-  });
-  return other && { file: other[0].fsPath, label: path.basename(other[0].fsPath) };
 }
 
 // The most steps the CLI has colours for.
 const maxColours = 6;
 
-// Ticked commits split the changes since the oldest of them into steps, each in its own
-// colour: a step ends at each later ticked commit, and the last one at the working copy.
-async function pickSeveral(commits: BaseItem[]): Promise<Base | undefined> {
-  const ticked = await vscode.window.showQuickPick(commits, {
-    title: "Typst Redline: changes since the oldest ticked commit",
-    placeHolder: `Tick up to ${maxColours} commits; the changes after each one get a new colour`,
-    canPickMany: true,
+// Commits picked "from" include their own change, so the base is their parent. A commit
+// without a parent in the repository, the first or the edge of a shallow clone, cannot be
+// picked so.
+async function pickSeveral(list: Commit[]): Promise<Base | "back" | undefined> {
+  let items = list.filter((c) => !c.root).map(commitItem);
+  for (;;) {
+    const ticked = await vscode.window.showQuickPick(items, {
+      title: "Typst Redline: colour the changes by step",
+      placeHolder: `Tick up to ${maxColours} commits; each one starts a new colour`,
+      canPickMany: true,
+      matchOnDescription: true,
+    });
+    if (!ticked) {
+      return undefined;
+    }
+    if (!ticked.length) {
+      return "back";
+    }
+    if (ticked.length > maxColours) {
+      vscode.window.showWarningMessage(`Typst Redline: tick at most ${maxColours} commits.`);
+      items = items.map((i) => ({ ...i, picked: ticked.includes(i) }));
+      continue;
+    }
+    const [oldest, ...later] = ticked.map((i) => i.c).reverse();
+    return {
+      rev: `${oldest.hash}^`,
+      what: `from ${quote(oldest)} on`,
+      most: list.indexOf(oldest) + 2,
+      ends: later.length ? later.map((c) => `${c.hash}^`) : undefined,
+    };
+  }
+}
+
+async function pickBetween(list: Commit[]): Promise<Base | "back" | undefined> {
+  const from = await vscode.window.showQuickPick(list.filter((c) => !c.root).map(commitItem), {
+    title: "Typst Redline: changes from...",
+    placeHolder: "Pick the oldest commit to show; its own change is included",
     matchOnDescription: true,
   });
-  if (!ticked?.length) {
+  if (!from) {
     return undefined;
   }
-  const [oldest, ...later] = ticked
-    .map((item) => item.base as Base & { rev: string; commits: number })
-    .sort((a, b) => b.commits - a.commits);
-  return later.length ? { ...oldest, ends: later.map((b) => b.rev) } : oldest;
+  const start = list.indexOf(from.c);
+  const to = await vscode.window.showQuickPick(list.slice(0, start + 1).map(commitItem), {
+    title: `Typst Redline: changes from ${quote(from.c)} to...`,
+    placeHolder: "Pick the newest commit to show; its own change is included",
+    matchOnDescription: true,
+  });
+  if (!to) {
+    return undefined;
+  }
+  return {
+    rev: `${from.c.hash}^`,
+    to: to.c.hash,
+    most: start - list.indexOf(to.c) + 1,
+    what: `from ${quote(from.c)} to ${quote(to.c)}`,
+  };
 }
 
 type View = { id: string; label: string; sideBySide: boolean; byCommit: boolean };
 
 const views: View[] = [
-  { id: "marked", label: "Marked PDF", sideBySide: false, byCommit: false },
+  { id: "marked", label: "Marked", sideBySide: false, byCommit: false },
   { id: "side-by-side", label: "Side by side", sideBySide: true, byCommit: false },
-  { id: "by-commit", label: "Coloured by commit", sideBySide: false, byCommit: true },
+  { id: "by-commit", label: "Marked, coloured by commit", sideBySide: false, byCommit: true },
   { id: "side-by-side-by-commit", label: "Side by side, coloured by commit", sideBySide: true, byCommit: true },
 ];
 
-function colours(base: Base) {
-  if (!("rev" in base)) {
-    return 0;
-  }
-  return base.ends ? base.ends.length + 1 : base.commits + Number(base.uncommitted);
-}
-
 function viewDetail(view: View, base: Base) {
-  const layout = view.sideBySide
-    ? "Changed pages of the old and the new version next to each other (Typst 0.14 or later)"
-    : "The new version with the changes marked";
-  if (!view.byCommit || !("rev" in base)) {
-    return layout;
+  const layout = view.sideBySide ? "Old and new pages next to each other" : "The new version with the changes marked";
+  if (!view.byCommit) {
+    return view.sideBySide ? `${layout} (Typst 0.14 or later)` : layout;
   }
-  if (base.ends) {
-    return `${layout}, in a new colour after each ticked commit`;
-  }
-  const n = base.commits;
-  const what = `${n} commit${n === 1 ? "" : "s"} since ${base.label}${base.uncommitted ? " and the uncommitted changes" : ""}`;
-  return colours(base) > maxColours
-    ? `${layout}, in ${maxColours} colours for groups of the ${what}`
-    : `${layout}, each in the colour of the commit that made it: ${what}`;
+  return "ends" in base && base.ends
+    ? `${layout}, a new colour at each ticked commit`
+    : `${layout}, each change in the colour of its commit`;
 }
 
-function viewArgs(view: View, base: Base) {
-  const layout = view.sideBySide ? ["--layout", "side-by-side"] : [];
-  if (!view.byCommit || !("rev" in base)) {
-    return layout;
-  }
-  const steps = base.ends
-    ? ["--steps", base.ends.join(",")]
-    : colours(base) > maxColours
-      ? ["--steps", String(maxColours)]
-      : ["--each-commit"];
-  return [...layout, ...steps];
-}
-
-// The per-commit views need a git comparison with at least two commits or steps to colour;
-// ticked commits always take one of them.
+// Only a git comparison can be coloured by commit; ticked commits ask for colours.
 function availableViews(base: Base) {
-  const byCommit = colours(base) > 1;
   const ticked = "rev" in base && !!base.ends;
-  return views.filter((v) => (v.byCommit ? byCommit : !ticked));
+  return views.filter((v) => (v.byCommit ? "rev" in base : !ticked));
 }
 
 // The view with this id, or else the one with the same layout.
@@ -299,22 +346,103 @@ function closest(available: View[], id: string | undefined) {
   return available.find((v) => v === want) ?? available.find((v) => v.sideBySide === want?.sideBySide);
 }
 
-async function pickView(base: Base, config: vscode.WorkspaceConfiguration) {
+// The colour options of a coloured view: one colour per commit while the CLI has enough
+// colours, or a number of steps.
+function stepChoices(base: { most: number }) {
+  const choices: { label: string; detail: string; args: string[] }[] = [];
+  if (base.most <= maxColours) {
+    choices.push({
+      label: "One colour per commit",
+      detail: "each change in the colour of the commit that made it",
+      args: ["--each-commit"],
+    });
+  }
+  for (let n = 2; n <= Math.min(maxColours, base.most - 1); n++) {
+    choices.push({
+      label: `${n} steps`,
+      detail: `the commits split into ${n} groups of about equal change`,
+      args: ["--steps", String(n)],
+    });
+  }
+  return choices;
+}
+
+// Returns the CLI's arguments for the view, or undefined if the user cancelled.
+async function pickView(base: Base, config: vscode.WorkspaceConfiguration): Promise<string[] | undefined> {
   const available = availableViews(base);
   const setting = config.get<string>("view", "ask");
+  let view: View | undefined;
   if (setting !== "ask") {
-    return closest(available, setting) ?? available[0];
+    view = closest(available, setting) ?? available[0];
+  } else {
+    const last = closest(available, state.get<string>("view"));
+    const ordered = last ? [last, ...available.filter((v) => v !== last)] : available;
+    const pick = await vscode.window.showQuickPick(
+      ordered.map((view) => ({ label: view.label, detail: viewDetail(view, base), view })),
+      { title: `Typst Redline: changes ${base.what}`, placeHolder: "Show the changes as..." },
+    );
+    if (!pick) {
+      return undefined;
+    }
+    view = pick.view;
+    await state.update("view", view.id);
   }
-  const last = closest(available, state.get<string>("view"));
-  const ordered = last ? [last, ...available.filter((v) => v !== last)] : available;
-  const pick = await vscode.window.showQuickPick(
-    ordered.map((view) => ({ label: view.label, detail: viewDetail(view, base), view })),
-    { title: `Typst Redline: changes since ${base.label}`, placeHolder: "Show the changes as..." },
-  );
-  if (pick) {
-    await state.update("view", pick.view.id);
+  const layout = view.sideBySide ? ["--layout", "side-by-side"] : [];
+  if (!view.byCommit || !("rev" in base)) {
+    return layout;
   }
-  return pick?.view;
+  if (base.ends) {
+    return [...layout, "--steps", base.ends.join(",")];
+  }
+  const choices = stepChoices(base);
+  // The first choice is one colour per commit, or else the most steps.
+  const fallback = choices[0].args[0] === "--each-commit" ? choices[0] : choices[choices.length - 1];
+  if (setting !== "ask" || base.most <= 2) {
+    return [...layout, ...fallback.args];
+  }
+  const last = choices.find((c) => c.label === state.get<string>("steps")) ?? fallback;
+  const pick = await vscode.window.showQuickPick([last, ...choices.filter((c) => c !== last)], {
+    title: `Typst Redline: colours for the changes ${base.what}`,
+    placeHolder: "Colour each commit, or split the commits into steps",
+  });
+  if (!pick) {
+    return undefined;
+  }
+  await state.update("steps", pick.label);
+  return [...layout, ...pick.args];
+}
+
+// The command chooses these itself, from the list or typstRedline.view.
+const flowOptions = ["--since", "--to", "--layout", "--each-commit", "--steps"];
+
+function checkExtraArgs(extra: string[]) {
+  const end = extra.indexOf("--");
+  const owned = (end < 0 ? extra : extra.slice(0, end)).filter((a) => flowOptions.includes(a));
+  if (owned.length) {
+    throw new Error(
+      `typstRedline.extraArgs holds ${owned.join(" and ")}, which this command sets itself. ` +
+        "Remove it from that setting; choose the view in the list or with typstRedline.view.",
+    );
+  }
+}
+
+// What the CLI says about options the user did not type, in the terms of the commands.
+function plain(message: string, base: Base) {
+  if (/has nothing to colour/.test(message)) {
+    return `Nothing to colour: no commit ${base.what} changes this document.`;
+  }
+  if (/to be an ancestor of/.test(message)) {
+    return `The changes ${base.what} cannot be coloured by commit: that commit is not an earlier commit of this branch.`;
+  }
+}
+
+const busy = new Set<string>();
+
+function idle(file: string) {
+  if (busy.has(file)) {
+    vscode.window.showWarningMessage("Typst Redline is still running for this file.");
+  }
+  return !busy.has(file);
 }
 
 function hasPdfEditor() {
@@ -328,17 +456,22 @@ function hasPdfEditor() {
 async function showChanges() {
   const doc = activeTypstDocument();
   const file = doc.fileName;
-  const proj = await project(doc);
+  const config = vscode.workspace.getConfiguration("typstRedline", doc.uri);
+  const extra = config.get<string[]>("extraArgs", []);
+  checkExtraArgs(extra);
+  if (!idle(file)) {
+    return;
+  }
+  const proj = project(doc);
   const base = await pickBase(doc, proj);
   if (!base) {
     return;
   }
-  const config = vscode.workspace.getConfiguration("typstRedline", doc.uri);
-  const view = await pickView(base, config);
-  if (!view) {
+  const viewArgs = await pickView(base, config);
+  if (!viewArgs || !idle(file)) {
     return;
   }
-  const { root } = proj;
+  const { root } = await proj;
   // Save what the run reads: open documents of the project.
   for (const d of unsaved(doc, root)) {
     await d.save();
@@ -347,20 +480,29 @@ async function showChanges() {
   const rootArgs = "file" in base && !inside(base.file, root) && !config.get<string>("root") ? [] : ["--root", root];
   const typst = config.get<string>("typst");
   const args = [
-    ...("rev" in base ? [file, "--since", base.rev] : [base.file, file]),
+    ...("rev" in base ? [file, "--since", base.rev, ...(base.to ? ["--to", base.to] : [])] : [base.file, file]),
     ...rootArgs,
     ...(typst ? ["--typst", typst] : []),
-    ...viewArgs(view, base),
-    ...config.get<string[]>("extraArgs", []),
+    ...viewArgs,
+    ...extra,
   ];
-  const pdf = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: `Typst Redline: changes since ${base.label}`,
-      cancellable: true,
-    },
-    (_, token) => runCli(doc, args, token),
-  );
+  busy.add(file);
+  let pdf: string;
+  try {
+    pdf = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Typst Redline: changes ${base.what}`, cancellable: true },
+      (_, token) => runCli(doc, args, token),
+    );
+  } catch (e) {
+    const message = e instanceof Error && plain(e.message, base);
+    if (message) {
+      output.appendLine(e.message);
+      throw new Error(message);
+    }
+    throw e;
+  } finally {
+    busy.delete(file);
+  }
   const uri = vscode.Uri.file(path.resolve(path.dirname(file), pdf));
   const open = config.get<string>("openPdf");
   if (open === "editor" || (open !== "external" && hasPdfEditor())) {
@@ -376,7 +518,7 @@ async function showChanges() {
 async function markReviewed() {
   const doc = activeTypstDocument();
   const message = await runCli(doc, [doc.fileName, "--mark-reviewed"]);
-  vscode.window.showInformationMessage(`Typst Redline: ${message}`);
+  vscode.window.showInformationMessage(`Typst Redline: ${message.match(/^marked \S+ as reviewed/)?.[0] ?? message}`);
 }
 
 function command(name: string, body: () => Promise<void>) {

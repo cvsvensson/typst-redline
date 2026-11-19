@@ -2244,6 +2244,38 @@ fn reviewed_branch_takes_precedence_over_the_mark() {
 }
 
 #[test]
+fn show_reviewed_prints_the_marked_commit_or_nothing() {
+    let dir = repo("show-reviewed", &["alpha"]);
+    std::fs::create_dir(dir.join("my döc")).unwrap();
+    commit(&dir, "my döc/nöte.typ", "beta");
+    let show = |dir: &Path| {
+        let out = cli(dir, &["my döc/nöte.typ", "--show-reviewed"]);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert_eq!(show(&dir), "");
+    assert!(cli(&dir, &["my döc/nöte.typ", "--mark-reviewed"]).status.success());
+    commit(&dir, "my döc/nöte.typ", "gamma");
+    assert_eq!(
+        show(&dir),
+        format!(
+            "{}
+",
+            git(&dir, &["rev-parse", "c-beta"])
+        )
+    );
+    git(&dir, &["branch", "reviewed", "c-alpha"]);
+    assert_eq!(
+        show(&dir),
+        format!(
+            "{}
+",
+            git(&dir, &["rev-parse", "c-alpha"])
+        )
+    );
+}
+
+#[test]
 fn mark_reviewed_needs_the_file_in_the_last_commit() {
     let dir = repo("reviewed-missing", &["alpha"]);
     std::fs::write(dir.join("doc/new.typ"), doc("beta")).unwrap();

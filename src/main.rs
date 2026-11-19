@@ -26,7 +26,9 @@ with B. With two files, each is a path or REV:PATH (:PATH for the index).
 --mark-reviewed records HEAD as reviewed for the file, in a local git ref
 under refs/typst-redline/reviewed/, and makes no PDF. --since reviewed then
 compares with that commit, unless git already resolves `reviewed` as a branch,
-tag or other revision, which then takes its place.
+tag or other revision, which then takes its place. --show-reviewed prints the
+hash of the commit that --since reviewed compares with, or nothing if there is
+none.
 
 Options:
   -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
@@ -50,6 +52,7 @@ Options:
                         inserted at its new place
   --typst <path>        typst executable (default: typst)
   --mark-reviewed       Record HEAD as reviewed for the file (see above)
+  --show-reviewed       Print the commit --since reviewed uses (see above)
   --keep-typ            Keep the generated project and print its path on stderr;
                         the marked source is at the new file's path inside it
   -V, --version         Print the version
@@ -71,6 +74,7 @@ struct Args {
     side_by_side: bool,
     steps: Option<StepArg>,
     mark_reviewed: bool,
+    show_reviewed: bool,
     no_moves: bool,
     typst_args: Vec<String>,
 }
@@ -132,6 +136,7 @@ fn parse_args() -> Result<Parsed, String> {
         side_by_side: false,
         steps: None,
         mark_reviewed: false,
+        show_reviewed: false,
         no_moves: false,
         typst_args: vec![],
     };
@@ -161,6 +166,7 @@ fn parse_args() -> Result<Parsed, String> {
                 });
             }
             "--mark-reviewed" => a.mark_reviewed = true,
+            "--show-reviewed" => a.show_reviewed = true,
             "--no-moves" => a.no_moves = true,
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
@@ -192,13 +198,18 @@ fn parse_args() -> Result<Parsed, String> {
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
         return Err("--to cannot be combined with a range in --since".into());
     }
-    if a.mark_reviewed && (a.files.len() != 1 || a.since.is_some() || a.to.is_some()) {
-        return Err("--mark-reviewed takes one file and no --since or --to".into());
-    }
-    if let Some(s) = &a.steps
-        && a.mark_reviewed
-    {
-        return Err(format!("--mark-reviewed makes no PDF, so it takes no {}", s.option()));
+    for (set, opt) in [
+        (a.mark_reviewed, "--mark-reviewed"),
+        (a.show_reviewed, "--show-reviewed"),
+    ] {
+        if set && (a.files.len() != 1 || a.since.is_some() || a.to.is_some()) {
+            return Err(format!("{opt} takes one file and no --since or --to"));
+        }
+        if let Some(s) = &a.steps
+            && set
+        {
+            return Err(format!("{opt} makes no PDF, so it takes no {}", s.option()));
+        }
     }
     if a.root.is_none() {
         a.root = std::env::var_os("TYPST_ROOT")
@@ -396,19 +407,35 @@ fn git_path(file: &Path) -> Result<Option<String>, String> {
     Ok(exact.or(paths.first()).map(|p| p.to_string()))
 }
 
+/// The commit marked as reviewed for `file`, and the commit of the revision
+/// named `reviewed` if git resolves one.
+fn reviewed_commits(file: &str) -> Result<(Option<String>, Option<String>), String> {
+    let file = std::path::absolute(file).map_err(|e| e.to_string())?;
+    let dir = file.parent().unwrap();
+    let marked = git_path(&file)?.and_then(|p| {
+        let commit = format!("{}^{{commit}}", reviewed_ref(&p));
+        git_text(dir, &["rev-parse", "--verify", "--quiet", &commit]).ok()
+    });
+    let named = git_text(dir, &["rev-parse", "--verify", "--quiet", "reviewed^{commit}"]).ok();
+    Ok((marked, named))
+}
+
+/// The commit `--since reviewed` compares with, or nothing if there is none.
+fn show_reviewed(a: &Args) -> Result<String, String> {
+    let (marked, named) = reviewed_commits(&a.files[0])?;
+    Ok(named.or(marked).unwrap_or_default())
+}
+
 /// The commit marked as reviewed for the file, if `--since reviewed` refers
 /// to it: when git resolves no revision named `reviewed`.
 fn since_reviewed(a: &Args) -> Result<Option<String>, String> {
     if a.files.len() != 1 || a.since.as_deref() != Some("reviewed") {
         return Ok(None);
     }
-    let file = std::path::absolute(&a.files[0]).map_err(|e| e.to_string())?;
-    let dir = file.parent().unwrap();
-    let marked = git_path(&file)?.and_then(|p| {
-        let commit = format!("{}^{{commit}}", reviewed_ref(&p));
-        git_text(dir, &["rev-parse", "--verify", "--quiet", &commit]).ok()
-    });
-    if git_text(dir, &["rev-parse", "--verify", "--quiet", "reviewed^{commit}"]).is_ok() {
+    let (marked, named) = reviewed_commits(&a.files[0])?;
+    let dir = std::path::absolute(&a.files[0]).map_err(|e| e.to_string())?;
+    let dir = dir.parent().unwrap();
+    if named.is_some() {
         if marked.is_some() {
             let name = git_text(dir, &["rev-parse", "--symbolic-full-name", "reviewed"]).unwrap_or_default();
             let name = if name.is_empty() {
@@ -1730,6 +1757,8 @@ fn main() -> ExitCode {
     };
     let result = if args.mark_reviewed {
         mark_reviewed(&args)
+    } else if args.show_reviewed {
+        show_reviewed(&args)
     } else {
         let file = args.files[0].clone();
         since_reviewed(&args).and_then(|reviewed| {
@@ -1745,7 +1774,9 @@ fn main() -> ExitCode {
     };
     match result {
         Ok(line) => {
-            println!("{line}");
+            if !line.is_empty() {
+                println!("{line}");
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
