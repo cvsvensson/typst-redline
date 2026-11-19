@@ -136,7 +136,21 @@ Colours and other settings are in the `redline-style` dictionary at the top of [
 
 ## VS Code
 
-The extension in `vscode/` adds the command *Typst Redline: Show changes since…*: pick a commit of the open file and it opens the PDF. It needs `typst-redline` installed as above. Build it with `npm install && npm run package` in `vscode/` and install the resulting `.vsix` with *Extensions: Install from VSIX…*.
+The extension in `vscode/` runs `typst-redline` on the open `.typ` file. It needs `typst-redline` installed as above and is not on the Marketplace; build it with Node.js and install the `.vsix` by hand:
+
+```sh
+cd vscode
+npm ci
+npm run package     # makes typst-redline-0.1.0.vsix
+code --install-extension typst-redline-0.1.0.vsix
+```
+
+or use *Extensions: Install from VSIX…* in VS Code. It adds two commands:
+
+- *Typst Redline: Show changes since…* lists the commits of the open file, the last reviewed version and *Another file…*, then asks for options: side by side, colour by commit, colour by step and no moves. It saves the open `.typ` files, runs the tool with a progress notification, which can cancel it, and opens the PDF. Notes and warnings of the tool show as a notification and in the *Typst Redline* output.
+- *Typst Redline: Mark as reviewed* runs `--mark-reviewed` for the open file.
+
+The settings are `typstRedline.executable` and `typstRedline.typst` for the paths of the two programs, `typstRedline.root` for `--root` (by default the workspace folder), `typstRedline.extraArgs` for further arguments, such as `["--", "--font-path", "fonts"]`, and `typstRedline.openPdf`. The PDF opens beside the document in VS Code when a PDF viewer extension is installed, otherwise in the system viewer.
 
 ## Claude Code
 
