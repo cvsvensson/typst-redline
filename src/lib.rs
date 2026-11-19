@@ -144,6 +144,8 @@ pub enum What {
     },
     /// The file the code reads at this root-relative path changed.
     File(String),
+    /// A change said in a sentence.
+    Note(String),
 }
 
 impl What {
@@ -154,6 +156,7 @@ impl What {
     fn to_typst(&self) -> String {
         let (name, old, new) = match self {
             What::File(p) => return format!("(file: {})", mark::typst_str(p)),
+            What::Note(n) => return format!("(note: {})", mark::typst_str(n)),
             What::Arg { name, old, new } => (name, old, new),
         };
         let string = |code: &str| {

@@ -540,7 +540,7 @@ fn skeleton(nodes: &[SyntaxNode]) -> String {
 /// starting at the whitespace before that item.
 pub fn split_nested(body: &[SyntaxNode]) -> (&[SyntaxNode], &[SyntaxNode]) {
     let at = body.iter().position(|n| is_item(n.kind())).map_or(body.len(), |i| {
-        if i > 0 && body[i - 1].kind() == K::Space {
+        if i > 0 && matches!(body[i - 1].kind(), K::Space | K::Parbreak) {
             i - 1
         } else {
             i

@@ -837,6 +837,64 @@ fn insertion_of_content_that_takes_no_room_adds_no_space() {
 }
 
 #[test]
+fn blank_line_that_spaces_items_apart_is_marked_and_listed() {
+    let probe = "#context [#metadata(here().position().y)<probe>]";
+    let (old, new) = (
+        format!(
+            "- one
+- two
+
+{probe}
+"
+        ),
+        format!(
+            "- one
+
+- two
+
+{probe}
+"
+        ),
+    );
+    let r = redline_of(&old, &new);
+    let notes = r
+        .changes
+        .iter()
+        .filter(|c| matches!(c.what.as_slice(), [What::Note(_)]))
+        .count();
+    assert_eq!(notes, 1, "{:?}", r.changes);
+    assert!(
+        without_ids(&r.files[0].1).contains("- #redline-ins()[];two"),
+        "{}",
+        r.files[0].1
+    );
+    let unchanged = redline_of(
+        "One.
+
+Two.
+",
+        "One.
+
+
+
+Two.
+",
+    );
+    assert!(unchanged.changes.is_empty(), "{:?}", unchanged.changes);
+    let without_deletions = format!(
+        "{PREAMBLE}
+#let redline-summary(info) = none
+"
+    );
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), without_deletions)]].concat();
+    let Some(marked) = compile("loose-list", &files) else {
+        return;
+    };
+    let new = compile("loose-list-new", &[("main.typ".into(), new)]).unwrap();
+    assert_eq!(query(&marked, "<probe>"), query(&new, "<probe>"));
+}
+
+#[test]
 fn changed_raw_block_is_marked_as_a_block() {
     let doc = |x: &str| format!("Text.\n\n```py\nx = {x}\n```\n");
     let r = redline_of(&doc("1"), &doc("2"));
