@@ -1,6 +1,5 @@
 import * as assert from "assert";
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
 import * as vscode from "vscode";
@@ -35,7 +34,8 @@ suite("Typst Redline commands", () => {
   const settings = ["executable", "typst", "extraArgs", "openPdf"];
   let tmp: string;
   let file: string;
-  let base: string;
+  let picks: string[];
+  let listed: Item[];
   let options: string[];
   let steps: string;
   let otherFile: string;
@@ -50,7 +50,8 @@ suite("Typst Redline commands", () => {
   }
 
   setup(async () => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "typst-redline-"));
+    // Inside the open folder, which is then above the repository.
+    tmp = fs.mkdtempSync(path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, "t-"));
     const dir = path.join(tmp, "my notes");
     fs.mkdirSync(dir);
     git(dir, "init", "-q");
@@ -62,7 +63,8 @@ suite("Typst Redline commands", () => {
     git(dir, "commit", "-q", "-am", "second");
     await open(doc);
 
-    base = "first";
+    picks = ["first"];
+    listed = [];
     options = [];
     steps = "";
     otherFile = "";
@@ -70,8 +72,14 @@ suite("Typst Redline commands", () => {
     errors = [];
     warnings = [];
     infos = [];
-    window.showQuickPick = async (items: Item[], opts: vscode.QuickPickOptions) =>
-      opts.canPickMany ? items.filter((i) => options.includes(i.label)) : items.find((i) => i.label.includes(base));
+    window.showQuickPick = async (items: Item[], opts: vscode.QuickPickOptions) => {
+      if (opts.canPickMany) {
+        return items.filter((i) => options.includes(i.label));
+      }
+      listed = items;
+      const label = picks.shift();
+      return label === undefined ? undefined : items.find((i) => i.label.includes(label));
+    };
     window.showInputBox = async () => steps;
     window.showOpenDialog = async () => [vscode.Uri.file(otherFile)];
     window.showErrorMessage = async (message: string) => void errors.push(message);
@@ -86,6 +94,10 @@ suite("Typst Redline commands", () => {
   });
 
   teardown(async () => {
+    // Forget the remembered options: tick none, then leave the list.
+    picks = ["Options"];
+    options = [];
+    await vscode.commands.executeCommand("typstRedline.showChanges");
     Object.assign(window, original);
     commands.executeCommand = original.executeCommand;
     for (const s of settings) {
@@ -119,19 +131,46 @@ suite("Typst Redline commands", () => {
     assert.match(fs.readFileSync(file, "utf8"), /^Unsaved\./);
   });
 
-  test("the options side by side, steps and no moves run", async () => {
-    options = ["Side by side", "Colour by step…", "No moves"];
-    steps = "2";
+  test("lists commits that changed only an included file", async () => {
+    const dir = path.dirname(file);
+    fs.writeFileSync(path.join(dir, "chapter.typ"), "Old chapter.\n");
+    fs.appendFileSync(file, '#include "chapter.typ"\n');
+    git(dir, "add", ".");
+    git(dir, "commit", "-q", "-m", "add chapter");
+    fs.writeFileSync(path.join(dir, "chapter.typ"), "New chapter.\n");
+    git(dir, "commit", "-q", "-am", "edit chapter");
+    picks = ["edit chapter"];
     await vscode.commands.executeCommand("typstRedline.showChanges");
     assertOpenedPdf();
   });
 
-  test("a usage error shows the CLI's message", async () => {
-    options = ["Colour by commit", "Colour by step…"];
+  test("the options side by side, steps and no moves run and are kept for later runs", async () => {
+    picks = ["Options", "first"];
+    options = ["Side by side", "Colour by step", "No moves"];
     steps = "2";
     await vscode.commands.executeCommand("typstRedline.showChanges");
+    assertOpenedPdf();
+    picks = [];
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    const shown = listed.find((i) => i.label.includes("Options"));
+    assert.strictEqual(shown?.description, "Side by side, Colour by step, No moves");
+  });
+
+  test("both colour options are refused", async () => {
+    picks = ["Options", "first"];
+    options = ["Colour by commit", "Colour by step"];
+    steps = "2";
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assert.strictEqual(warnings.length, 1);
+    assertOpenedPdf();
+    assert.strictEqual(listed.find((i) => i.label.includes("Options"))?.description, "none");
+  });
+
+  test("a usage error shows the CLI's message", async () => {
+    await config.update("extraArgs", ["--nosuchoption"], vscode.ConfigurationTarget.Global);
+    await vscode.commands.executeCommand("typstRedline.showChanges");
     assert.strictEqual(opened.length, 0);
-    assert.deepStrictEqual(errors, ["Typst Redline: give one of --each-commit and --steps"]);
+    assert.deepStrictEqual(errors, ["Typst Redline: unknown option --nosuchoption"]);
   });
 
   test("a compile error shows typst's message", async () => {
@@ -152,15 +191,18 @@ suite("Typst Redline commands", () => {
   });
 
   test("since last reviewed needs a mark, which mark as reviewed sets", async () => {
-    base = "Last reviewed";
+    picks = ["Last reviewed"];
     await vscode.commands.executeCommand("typstRedline.showChanges");
     assert.strictEqual(errors.length, 1);
     assert.match(errors[0], /no commit is marked as reviewed/);
     errors = [];
     await vscode.commands.executeCommand("typstRedline.markReviewed");
     assert.match(infos[0], /marked \w+ as reviewed/);
+    picks = ["Last reviewed"];
     await vscode.commands.executeCommand("typstRedline.showChanges");
     assertOpenedPdf();
+    // The CLI's hint names its command-line flag; it is not shown as a notification.
+    assert.deepStrictEqual(warnings, []);
   });
 
   test("diagnostics of a successful run are shown", async () => {
@@ -178,7 +220,7 @@ suite("Typst Redline commands", () => {
     fs.writeFileSync(otherFile, "Old text.\n");
     fs.writeFileSync(path.join(dir, "new.typ"), "New text.\n");
     await open(path.join(dir, "new.typ"));
-    base = "Another file";
+    picks = ["Options", "Another file"];
     options = ["Colour by commit"];
     await vscode.commands.executeCommand("typstRedline.showChanges");
     assertOpenedPdf();
