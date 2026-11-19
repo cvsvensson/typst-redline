@@ -23,4 +23,5 @@ pkg-fmt = "zip"
 
 [dependencies]
 similar = "3.2.1"
+unicode-segmentation = "1.13"
 typst-syntax = "0.15.1"
