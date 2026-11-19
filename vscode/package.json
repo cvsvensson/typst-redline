@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "cvsvensson",
   "license": "MIT",
+  "icon": "icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/cvsvensson/typst-redline",
@@ -26,6 +27,17 @@
       {
         "command": "typstRedline.showChanges",
         "title": "Show changes...",
+        "category": "Typst Redline",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "typstRedline.compareFiles",
+        "title": "Show changes between these files",
+        "category": "Typst Redline"
+      },
+      {
+        "command": "typstRedline.chooseView",
+        "title": "Choose view",
         "category": "Typst Redline"
       },
       {
@@ -35,18 +47,24 @@
       }
     ],
     "menus": {
+      "editor/title": [
+        { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ", "group": "navigation" }
+      ],
       "explorer/context": [
-        { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ && config.typstRedline.contextMenu", "group": "typst" }
-      ],
-      "editor/context": [
-        { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ && config.typstRedline.contextMenu", "group": "typst" }
-      ],
-      "editor/title/context": [
-        { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ && config.typstRedline.contextMenu", "group": "typst" }
+        { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ && !listDoubleSelection && config.typstRedline.contextMenu", "group": "typst" },
+        { "command": "typstRedline.compareFiles", "when": "resourceExtname == .typ && listDoubleSelection && config.typstRedline.contextMenu", "group": "typst" }
       ],
       "commandPalette": [
         {
           "command": "typstRedline.showChanges",
+          "when": "editorLangId == typst || resourceExtname == .typ"
+        },
+        {
+          "command": "typstRedline.compareFiles",
+          "when": "false"
+        },
+        {
+          "command": "typstRedline.chooseView",
           "when": "editorLangId == typst || resourceExtname == .typ"
         },
         {
@@ -84,7 +102,7 @@
         "typstRedline.contextMenu": {
           "type": "boolean",
           "default": true,
-          "description": "Show 'Typst Redline: Show changes...' in the right-click menu of Typst files."
+          "description": "Show the Typst Redline entries in the right-click menu of Typst files in the Explorer."
         },
         "typstRedline.openPdf": {
           "type": "string",

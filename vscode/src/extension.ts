@@ -281,8 +281,10 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promi
     }
     targets.push(...list.map((c) => ({ ...commitItem(c), base: { rev: c.parent, what: `changes in ${quote(c)} and after` } })));
   }
-  // Why nothing is listed; not said when other entries are.
-  const shown = targets.length ? "" : why;
+  if (!targets.length) {
+    output.appendLine(why);
+    return pickFile(doc);
+  }
   targets.push(
     { label: "", kind: vscode.QuickPickItemKind.Separator },
     { label: "$(file) Another file...", description: "compare with a .typ file of your choice", base: "other" },
@@ -294,7 +296,7 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promi
     const more: BaseItem = { label: "$(settings) More options...", description: `View: ${viewName(currentView())}`, base: "more" };
     const [choice] = (await pick([...targets, more], {
       title: "Typst Redline: Show changes",
-      placeholder: `${shown ? `${shown} ` : ""}${meaning}`,
+      placeholder: meaning,
       active: targets.find((t) => t.kind !== vscode.QuickPickItemKind.Separator),
     })) ?? [undefined];
     const base = choice?.base;
@@ -305,16 +307,17 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promi
       }
       return picked;
     }
-    if (base !== "other") {
-      return base;
-    }
-    const other = await vscode.window.showOpenDialog({
-      title: "Old version to compare with",
-      defaultUri: vscode.Uri.file(dir),
-      filters: { Typst: ["typ"] },
-    });
-    return other && { file: other[0].fsPath, what: `changes since ${path.basename(other[0].fsPath)}` };
+    return base === "other" ? pickFile(doc) : base;
   }
+}
+
+async function pickFile(doc: vscode.TextDocument): Promise<Base | undefined> {
+  const other = await vscode.window.showOpenDialog({
+    title: `Older version of ${path.basename(doc.fileName)}`,
+    defaultUri: vscode.Uri.file(path.dirname(doc.fileName)),
+    filters: { Typst: ["typ"] },
+  });
+  return other && { file: other[0].fsPath, what: `changes since ${path.basename(other[0].fsPath)}` };
 }
 
 async function pickMore(list: Commit[]): Promise<Base | "back" | undefined> {
@@ -487,17 +490,67 @@ function hasPdfEditor() {
   );
 }
 
-async function showChanges(clicked?: vscode.Uri) {
+// Whether `cmd` can be started; any other failure is left to the run to report.
+function found(cmd: string, cwd: string) {
+  return run(cmd, ["--version"], cwd, "").then(
+    () => true,
+    (e: Error) => !e.message.startsWith(`"${cmd}" was not found`),
+  );
+}
+
+// Says which program is missing, with buttons that help to get it, and whether both are there.
+async function programsFound(doc: vscode.TextDocument, again: () => unknown) {
+  const config = vscode.workspace.getConfiguration("typstRedline", doc.uri);
+  const dir = path.dirname(doc.fileName);
+  const [tool, typst] = await Promise.all([found(exe(doc), dir), found(config.get<string>("typst") || "typst", dir)]);
+  const restart = "VS Code may need a restart after installing.";
+  if (!tool) {
+    // A bundled copy is always found, so either the setting is wrong or nothing is bundled.
+    const set = exe(doc) !== "typst-redline";
+    const choice = set
+      ? vscode.window.showErrorMessage("Typst Redline: the typst-redline program set in the settings was not found.", "Open setting")
+      : vscode.window.showErrorMessage(
+          `Typst Redline: the typst-redline program was not found. Install it, or set its path in the settings. ${restart}`,
+          "How to install",
+          "Open setting",
+        );
+    choice.then((c) =>
+      c === "How to install"
+        ? vscode.env.openExternal(vscode.Uri.parse("https://github.com/cvsvensson/typst-redline#install"))
+        : c && vscode.commands.executeCommand("workbench.action.openSettings", "typstRedline.executable"),
+    );
+  } else if (!typst) {
+    const choice = vscode.window.showErrorMessage(
+      `Typst Redline: typst was not found. Install it, or set typstRedline.typst to where it is. ${restart}`,
+      "Locate typst...",
+      "How to install",
+    );
+    choice.then(async (c) => {
+      if (c === "How to install") {
+        vscode.env.openExternal(vscode.Uri.parse("https://github.com/typst/typst#installation"));
+      } else if (c) {
+        const picked = await vscode.window.showOpenDialog({ title: "Locate typst" });
+        if (picked) {
+          await config.update("typst", picked[0].fsPath, vscode.ConfigurationTarget.Global);
+          again();
+        }
+      }
+    });
+  }
+  return tool && typst;
+}
+
+async function showChanges(clicked?: vscode.Uri, chosen?: Base) {
   const doc = await typstDocument(clicked);
   const file = doc.fileName;
   const config = vscode.workspace.getConfiguration("typstRedline", doc.uri);
   const extra = config.get<string[]>("extraArgs", []);
   checkExtraArgs(extra);
-  if (!idle(file)) {
+  if (!idle(file) || !(await programsFound(doc, () => showChanges(clicked, chosen)))) {
     return;
   }
   const proj = project(doc);
-  const base = await pickBase(doc, proj);
+  const base = chosen ?? (await pickBase(doc, proj));
   if (!base || !idle(file)) {
     return;
   }
@@ -564,16 +617,39 @@ async function showChanges(clicked?: vscode.Uri) {
   }
 }
 
+// VS Code passes the clicked file and all selected ones. The direction is asked, with the
+// file changed last offered as the new one.
+async function compareFiles(clicked?: vscode.Uri, selected?: vscode.Uri[]) {
+  const files = selected?.length ? selected : clicked ? [clicked] : [];
+  if (files.length !== 2 || !files.every((f) => f.scheme === "file" && f.fsPath.endsWith(".typ"))) {
+    throw new Error("Select two .typ files in the Explorer first.");
+  }
+  const [a, b] = files.map((f) => f.fsPath);
+  const [older, newer] = (await vscode.workspace.fs.stat(files[0])).mtime > (await vscode.workspace.fs.stat(files[1])).mtime ? [b, a] : [a, b];
+  const same = path.basename(older) === path.basename(newer);
+  const name = (f: string) => (same ? vscode.workspace.asRelativePath(f) : path.basename(f));
+  const items = [
+    [older, newer],
+    [newer, older],
+  ].map(([old, now]) => ({ label: `Changes in ${name(now)} since ${name(old)}`, old, now }));
+  const [choice] = (await pick(items, { title: "Typst Redline: Show changes", placeholder: "Which file is the newer version?", active: items[0] })) ?? [
+    undefined,
+  ];
+  if (choice) {
+    await showChanges(vscode.Uri.file(choice.now), { file: choice.old, what: `changes since ${name(choice.old)}` });
+  }
+}
+
 async function markReviewed() {
   const doc = await typstDocument();
   const message = await runCli(doc, [doc.fileName, "--mark-reviewed"]);
   vscode.window.showInformationMessage(`Typst Redline: ${message.match(/^marked \S+ as reviewed/)?.[0] ?? message}`);
 }
 
-function command(name: string, body: (uri?: vscode.Uri) => Promise<void>) {
-  return vscode.commands.registerCommand(name, async (uri?: vscode.Uri) => {
+function command(name: string, body: (...args: any[]) => Promise<void>) {
+  return vscode.commands.registerCommand(name, async (...args: any[]) => {
     try {
-      await body(uri);
+      await body(...args);
     } catch (e) {
       if (e instanceof vscode.CancellationError) {
         return;
@@ -593,7 +669,9 @@ export function activate(context: vscode.ExtensionContext) {
   extensionDir = context.extensionPath;
   context.subscriptions.push(
     output,
-    command("typstRedline.showChanges", showChanges),
+    command("typstRedline.showChanges", (uri?: vscode.Uri) => showChanges(uri)),
+    command("typstRedline.compareFiles", compareFiles),
+    command("typstRedline.chooseView", pickView),
     command("typstRedline.markReviewed", markReviewed),
   );
 }

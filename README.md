@@ -145,6 +145,8 @@ Colours and other settings are in the `redline-style` dictionary at the top of [
 
 ## VS Code
 
+Open a `.typ` file and click the compare button in the editor's title bar to see what changed, as a PDF with the changes marked.
+
 The extension in [`vscode/`](vscode) runs `typst-redline` on the open `.typ` file. It needs `typst-redline` installed as above and is not on the Marketplace; build it with Node.js and install it by hand:
 
 ```
@@ -159,9 +161,11 @@ or use *Extensions: Install from VSIX...* in VS Code. VS Code finds `typst-redli
 To see what changed:
 
 1. Open the main `.typ` file of the document.
-2. Run *Typst Redline: Show changes...* from the Command Palette, or from the right-click menu of a `.typ` file in the Explorer, the editor or its tab.
+2. Run *Typst Redline: Show changes...* with the compare button in the editor's title bar, from the Command Palette, or from the right-click menu of a `.typ` file in the Explorer.
 3. Pick what to show, or press Enter for the first entry of the list. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
 4. When you have read it, run *Typst Redline: Mark as reviewed*. It marks the commit that is checked out; uncommitted changes are not part of it.
+
+Outside a git repository, or with no commits to list, the command asks for the older version's file at once; *Typst Redline: Choose view* in the Command Palette changes the view there. To compare two files, select both in the Explorer, right-click and pick *Show changes between these files*; a short list asks which one is the newer version, offering the one changed last first.
 
 The list starts with *Last reviewed version*, the changes since the commit you last marked, once there is one; then *Changes since the last commit*, when the document's files have changes that are not committed, unsaved edits included, which are saved before the run; then the commits that change the document's files, newest first. **A commit stands for its own change and every change after it**, here and in every other list of commits. The first commit of the repository has no version before it and is not listed. After the commits come *Another file...*, which compares with a `.typ` file of your choice, *Several commits...* and *More options...*.
 
@@ -176,13 +180,15 @@ The list starts with *Last reviewed version*, the changes since the commit you l
 - *Several commits...* lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view.
 - *Between two commits...*, under *More options...*, asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. It uses the view, colours included.
 
+If `typst-redline` or `typst` is not found, a message says which and offers to install it or to locate it; VS Code may need a restart after installing.
+
 The run saves the open files of the project first, and its progress notification can cancel it. The PDF is written next to the file as `<name>.redline.pdf`. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.
 
 Settings, with their defaults:
 
 - `typstRedline.executable`: `typst-redline`, and `typstRedline.typst`: empty, for `typst` on `PATH`.
 - `typstRedline.root`: empty, for the workspace folder, or the git repository if the workspace folder contains it.
-- `typstRedline.contextMenu`: `true`; `false` removes the right-click entry.
+- `typstRedline.contextMenu`: `true`; `false` removes the right-click entries in the Explorer.
 - `typstRedline.openPdf`: `auto`; `editor` or `external` choose one place.
 - `typstRedline.extraArgs`: empty; further arguments, such as `["--no-moves"]` or `["--", "--font-path", "fonts"]`. The command sets `--since`, `--to`, `--layout`, `--each-commit` and `--steps` itself and refuses to run if this setting holds one of them.
 

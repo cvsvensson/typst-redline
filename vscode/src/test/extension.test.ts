@@ -51,6 +51,7 @@ suite("Typst Redline commands", () => {
   let actives: (Item | undefined)[];
   let placeholders: string[];
   let otherFile: string;
+  let dialogs: string[];
   let opened: { uri: vscode.Uri; options: any }[];
   let runs: string[][];
   let errors: string[];
@@ -66,10 +67,9 @@ suite("Typst Redline commands", () => {
   const labels = (list: Item[]) => list.map((i) => i.label);
   const show = () => vscode.commands.executeCommand("typstRedline.showChanges");
 
-  // Chooses the view under More options, then leaves the list.
   async function setView(...choice: string[]) {
-    picks = ["More options", "View", ...choice];
-    await show();
+    picks = choice;
+    await vscode.commands.executeCommand("typstRedline.chooseView");
     lists = [];
     actives = [];
     placeholders = [];
@@ -133,13 +133,17 @@ suite("Typst Redline commands", () => {
     actives = [];
     placeholders = [];
     otherFile = "";
+    dialogs = [];
     opened = [];
     runs = [];
     errors = [];
     warnings = [];
     infos = [];
     window.createQuickPick = fakeQuickPick;
-    window.showOpenDialog = async () => (otherFile ? [vscode.Uri.file(otherFile)] : undefined);
+    window.showOpenDialog = async (o: vscode.OpenDialogOptions) => {
+      dialogs.push(o.title!);
+      return otherFile ? [vscode.Uri.file(otherFile)] : undefined;
+    };
     // VS Code's own extensions may show messages in the test instance too.
     const own = (list: string[]) => async (message: string) =>
       void (message.startsWith("Typst Redline") && list.push(message));
@@ -151,7 +155,7 @@ suite("Typst Redline commands", () => {
         ? void opened.push({ uri: args[0], options: args[1] })
         : original.executeCommand(command, ...args);
     cp.spawn = (cmd: string, args: string[], ...rest: any[]) => {
-      if (cmd === binary && !args.includes("--show-reviewed") && !args.includes("--list-files")) {
+      if (cmd === binary && !args.includes("--show-reviewed") && !args.includes("--list-files") && !args.includes("--version")) {
         runs.push(args);
       }
       return spawn(cmd, args, ...rest);
@@ -343,20 +347,29 @@ suite("Typst Redline commands", () => {
     assert.strictEqual(runs[1].length, 5);
   });
 
-  test("the list says when there are no commits", async () => {
+  test("with no commits to list, the dialog for the older version opens at once", async () => {
     const empty = path.join(tmp, "empty");
-    fs.mkdirSync(path.join(empty, "sub"), { recursive: true });
+    fs.mkdirSync(empty);
     git(empty, "init", "-q");
     fs.writeFileSync(path.join(empty, "a.typ"), "A.\n");
     await open(path.join(empty, "a.typ"));
-    picks = [];
     await show();
-    assert.match(placeholders[0], /^No commits yet\. /);
-    git(empty, "add", ".");
-    git(empty, "commit", "-q", "-m", "a");
-    await config.update("root", path.join(empty, "sub"), vscode.ConfigurationTarget.Global);
-    await show();
-    assert.match(placeholders[1], /^No commits change this document\. /);
+    assert.deepStrictEqual(lists, []);
+    assert.deepStrictEqual(dialogs, ["Older version of a.typ"]);
+  });
+
+  test("two files selected in the Explorer: the direction is asked, the file changed last offered as new", async () => {
+    const dir = path.dirname(file);
+    const [a, b] = ["a.typ", "b.typ"].map((n) => path.join(dir, n));
+    fs.writeFileSync(a, "Old.\n");
+    fs.writeFileSync(b, "New.\n");
+    fs.utimesSync(a, new Date(2020, 0, 1), new Date(2020, 0, 1));
+    const uris = [a, b].map((f) => vscode.Uri.file(f));
+    picks = [""];
+    await vscode.commands.executeCommand("typstRedline.compareFiles", uris[0], uris);
+    assertOpenedPdf();
+    assert.deepStrictEqual(labels(lists[0]), ["Changes in b.typ since a.typ", "Changes in a.typ since b.typ"]);
+    assert.deepStrictEqual(runs[0].slice(0, 2), uris.map((u) => u.fsPath));
   });
 
   test("changes since the last commit are listed first only when the document's files changed", async () => {
@@ -454,10 +467,9 @@ suite("Typst Redline commands", () => {
     fs.writeFileSync(path.join(dir, "new.typ"), "New text.\n");
     await open(path.join(dir, "new.typ"));
     await setView("Side by side, coloured by commit", "One colour per commit");
-    picks = [""];
     await show();
     assertOpenedPdf();
-    assert.strictEqual(actives[0]?.label, "$(file) Another file...");
+    assert.deepStrictEqual(lists, []);
     assert.deepStrictEqual(runs[0].slice(0, 2), [otherFile, file]);
     assert.deepStrictEqual(runs[0].slice(4), ["--layout", "side-by-side"]);
     assert.strictEqual(infos.length, 1);
@@ -482,20 +494,20 @@ suite("Typst Redline commands", () => {
     assert.deepStrictEqual(errors, []);
   });
 
-  test("the typst setting is passed to the CLI", async () => {
+  test("a missing typst is reported before any list, naming its setting", async () => {
     await config.update("typst", "no-such-typst", vscode.ConfigurationTarget.Global);
     await show();
-    assert.strictEqual(opened.length, 0);
+    assert.deepStrictEqual(lists, []);
+    assert.deepStrictEqual(runs, []);
     assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /no-such-typst/);
+    assert.match(errors[0], /typst was not found.*typstRedline\.typst/);
   });
 
-  test("a missing executable is reported with a hint at the setting", async () => {
+  test("a missing executable is reported before any list", async () => {
     await config.update("executable", "no-such-typst-redline", vscode.ConfigurationTarget.Global);
     await show();
-    assert.strictEqual(opened.length, 0);
-    assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /not found.*typstRedline\.executable/);
+    assert.deepStrictEqual(lists, []);
+    assert.deepStrictEqual(errors, ["Typst Redline: the typst-redline program set in the settings was not found."]);
   });
 
   test("a second run is refused while one runs, and cancelling ends typst, which the CLI runs as a child", async () => {
@@ -505,8 +517,8 @@ suite("Typst Redline commands", () => {
     fs.writeFileSync(
       fake,
       win
-        ? ["@echo off", ":l", `echo x>>"${tick}"`, "ping -n 2 127.0.0.1 >nul", "goto l", ""].join("\r\n")
-        : `#!/bin/sh\nwhile true; do echo x >> "${tick}"; sleep 0.2; done\n`,
+        ? ["@echo off", 'if "%1"=="--version" exit /b 0', ":l", `echo x>>"${tick}"`, "ping -n 2 127.0.0.1 >nul", "goto l", ""].join("\r\n")
+        : `#!/bin/sh\n[ "$1" = --version ] && exit 0\nwhile true; do echo x >> "${tick}"; sleep 0.2; done\n`,
       { mode: 0o755 },
     );
     await config.update("typst", fake, vscode.ConfigurationTarget.Global);
