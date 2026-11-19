@@ -1263,6 +1263,19 @@ fn deleted_item_is_numbered_from_the_enumerations_start() {
 }
 
 #[test]
+fn deleted_paragraph_takes_no_line_numbers() {
+    if typst_version().starts_with("0.11.") {
+        return;
+    }
+    let doc = |p: &str| {
+        format!("#set par.line(numbering: n => [#metadata(n)<probe>#n])\nFirst paragraph.\n\n{p}Last paragraph.\n")
+    };
+    if let Some((marked, new)) = probes("line-numbers", &doc("A deleted paragraph.\n\n"), &doc("")) {
+        assert_eq!(marked, new);
+    }
+}
+
+#[test]
 fn deleted_items_take_the_room_of_items() {
     let (old, new) = (
         format!("- one\n- two\n- three{PROBE_Y}\n\n+ one\n+ two\n+ three{PROBE_Y}\n"),
