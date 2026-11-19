@@ -264,6 +264,38 @@
     or c.fields().values().any(v => redline-own-colours(v) or type(v) == array and v.any(redline-own-colours))
 )
 
+// Placed after the first part `c` of block mark `id`, which can start with a
+// page break, as a slide or a heading shown on a new page does; the mark's
+// start tag then stays at the end of the page before, where the mark has no
+// content. Records whether `c` is a heading, which does not break across
+// pages, and whether this is at the top of the text area, after a part that
+// only broke the page.
+#let redline-first(c, id) = context {
+  let (m, w, h) = (page.margin, page.width, page.height)
+  let v = if type(m) == dictionary { m.at("top", default: m.at("y", default: m.at("rest", default: auto))) } else { m }
+  let full = if h == auto { 0pt } else { h }
+  let top = if v == auto { 2.5 / 21 * calc.min(w, if h == auto { w } else { h }) } else if type(v) == length { v.to-absolute() } else if type(v) == ratio { v * full } else { v.length.to-absolute() + v.ratio * full }
+  redline-meta((heading: c.func() == heading, top: here().position().y <= top + 1pt), label("redline-first-" + str(id)))
+}
+
+// Where mark `id` starts, given the location `at` of its start tag: on the
+// later page where its first part is (see `redline-first`).
+#let redline-start-at(at, id) = {
+  let first = if id != none { query(label("redline-first-" + str(id))).at(0, default: none) }
+  if first == none or first.location().page() <= at.page() { return at }
+  let v = redline-value(first)
+  let h = if v.heading { query(selector(heading).after(at)).at(0, default: none) }
+  if v.top { first.location() } else if h != none and h.location().page() > at.page() { h.location() } else { at }
+}
+
+// Whether content starts with something laid out in a line of text.
+#let redline-inline(c) = type(c) == content and (
+  repr(c.func()) in ("text", "space", "strong", "emph", "box", "h", "link", "highlight", "underline", "strike", "overline", "super", "sub", "smallcaps", "smartquote", "ref", "cite", "footnote", "linebreak", "symbol")
+    or c.func() in (math.equation, raw) and not c.block
+    or c.func() == [].func() and c.children.len() > 0 and redline-inline(c.children.first())
+    or repr(c.func()) == "styled" and redline-inline(c.child)
+)
+
 // The parts of a mark with its tags and frames: `style` applied to each run
 // of parts that are not framed, `frame-style` to each framed part that shows
 // text. A drawing, an image, or content with colours of its own is drawn as
@@ -280,9 +312,9 @@
   let framed = ch.map(c => redline-framed(c, block and n == 1))
   let roomless = block and ch.all(redline-roomless)
   let styled = n > 0 and not roomless and not framed.last() and repr(ch.last().func()) == "styled"
-  // A tag between blocks is at the top of the next line; the bar goes in
-  // the gap above it.
-  let start-dy = if roomless { -1em } else { -0.8em }
+  // A tag between blocks is at the top of the next block, and the bar starts
+  // a little above it: a gap can be as narrow as the leading of a tight list.
+  let start-dy = if roomless { -1em } else { -0.3em }
   let out = ()
   let run = ()
   for (i, c) in ch.enumerate() {
@@ -302,8 +334,10 @@
       } else { plain(f) })
     } else {
       // A tag in a box, joined to the text after it, starts the line the
-      // text starts; a tag alone stays on the line before a break.
-      if i == 0 { run.push(if block { redline-tag(kind, start-dy, step: step, id: id) } else [#box(redline-tag(kind, -0.8em, step: step, id: id))\u{2060}]) }
+      // text starts, on its baseline; a tag alone stays on the line before a
+      // break. Before a block, a box would add a line.
+      let between = block and not redline-inline(c)
+      if i == 0 { run.push(if between { redline-tag(kind, start-dy, step: step, id: id) } else [#box(redline-tag(kind, -0.8em, step: step, id: id))\u{2060}]) }
       let c = if c.func() == box and c.at("body", default: none) != none and not redline-textual(c) {
         box(stroke: stroke, outset: redline-style.outset.top, {
           c
@@ -311,6 +345,7 @@
         })
       } else { c }
       run.push(if i == n - 1 and styled { redline-end-in(c) } else { c })
+      if i == 0 and between and n > 1 and not roomless and id != none { run.push(redline-first(c, id)) }
     }
   }
   if run.len() > 0 { out.push(style(run.join())) }
@@ -403,6 +438,23 @@
   false
 }
 
+// Content `c` rebuilt with `map` applied to its body and children; `keep`
+// keeps its label and the styles of a styled element.
+#let redline-rebuild(c, map, keep: true) = {
+  let f = c.func()
+  let fs = c.fields()
+  let label = fs.remove("label", default: none)
+  if f == [].func() { return fs.children.map(map).join() }
+  if repr(f) == "styled" { return if keep { f(map(fs.child), fs.styles) } else { map(fs.child) } }
+  let keys = ("dest", "alignment", "angle", "count", "value").filter(k => k in fs)
+  let positional = keys.map(k => fs.at(k))
+  for k in keys { let _ = fs.remove(k) }
+  let body = if "body" in fs { (map(fs.remove("body")),) } else { () }
+  let children = fs.remove("children", default: ()).map(map)
+  let out = f(..fs, ..positional, ..body, ..children)
+  if keep and label != none [#out#label] else { out }
+}
+
 #let redline-neutral(c) = {
   if not redline-effect(c) { return c }
   let f = c.func()
@@ -421,16 +473,18 @@
       }
     }
   }
-  let fs = c.fields()
-  let _ = fs.remove("label", default: none)
-  if f == [].func() { return fs.children.map(redline-neutral).join() }
-  if repr(f) == "styled" { return redline-neutral(fs.child) }
-  let keys = ("dest", "alignment", "angle", "count", "value").filter(k => k in fs)
-  let positional = keys.map(k => fs.at(k))
-  for k in keys { let _ = fs.remove(k) }
-  let body = if "body" in fs { (redline-neutral(fs.remove("body")),) } else { () }
-  let children = fs.remove("children", default: ()).map(redline-neutral)
-  f(..fs, ..positional, ..body, ..children)
+  redline-rebuild(c, redline-neutral, keep: false)
+}
+
+// Content with `style` applied to the body of each footnote in it, which
+// the page foot shows apart from the marks around the footnote. A show rule
+// would make a second footnote.
+#let redline-footnotes(c, style) = {
+  let has(c) = type(c) == content and (c.func() == footnote or c.fields().values().any(v => has(v) or type(v) == array and v.any(has)))
+  if not has(c) { return c }
+  let map = x => redline-footnotes(x, style)
+  let body = x => if type(x) == content { style(map(x)) } else { x }
+  redline-rebuild(c, if c.func() == footnote { body } else { map })
 }
 
 // Deleted figures and headings stay out of outlines and bookmarks.
@@ -527,12 +581,12 @@
   h
 }
 
-#let redline-side-mark(kind, body, id: none) = {
+#let redline-side-mark(kind, body, id: none, block: false) = {
   // A move ("move") is marked at its start, with its id, and at its end; its
   // `body` is its key.
   let kind = if redline-side == "old" { (ins: "del", del: "ins", move: "move").at(kind) } else { kind }
   let identity = if kind == "move" { body } else { redline-hash(if kind == "ins" { 1 } else { 2 }, body) }
-  redline-meta((kind, identity, id, body), <redline-change>)
+  redline-meta((kind, identity, id, body, block), <redline-change>)
 }
 
 // A move is bracketed by tags of its own, because it encloses ordinary
@@ -682,8 +736,9 @@
   if redline-side != none { redline-side-mark("ins", body, id: id) }
   if redline-side == "old" {
     let look = redline-del-look.with(st: st)
-    redline-mark("del", body, block, look, st.del-frame, frame-style: look, step: step, id: id)
+    redline-mark("del", redline-footnotes(body, look), block, look, st.del-frame, frame-style: look, step: step, id: id)
   } else {
+    let body = redline-footnotes(body, b => redline-ins-rules(b, false, st: st))
     redline-mark("ins", body, block, b => redline-ins-rules(b, block, st: st), st.ins-frame, frame-style: text.with(fill: st.ins), step: step, id: id)
   }
 }
@@ -715,7 +770,7 @@
   // The binary pairs the pages of a move's two places by the marks around
   // its content, which each side has.
   if redline-side != none and move != none { return }
-  if redline-side != none { return redline-side-mark("del", body, id: id) }
+  if redline-side != none { return redline-side-mark("del", body, id: id, block: block or heading != none or item != none) }
   if move != none { return redline-move-line(move, body, step) }
   let block = block or heading != none or item != none
   let body = redline-neutral(body)
@@ -908,7 +963,7 @@
   let i = lo
   while i < n {
     let (a, b) = (tags.at(2 * i), tags.at(2 * i + 1))
-    let (s, e) = (a.location().position(), b.location().position())
+    let (s, e) = (redline-start-at(a.location(), redline-value(a).at(6, default: none)).position(), b.location().position())
     if s.page > pg { break }
     let (a, b) = (redline-value(a), redline-value(b))
     // A mark ending above the text area is in a header or title bar.
@@ -1050,14 +1105,15 @@
     if at != none { numbers.push((..at, p.y - 0.7 * number-size, num)) }
   }
   // On the new side of the side-by-side layout, a deletion has its number
-  // where it was.
+  // where it was: a deleted block's mark is at the end of the block before
+  // it, on its baseline, and the number goes below that.
   if nums != none and redline-side == "new" {
     for c in query(<redline-change>).filter(c => c.location().page() == pg) {
-      let (kind, _, id, ..) = redline-value(c)
+      let (kind, _, id, _, block) = redline-value(c)
       let num = if kind == "del" { nums.at(str(id), default: none) }
       let p = c.location().position()
       let at = if num != none { number-at(p, p, none, none, none) }
-      if at != none { numbers.push((..at, p.y - 0.7 * number-size, num)) }
+      if at != none { numbers.push((..at, p.y + if block { 0.3 } else { -0.7 } * number-size, num)) }
     }
   }
   // A number where a note runs along a bracket stands above the bracket.
@@ -1397,7 +1453,7 @@
   let at = (:)
   for t in redline-starts() {
     let id = redline-value(t).at(6)
-    if id != none and str(id) not in at { at.insert(str(id), t.location()) }
+    if id != none and str(id) not in at { at.insert(str(id), redline-start-at(t.location(), id)) }
   }
   let kept(x) = x.level <= 2 and (x.at("outlined", default: true) or x.at("bookmarked", default: auto) != false)
   let groups = ()
@@ -1433,7 +1489,7 @@
   if redline-side != none {
     let changes = query(<redline-change>).map(m => {
       let (kind, identity, id, ..) = redline-value(m)
-      let start = if kind == "move" and id != none { redline-move-start(id) }
+      let start = if kind == "move" { if id != none { redline-move-start(id) } } else { redline-start-at(m.location(), id) }
       ((del: 0, ins: 1, move: 3).at(kind), identity, if id == none { 0 } else { id + 1 }, if start != none { start.page() } else { m.location().page() })
     })
     let headings = query(heading).map(h => (2, redline-hash(3, h.body), 0, h.location().page()))
