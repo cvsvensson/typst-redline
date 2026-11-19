@@ -201,8 +201,10 @@ suite("Typst Redline commands", () => {
     picks = ["Last reviewed"];
     await vscode.commands.executeCommand("typstRedline.showChanges");
     assertOpenedPdf();
-    // The CLI's hint names its command-line flag; it is not shown as a notification.
-    assert.deepStrictEqual(warnings, []);
+    // The CLI's hint names its command-line flag; it is not shown as a
+    // notification. That nothing changed since the mark is.
+    assert.strictEqual(warnings.length, 1);
+    assert.match(warnings[0], /no changes found/);
   });
 
   test("diagnostics of a successful run are shown", async () => {
