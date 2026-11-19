@@ -1107,13 +1107,23 @@ fn frame_of_a_relative_width_element_is_as_wide_as_the_element() {
 #[test]
 fn frame_of_a_figure_holds_a_caption_wider_than_its_body() {
     let doc = |f: &str| format!("#show box: it => [#metadata(it.width)<probe>#it]\nText.\n{f}\n");
-    let fig = "#figure(rect(width: 1cm), caption: [A caption much wider than the body])";
-    if let Some((marked, _)) = probes("figure-caption-frame", &doc(fig), &doc("")) {
+    let long = "A caption that wraps: ".repeat(8);
+    let figs = [
+        (
+            "#figure(rect(width: 1cm), caption: [A caption much wider than the body])".to_string(),
+            100.0,
+        ),
+        (format!("#figure(rect(width: 20%), caption: [{long}])"), 400.0),
+    ];
+    for (fig, least) in figs {
+        let Some((marked, _)) = probes("figure-caption-frame", &doc(&fig), &doc("")) else {
+            return;
+        };
         let widest = marked
             .split('"')
             .filter_map(|v| v.rsplit('+').next()?.strip_suffix("pt")?.parse::<f64>().ok())
             .fold(0.0, f64::max);
-        assert!(widest > 100.0, "{marked}");
+        assert!(widest > least, "{fig}: {marked}");
     }
 }
 
