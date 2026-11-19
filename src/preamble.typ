@@ -1712,14 +1712,18 @@
     redline-commits(hist, o.label, n.label)
   }))))
   let head(side, pg, s, ps) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]] else if ps.len() == 0 [Not in #name(side)]
-  // A side without a page keeps its width, so that the other stays in place.
-  let shot(side, w, pg) = if pg == none { box(width: w) } else { box(stroke: 0.5pt + luma(150), image(side.pdf, page: pg)) }
+  // A side without a page shows an empty outline as large as the page next
+  // to it, so that the other stays in place.
+  let shot(side, w, pg, other) = if pg != none { box(stroke: 0.5pt + luma(150), image(side.pdf, page: pg)) } else {
+    let h = if other.at(1) != none { measure(image(other.at(0).pdf, page: other.at(1))).height } else { 0pt }
+    box(width: w, height: h, stroke: (paint: luma(150), thickness: 0.5pt, dash: "dashed"))
+  }
   let legend = if steps { redline-legend(hist, width + gap, size: 0.8 * size) }
   for p in info.pairs {
     for r in range(calc.max(p.old.len(), p.new.len())) {
       pagebreak()
       let (po, pn) = (row-page(p.old, r), row-page(p.new, r))
-      grid(columns: 2, column-gutter: gap, row-gutter: 0.5em, head(o, po, p.steps-old, p.old), head(n, pn, p.steps-new, p.new), shot(o, wo, po), shot(n, wn, pn), ..if legend != none { (grid.cell(colspan: 2, align(center, legend)),) })
+      grid(columns: 2, column-gutter: gap, row-gutter: 0.5em, head(o, po, p.steps-old, p.old), head(n, pn, p.steps-new, p.new), shot(o, wo, po, (n, pn)), shot(n, wn, pn, (o, po)), ..if legend != none { (grid.cell(colspan: 2, align(center, legend)),) })
     }
   }
 }
