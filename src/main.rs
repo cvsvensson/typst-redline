@@ -1469,7 +1469,7 @@ fn compose(
     history: &History,
     to: &Path,
 ) -> Result<(), String> {
-    type Layout = (usize, Vec<usize>, Vec<usize>, Vec<Placed>, Vec<Heading>);
+    type Layout = (usize, usize, Vec<usize>, Vec<usize>, Vec<Placed>, Vec<Heading>);
     let query = |(root, entry, side, _): (&Path, &String, &str, &str)| {
         let input = format!("redline-side={side}");
         let entry = root.join(entry);
@@ -1486,7 +1486,7 @@ fn compose(
     };
     let layout = |out: Output, label: &str| -> Result<Layout, String> {
         let nums = ints(&out.stdout);
-        let Some([pages, n, rest @ ..]) = nums.as_deref() else {
+        let Some([pages, summary, n, rest @ ..]) = nums.as_deref() else {
             return Err(format!(
                 "cannot find the pages of the changes; the side-by-side layout needs the change bars that the preamble draws\n{}",
                 String::from_utf8_lossy(&out.stderr)
@@ -1528,18 +1528,21 @@ fn compose(
                 page,
             });
         }
-        Ok((*pages, unbarred.to_vec(), lost.to_vec(), changes, headings))
+        Ok((*pages, *summary, unbarred.to_vec(), lost.to_vec(), changes, headings))
     };
     let (
-        (old_pages, old_unbarred, old_lost, old, old_headings),
-        (new_pages, new_unbarred, new_lost, new, new_headings),
+        (old_pages, _, old_unbarred, old_lost, old, old_headings),
+        (new_pages, summary, new_unbarred, new_lost, new, new_headings),
     ) = {
         let (old, new) = both(|| query(sides[0]), || query(sides[1]));
         (layout(old?, labels.0)?, layout(new?, labels.1)?)
     };
-    // A mark that a side did not lay out is listed as not marked, once.
+    // A mark that a side did not lay out is listed as not marked, once: by
+    // the new side's summary, or on the first page for the old side.
     let mut changes = results[1].changes.clone();
+    let mut from_old = 0;
     for (r, lost) in [(results[1], new_lost), (results[0], old_lost)] {
+        from_old = changes.len();
         for c in lost.iter().filter_map(|&i| r.changes.get(i)) {
             let c = c.unmarked();
             let listed = |d: &Change| {
@@ -1558,7 +1561,7 @@ fn compose(
         || [&b.added, &b.removed, &b.changed, &b.files]
             .iter()
             .any(|l| !l.is_empty());
-    let looks = |(root, entry, side, _): (&Path, &String, &str, &str)| -> Vec<u64> {
+    let looks = |(root, entry, side, _): (&Path, &String, &str, &str), pages: usize| -> Vec<u64> {
         let (input, entry) = (format!("redline-side={side}"), root.join(entry));
         let svg = |p: &str| dir.join(format!(".redline-{side}-{p}.svg"));
         let drawn = typst(a, root, "compile", &[&"--input", &input, &entry, &svg("{p}")]);
@@ -1567,6 +1570,7 @@ fn compose(
         }
         (1..)
             .map_while(|p| std::fs::read(svg(&p.to_string())).ok())
+            .take(pages)
             .map(|s| {
                 let mut h = std::hash::DefaultHasher::new();
                 std::hash::Hash::hash(&s, &mut h);
@@ -1575,7 +1579,7 @@ fn compose(
             .collect()
     };
     let (old_looks, new_looks) = if listed {
-        both(|| looks(sides[0]), || looks(sides[1]))
+        both(|| looks(sides[0], old_pages), || looks(sides[1], new_pages))
     } else {
         (vec![], vec![])
     };
@@ -1585,6 +1589,7 @@ fn compose(
             label: labels.0,
             pdf: &old_pdf,
             pages: old_pages,
+            summary: 0,
             unbarred: &old_unbarred,
             changes: &old,
             headings: &old_headings,
@@ -1594,13 +1599,14 @@ fn compose(
             label: labels.1,
             pdf: &new_pdf,
             pages: new_pages,
+            summary,
             unbarred: &new_unbarred,
             changes: &new,
             headings: &new_headings,
             looks: &new_looks,
         },
-        &changes,
-        &results[1].bib,
+        results[1].changes.iter().any(|c| c.kind == ChangeKind::Moved),
+        &changes[from_old..],
         history,
     );
     write(dir, &[(COMPOSITE.into(), source)])?;

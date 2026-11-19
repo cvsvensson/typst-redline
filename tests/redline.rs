@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use typst_redline::{
-    Bib, Change, ChangeKind, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, PlacedKind,
-    Redline, Side, Version, What, composite, pair_pages, redline,
+    Change, ChangeKind, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, PlacedKind, Redline,
+    Version, What, pair_pages, redline,
 };
 
 const FULL: Options = Options {
@@ -2152,24 +2152,6 @@ fn side_by_side_shows_a_page_inserted_after_a_moved_one_without_a_counterpart() 
     assert_eq!(pages, [(vec![3], vec![2], true), (vec![], vec![4], false)]);
 }
 
-#[test]
-fn side_by_side_summary_lists_bibliography_changes() {
-    let side = Side {
-        label: "v",
-        pdf: "v.pdf",
-        pages: 1,
-        unbarred: &[],
-        changes: &[],
-        headings: &[],
-        looks: &[],
-    };
-    let bib = Bib {
-        added: vec!["c".into()],
-        ..Bib::default()
-    };
-    assert!(composite(&side, &side, &[], &bib, &History::default()).contains("\"c\""));
-}
-
 /// Whether the typst on PATH is older than the side-by-side layout needs.
 fn typst_before_0_14() -> bool {
     let version = Command::new("typst").arg("--version").output().unwrap().stdout;
@@ -2221,8 +2203,7 @@ fn side_by_side_shows_changed_pages() {
         return;
     }
     let dir = temp_dir("side-by-side");
-    let doc =
-        |word: &str| format!("#set page(height: 6cm)\nOne.\n#pagebreak()\nThe {word} two.\n#pagebreak()\nThree.\n");
+    let doc = |word: &str| format!("One.\n#pagebreak()\nThe {word} two.\n#pagebreak()\nThree.\n");
     std::fs::write(dir.join("old.typ"), doc("old")).unwrap();
     std::fs::write(dir.join("new.typ"), doc("new")).unwrap();
     let out = cli(
@@ -2238,8 +2219,8 @@ fn side_by_side_shows_changed_pages() {
         return;
     }
     assert!(out.status.success(), "{stderr}");
-    // The summary and the one changed pair.
-    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
+    // The overview, the one changed pair and the summary.
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 3);
 }
 
 #[test]
@@ -2248,7 +2229,7 @@ fn side_by_side_shows_two_pages_with_the_same_edit() {
         return;
     }
     let dir = temp_dir("side-by-side-same-edit");
-    let doc = |word: &str| format!("#set page(height: 6cm)\nThe {word} one.\n#pagebreak()\nThe {word} two.\n");
+    let doc = |word: &str| format!("The {word} one.\n#pagebreak()\nThe {word} two.\n");
     std::fs::write(dir.join("old.typ"), doc("old")).unwrap();
     std::fs::write(dir.join("new.typ"), doc("new")).unwrap();
     let out = cli(
@@ -2256,8 +2237,8 @@ fn side_by_side_shows_two_pages_with_the_same_edit() {
         &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
     );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    // The summary and both changed pairs.
-    assert_eq!(pdf_pages(&dir.join("out.pdf")), 3);
+    // The overview, both changed pairs and the summary.
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 4);
 }
 
 #[test]
@@ -2266,8 +2247,7 @@ fn side_by_side_shows_pages_changed_by_a_listed_change() {
         return;
     }
     let dir = temp_dir("side-by-side-listed");
-    let doc =
-        |n: &str| format!("#set page(height: 6cm)\n#set heading(numbering: \"{n}\")\n= One\n#pagebreak()\nTwo.\n");
+    let doc = |n: &str| format!("#set heading(numbering: \"{n}\")\n= One\n#pagebreak()\nTwo.\n");
     std::fs::write(dir.join("old.typ"), doc("I.")).unwrap();
     std::fs::write(dir.join("new.typ"), doc("1.")).unwrap();
     let out = cli(
@@ -2275,8 +2255,8 @@ fn side_by_side_shows_pages_changed_by_a_listed_change() {
         &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
     );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    // The summary and the page with the renumbered heading.
-    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
+    // The overview, the page with the renumbered heading and the summary.
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 3);
 }
 
 #[test]
@@ -2297,8 +2277,8 @@ fn side_by_side_shows_a_pure_move() {
     let pdf =
         String::from_utf8_lossy(&std::fs::read(dir.join("out.pdf")).unwrap()).replace("/Type /Page", "/Type/Page");
     let pages = pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count();
-    // The summary and the pages that show the move.
-    assert_eq!(pages, 2);
+    // The overview, the pages that show the move and the summary.
+    assert_eq!(pages, 3);
 }
 
 #[test]
@@ -2315,8 +2295,8 @@ fn side_by_side_shows_a_moved_slide_next_to_its_old_page() {
         &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
     );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    // The summary and old page 2 next to new page 4.
-    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
+    // The overview, old page 2 next to new page 4, and the summary.
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 3);
 }
 
 #[test]
