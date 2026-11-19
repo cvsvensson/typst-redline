@@ -10,11 +10,10 @@
 //   and `redline-ins(move: m)[]` at the start and, with `m.end`, at the end
 //   of its new place, which holds it unmarked or with its edits marked.
 //   `m` is (id: the move in this document, key: the same for the move back,
-//   heading: the old place starts with a heading, down: the new place comes
-//   later in the document, more: the passage goes on
-//   after the first words, paragraphs, items: how many of each it holds
-//   besides a heading, block: the marker stands next to a block-level
-//   element or on a line of its own).
+//   heading: the passage starts with a heading, down: the new place comes
+//   later in the document, more: the passage goes on after the first words,
+//   block: the marker stands next to a block-level element or on a line of
+//   its own).
 // - redline-bars(body): the rest of the document, which draws change bars on
 //   its pages (`body => body` for nothing).
 // - redline-summary(info): the summary, after the document; `info` is (old, new: version labels,
@@ -446,8 +445,8 @@
 #let redline-side = sys.inputs.at("redline-side", default: none)
 
 // On each side of the side-by-side layout, every change records its kind
-// as a change from the old version to the new one, and an identity, so that
-// the binary can pair the pages of the two sides.
+// as a change from the old version to the new one, an identity, so that
+// the binary can pair the pages of the two sides, its id and its content.
 #let redline-hash(seed, body) = {
   let h = seed
   for b in array(bytes(repr(body))) { h = calc.rem(h * 31 + b, 1000000007) }
@@ -455,9 +454,11 @@
 }
 
 #let redline-side-mark(kind, body, id: none) = {
-  // `body` is a move's key for a move.
-  let kind = if redline-side == "old" { if kind == "ins" { "del" } else { "ins" } } else { kind }
-  redline-meta((kind, redline-hash(if kind == "ins" { 1 } else { 2 }, body), id), <redline-change>)
+  // A move ("move") is marked at its start, with its id, and at its end; its
+  // `body` is its key.
+  let kind = if redline-side == "old" { (ins: "del", del: "ins", move: "move").at(kind) } else { kind }
+  let identity = if kind == "move" { body } else { redline-hash(if kind == "ins" { 1 } else { 2 }, body) }
+  redline-meta((kind, identity, id, body), <redline-change>)
 }
 
 // A move is bracketed by tags of its own, because it encloses ordinary
@@ -465,19 +466,34 @@
 // records its container as redline-tag does; "from" at the line at its old
 // place. Start tags are found by their label. A tag next to a block-level
 // element is not boxed, which would add a line; it then sits at the edge of
-// the block instead of on a line of text.
-#let redline-move-tag(kind, id, step: none, block: false) = {
-  let v = (kind: kind, id: id, step: step, block: block)
+// the block instead of on a line of text. The "to" tag records whether the
+// new place starts with a heading, the end tag also the text size.
+#let redline-move-tag(kind, id, step: none, block: false, heading: false) = {
+  let v = (kind: kind, id: id, step: step, block: block, heading: heading)
   if kind != "end" {
     let tag = redline-meta(v, label("redline-move-" + kind + "-" + str(id)))
     if block { tag } else { box(tag) }
   } else {
-    let tag = layout(size => redline-meta(v + (width: size.width, gutter: columns.gutter, columns: page.columns), <redline-move>))
+    let tag = layout(size => redline-meta(v + (width: size.width, gutter: columns.gutter, columns: page.columns, size: text.size), <redline-move>))
     if block { place(tag) } else [\u{2060}#box(tag)]
   }
 }
 
 #let redline-move-find(kind, id) = query(label("redline-move-" + kind + "-" + str(id))).at(0, default: none)
+
+// Where the new place of move `id` starts: at its "to" tag, or at its
+// heading if that is on a later page, as when a show rule starts a page
+// with each heading; the tag before the heading is then on the page before.
+#let redline-move-start(id) = {
+  let to = redline-move-find("to", id)
+  if to == none { return none }
+  let at = to.location()
+  if redline-value(to).heading {
+    let h = query(selector(heading).after(at)).at(0, default: none)
+    if h != none and h.location().page() > at.page() { return h.location() }
+  }
+  at
+}
 
 // The page number printed on the page of `loc`, or its page in this PDF.
 #let redline-page-of(loc) = if loc.page-numbering() == none { loc.page() } else { counter(page).at(loc).first() }
@@ -503,19 +519,15 @@
       redline-move-tag("from", m.id, step: step)
       let pieces = redline-pieces(redline-neutral(note))
       let style = if m.heading { strong } else { emph }
-      let to = redline-move-find("to", m.id)
+      let to = redline-move-start(m.id)
       let head = if to == none [Moved:] else {
         let down = m.at("down", default: true)
-        let where = if to.location().page() != here().page() [to p. #redline-page-of(to.location())] else if down [below] else [above]
+        let where = if to.page() != here().page() [to p. #redline-page-of(to)] else if down [below] else [above]
         [#text(fill: redline-step-style(step).del, if down { sym.arrow.b } else { sym.arrow.t }) Moved #where:]
-      }
-      let counts = ((m.at("paragraphs", default: 0), "paragraph"), (m.at("items", default: 0), "item")).filter(c => c.at(0) > 0)
-      let count = if counts.map(c => c.at(0)).sum(default: 0) + int(m.heading) > 1 {
-        [ (#counts.map(((n, what)) => [#n #what#if n > 1 [s]]).join[ and ])]
       }
       let line(k) = {
         let words = if k > 0 { style(pieces.slice(0, k).join()) }
-        [#head #words#if k < pieces.len() or m.at("more", default: false) [ …]#count]
+        [#head #words#if k < pieces.len() or m.at("more", default: false) [ …]]
       }
       let k = pieces.len()
       let full = measure(line(k)).width
@@ -526,7 +538,7 @@
         while k > 0 and (pieces.at(k - 1) == [ ] or measure(line(k)).width > size.width) { k -= 1 }
       }
       let line = redline-del-unlisted(line(k))
-      if to == none { line } else { link(to.location(), line) }
+      if to == none { line } else { link(to, line) }
       redline-restore(label("redline-move-from-" + str(m.id)))
     }))
   }
@@ -536,10 +548,9 @@
 #let redline-ins(body, block: false, step: none, move: none, id: none) = {
   if move != none {
     let end = move.at("end", default: false)
-    // Both ends, so that the pages a long move spans are shown; the line at
-    // the old place records two changes to match.
-    let side = if redline-side != none { redline-side-mark("ins", move.key) }
-    return side + redline-move-tag(if end { "end" } else { "to" }, move.id, step: step, block: move.block)
+    // Both ends, so that the pages a long move spans are shown.
+    let side = if redline-side != none { redline-side-mark("move", move.key, id: if not end { move.id }) }
+    return side + redline-move-tag(if end { "end" } else { "to" }, move.id, step: step, block: move.block, heading: move.at("heading", default: false))
   }
   let st = redline-step-style(step)
   if redline-side != none { redline-side-mark("ins", body, id: id) }
@@ -555,7 +566,9 @@
 // does not have: the page next to it shows it.
 #let redline-del(body, block: false, heading: none, gap: false, step: none, move: none, id: none) = {
   let st = redline-step-style(step)
-  if redline-side != none and move != none { return redline-side-mark("del", move.key) * 2 }
+  // The binary pairs the pages of a move's two places by the marks around
+  // its content, which each side has.
+  if redline-side != none and move != none { return }
   if redline-side != none { return redline-side-mark("del", body, id: id) }
   if move != none { return redline-move-line(move, body, step) }
   let block = block or heading != none
@@ -761,7 +774,7 @@
     let v = redline-value(t)
     let a = redline-move-find("to", v.id)
     if a == none { continue }
-    let (s, e) = (a.location().position(), t.location().position())
+    let (s, e) = (redline-move-start(v.id).position(), t.location().position())
     if s.page > pg { break }
     // Brackets of moves that follow each other stay a little apart.
     let y0 = if s.page < pg { top } else { s.y - (if redline-value(a).block { 0.1em } else { 0.8em }).to-absolute() + 2.5pt }
@@ -789,18 +802,30 @@
       place(redline-top-left, dx: x0, dy: y0, link(other.location(), box(width: calc.max(x1 - x0, 0pt), height: calc.max(y1 - y0, 1pt))))
     }
     if s.page != pg { continue }
-    let notes = if other != none and other.location().page() != pg {
+    // Notes that run up along the bracket have no arrow, which would turn.
+    let (notes, along) = if other != none and other.location().page() != pg {
       let n = redline-page-of(other.location())
       let arrow = if other.location().page() < pg { sym.arrow.t } else { sym.arrow.b }
-      ([moved from p. #n #arrow], [moved#linebreak()from p. #n #arrow], [moved])
-    } else { ([moved],) }
+      (([moved from p. #n #arrow], [moved#linebreak()from p. #n #arrow], [moved]), ([moved from p. #n], [moved]))
+    } else { (([moved],), ([moved],)) }
     let free = if right-side { edge - 2pt - x - 3pt } else { x - 3pt - edge - 2pt }
     let sst = redline-step-style(redline-value(a).step)
-    let style = text.with(size: 6.5pt, fill: if redline-side == "old" { sst.del } else { sst.ins }, top-edge: "cap-height", bottom-edge: "baseline", hyphenate: false)
-    let note = notes.map(n => { set par(leading: 0.4em); style(n) }).find(n => measure(n).width <= free)
-    if note != none {
-      let note = if other != none { link(other.location(), note) } else { note }
-      place(redline-top-left, dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0, box(width: free, align(if right-side { start } else { end }, note)))
+    // The note grows with the text, as on slides. Where the margin is too
+    // narrow for it, it runs up along the bracket, or else is small.
+    let size = calc.min(calc.max(v.at("size", default: 0pt).to-absolute() * 6.5 / 11, 6.5pt), 14pt)
+    let styled(notes, size) = notes.map(n => {
+      set par(leading: 0.4em)
+      text(size: size, fill: if redline-side == "old" { sst.del } else { sst.ins }, top-edge: "cap-height", bottom-edge: "baseline", hyphenate: false, n)
+    })
+    let link-to(note) = if other != none { link(other.location(), note) } else { note }
+    let note = styled(notes, size).find(n => measure(n).width <= free)
+    let turned = if note == none { styled(along, size).find(n => measure(n).height <= free and measure(n).width <= y1 - y0) }
+    if note == none and turned == none { note = styled(notes, 6.5pt).find(n => measure(n).width <= free) }
+    if turned != none {
+      let (w, h) = (measure(turned).width, measure(turned).height)
+      place(redline-top-left, dx: if right-side { x + 3pt } else { x - 3pt - h }, dy: y0 + w, rotate(-90deg, origin: redline-top-left, link-to(turned)))
+    } else if note != none {
+      place(redline-top-left, dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0, box(width: free, align(if right-side { start } else { end }, link-to(note))))
     }
   }
   // The legend goes in the middle of the bottom margin below the footer,
@@ -1013,10 +1038,7 @@
   let kept(x) = x.level <= 2 and (x.at("outlined", default: true) or x.at("bookmarked", default: auto) != false)
   let groups = ()
   for m in marks {
-    let loc = if "move" in m {
-      let to = redline-move-find("to", m.move)
-      if to != none { to.location() }
-    } else { at.at(str(m.id), default: none) }
+    let loc = if "move" in m { redline-move-start(m.move) } else { at.at(str(m.id), default: none) }
     if loc == none { continue }
     let head = query(selector(heading).before(loc)).filter(kept).at(-1, default: none)
     let i = groups.position(g => if head == none { g.heading == none } else { g.heading != none and g.heading.location() == head.location() })
@@ -1033,17 +1055,36 @@
 // For the summary and the binary: the pages with changes but without bars,
 // whichever pages they are. For the side-by-side layout also the number of
 // pages, the ids of the marks that were not laid out, each change's kind (0
-// deleted, 1 inserted), identity and page, and the same for each heading
-// (kind 2), whose identity is its text, all as one flat array of integers.
+// deleted, 1 inserted, 3 the start or end of a move's place), identity and
+// page, and the same for each heading (kind 2), whose identity is its text,
+// then each heading's text as its length and code points, all as one flat
+// array of integers.
 #let redline-layout() = {
   let drawn = query(<redline-page>).map(m => m.location().page())
   let unbarred = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location().page()).dedup().filter(p => p not in drawn)
   redline-ints(unbarred, <redline-unbarred>)
   if redline-side != none {
-    let changes = query(<redline-change>).map(m => (int(redline-value(m).at(0) == "ins"), redline-value(m).at(1), m.location().page()))
-    let headings = query(heading).map(h => (2, redline-hash(3, h.body), h.location().page()))
+    let changes = query(<redline-change>).map(m => {
+      let (kind, identity, id, ..) = redline-value(m)
+      let start = if kind == "move" and id != none { redline-move-start(id) }
+      ((del: 0, ins: 1, move: 3).at(kind), identity, if start != none { start.page() } else { m.location().page() })
+    })
+    let hs = query(heading)
+    let headings = hs.map(h => (2, redline-hash(3, h.body), h.location().page()))
+    let titles = hs.map(h => {
+      let t = redline-plain(h.body).trim()
+      // The text of an inserted heading is inside its mark, the first
+      // change after the heading's start.
+      if t.find(regex("\w")) == none {
+        let m = query(selector(<redline-change>).after(h.location())).at(0, default: none)
+        t = if m != none and m.location().page() == h.location().page() { redline-plain(redline-value(m).at(3)).trim() } else { "" }
+      }
+      let t = if t.clusters().len() > 40 { t.clusters().slice(0, 39).join() + "…" } else { t }
+      (t.codepoints().len(), ..t.codepoints().map(str.to-unicode))
+    })
+    let triples = (..changes, ..headings).flatten()
     let lost = query(<redline-lost>).map(redline-value).flatten()
-    redline-ints((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, lost.len(), ..lost, ..changes.flatten(), ..headings.flatten()), <redline-layout>)
+    redline-ints((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, lost.len(), ..lost, triples.len(), ..triples, ..titles.flatten()), <redline-layout>)
   }
 }
 
@@ -1136,7 +1177,9 @@
 // compiled with `redline-side`, pages, unbarred: pages with changes but no
 // bars), pairs: array of (old, new: pages
 // shown next to each other, steps-old, steps-new: pages of earlier steps of
-// the same slide, not shown), unpaired: array of (side, ins, page): changes
+// the same slide, not shown, titles: the heading of each row of pages,
+// moved: whether they hold both places of moved text), unpaired: array of
+// (side, ins, page): changes
 // found in one version only, unmarked: array of (file, old, new): changes
 // that are not marked, bib: as for `redline-summary`, moved: whether text
 // moved).
@@ -1150,9 +1193,11 @@
   let size = calc.max(calc.max(wo, wn) / 50, 10pt)
   let gap = 2 * size
   let pages = redline-pages
-  let shown(ps, steps) = if ps.len() == 0 [–] else [#pages(ps)#if steps.len() > 0 [ (last step of #pages(steps + ps))]]
   let name(side) = text(weight: "bold", fill: if side == o { st.del } else { st.ins }, side.label)
   let left-out(side, ps) = side.pages - ps.map(p => p.len()).sum(default: 0)
+  // The page of one side of a pair shown in row `r`: a side with fewer pages
+  // shows its last one again, next to the other pages it shares changes with.
+  let row-page(ps, r) = if ps.len() > 0 { ps.at(calc.min(r, ps.len() - 1)) }
   let hist = info.at("history", default: none)
   let steps = hist != none and hist.steps
   let sample = if steps { st + redline-colours(luma(70)) } else { st }
@@ -1163,30 +1208,45 @@
     let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
     let bib = redline-bib(info.bib)
     if info.pairs.len() == 0 { if bib == none and info.unmarked.len() == 0 [No changes.] } else [
-      Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the #if "groups" in hist [step] else [commit] that made the change]. Bars in the margin mark the changed lines.#if info.at("moved", default: false) [ Moved text has a grey bracket #redline-move-bracket and a #text(size: 0.8em)[moved] note in the margin on both sides; edits made while moving are marked as usual.]
+      Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the #if "groups" in hist [step] else [commit] that made the change]. Bars in the margin mark the changed lines.#if info.at("moved", default: false) [ Moved text has a grey bracket #redline-move-bracket and a #text(size: 0.8em)[moved] note in the margin on both sides, and its old page is shown next to its new one; edits made while moving are marked as usual.]
       #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
     ]
+    // One row per shown page, with its heading and whether text moved there.
+    let titled = info.pairs.any(p => p.moved or p.titles.any(t => t != ""))
     let at = 2
     let rows = ()
     for p in info.pairs {
       let k = calc.max(p.old.len(), p.new.len())
-      rows += (shown(p.old, p.steps-old), shown(p.new, p.steps-new), link((page: at, x: 0pt, y: 0pt), underline(pages(range(at, at + k)))))
+      for r in range(k) {
+        let cell(ps, steps) = {
+          let pg = row-page(ps, r)
+          if pg == none [–] else [#pg#if r == k - 1 and steps.len() > 0 [ (last step of #pages(steps + ps))]]
+        }
+        let title = [#p.titles.at(r)#if p.moved [ #text(fill: st.move)[(moved)]]]
+        rows += (cell(p.old, p.steps-old), cell(p.new, p.steps-new), ..if titled { (title,) }, link((page: at + r, x: 0pt, y: 0pt), underline[#(at + r)]))
+      }
       at += k
     }
     if rows.len() > 0 {
+      let head = ([Page of #name(o)], [Page of #name(n)], ..if titled { ([Heading],) }, [Shown on page])
       table(
-        columns: 3,
+        columns: head.len(),
         stroke: none,
         inset: (x: 0.5em, y: 0.3em),
-        align: (left, left, right),
-        table.header(..([Pages of #name(o)], [Pages of #name(n)], [Shown on page]).map(strong)),
+        align: (left, left, ..if titled { (left,) }, right),
+        table.header(..head.map(strong)),
         table.hline(stroke: 0.5pt),
         ..rows,
       )
     }
     if info.unpaired.len() > 0 {
       [Changes found in one version only; their pages are shown without a counterpart:]
-      list(..info.unpaired.map(u => [#if u.ins [An insertion] else [A deletion] on page #u.page of #info.at(u.side).label]))
+      // An insertion is marked in the old version where it would be, a
+      // deletion in the new one.
+      list(..info.unpaired.map(u => {
+        let what = if (u.side == "new") != u.ins [The place of #if u.ins [an insertion] else [a deletion]] else if u.ins [An insertion] else [A deletion]
+        [#what on page #u.page of #info.at(u.side).label]
+      }))
     }
     if info.unmarked.len() > 0 {
       [Changes that are not marked:]
@@ -1206,7 +1266,7 @@
   for p in info.pairs {
     for r in range(calc.max(p.old.len(), p.new.len())) {
       pagebreak()
-      let (po, pn) = (p.old.at(r, default: none), p.new.at(r, default: none))
+      let (po, pn) = (row-page(p.old, r), row-page(p.new, r))
       grid(columns: 2, column-gutter: gap, row-gutter: 0.5em, head(o, po, p.steps-old, p.old), head(n, pn, p.steps-new, p.new), shot(o, wo, po), shot(n, wn, pn), ..if legend != none { (grid.cell(colspan: 2, align(center, legend)),) })
     }
   }

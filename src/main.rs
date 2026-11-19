@@ -7,8 +7,8 @@ use std::process::{Command, ExitCode, Output};
 
 use tree::{Tree, git, output};
 use typst_redline::{
-    Anchor, Change, ChangeKind, Commit, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, Redline,
-    Side, Version, composite, preamble_takes_moves, project_files, redline,
+    Change, ChangeKind, Commit, Heading, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Placed, PlacedKind,
+    Redline, Side, Version, composite, preamble_takes_moves, project_files, redline,
 };
 
 const USAGE: &str = "\
@@ -1461,7 +1461,7 @@ fn compose(
     history: &History,
     to: &Path,
 ) -> Result<(), String> {
-    type Layout = (usize, Vec<usize>, Vec<usize>, Vec<Placed>, Vec<Anchor>);
+    type Layout = (usize, Vec<usize>, Vec<usize>, Vec<Placed>, Vec<Heading>);
     let query = |(root, entry, side, _): (&Path, &String, &str, &str)| {
         let input = format!("redline-side={side}");
         let entry = root.join(entry);
@@ -1486,20 +1486,38 @@ fn compose(
         };
         let (unbarred, rest) = rest.split_at((*n).min(rest.len()));
         warn_unbarred(unbarred, label);
-        let (lost, rest) = match rest {
-            [n, rest @ ..] => rest.split_at((*n).min(rest.len())),
-            [] => (rest, rest),
-        };
-        let (mut changes, mut headings) = (vec![], vec![]);
-        for &[kind, id, page] in rest.as_chunks::<3>().0 {
-            match kind {
-                2 => headings.push((id as u64, page)),
-                _ => changes.push(Placed {
-                    ins: kind == 1,
-                    id: id as u64,
-                    page,
-                }),
+        // A count, then that many integers.
+        fn counted(rest: &[usize]) -> (&[usize], &[usize]) {
+            match rest {
+                [n, rest @ ..] => rest.split_at((*n).min(rest.len())),
+                [] => (rest, rest),
             }
+        }
+        let (lost, rest) = counted(rest);
+        let (triples, mut texts) = counted(rest);
+        let (mut changes, mut headings) = (vec![], vec![]);
+        for &[kind, id, page] in triples.as_chunks::<3>().0 {
+            let kind = match kind {
+                0 => PlacedKind::Del,
+                1 => PlacedKind::Ins,
+                3 => PlacedKind::Move,
+                _ => {
+                    let (text, rest) = counted(texts);
+                    texts = rest;
+                    let title = text.iter().filter_map(|&c| char::from_u32(c as u32)).collect();
+                    headings.push(Heading {
+                        id: id as u64,
+                        page,
+                        title,
+                    });
+                    continue;
+                }
+            };
+            changes.push(Placed {
+                kind,
+                id: id as u64,
+                page,
+            });
         }
         Ok((*pages, unbarred.to_vec(), lost.to_vec(), changes, headings))
     };
