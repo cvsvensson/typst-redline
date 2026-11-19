@@ -33,8 +33,8 @@ pub fn align(old: &Doc, new: &Doc) -> Vec<Step> {
     steps
 }
 
-/// A run of differing blocks. Similar blocks of the same kind, marker and
-/// label are paired and diffed word by word; around each pair, deletions
+/// A run of differing blocks. Similar blocks of the same kind and marker
+/// are paired and diffed word by word; around each pair, deletions
 /// come first. Across a heading that replaces another, blocks are paired
 /// only if they are much alike: the section is likely new, unless it was
 /// renamed. Pairing looks a bounded number of blocks ahead, so that its cost

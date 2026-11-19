@@ -69,13 +69,13 @@ impl Block {
         ))
     }
 
-    /// The marker and label around the body; blocks that differ in it are
-    /// not compared word by word, so that the change is marked. The term of
-    /// a term item is compared as text.
+    /// The marker before the body; blocks that differ in it are not
+    /// compared word by word, so that the change is marked. The term of a
+    /// term item is compared as text, and a label, which does not show, is
+    /// compared apart.
     pub fn frame(&self) -> String {
-        let (prefix, _, suffix) = self.parts();
-        let prefix = self.term().map_or(prefix, |(marker, _, colon)| marker + &colon);
-        collapse_ws(&format!("{prefix}\n{suffix}"))
+        let (prefix, _, _) = self.parts();
+        collapse_ws(&self.term().map_or(prefix, |(marker, _, colon)| marker + &colon))
     }
 
     pub fn label(&self) -> Option<String> {

@@ -51,7 +51,7 @@ fn content_words(b: &Block) -> Vec<String> {
 
 /// The moves among the deleted and inserted blocks of `files`, each an old
 /// and a new document and the steps that write it, in old reading order.
-/// Blocks match if they have the same kind, marker and label, and the same
+/// Blocks match if they have the same kind and marker, and the same
 /// text up to whitespace, or else [`MOVE_SIMILARITY`] of their words; the
 /// best matches are taken first, and each block is used once. Moves next
 /// to each other at their old place that fill one place in the new version

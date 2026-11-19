@@ -71,6 +71,10 @@ pub struct Ctx {
     shown_strings: HashSet<String>,
     /// Names defined somewhere in the old version but nowhere in the new.
     removed_defs: HashSet<String>,
+    /// Names that either version defines or imports by name, and whether
+    /// one imports all names of a module that is not a file of the
+    /// project, such as a package, which may define any other name.
+    defined: (HashSet<String>, bool),
     /// The project files, the entry first.
     old_files: Vec<(String, String)>,
     new_files: Vec<(String, String)>,
@@ -91,6 +95,9 @@ pub struct Ctx {
     /// `aligned`, block).
     moved_from: HashMap<(usize, usize), usize>,
     moved_to: HashMap<(usize, usize), usize>,
+    /// Setup code deleted and inserted unchanged in a file, by (index into
+    /// `aligned`, block key): moved.
+    moved_setup: HashSet<(usize, String)>,
 }
 
 /// A new file and the old file it is compared with, as blocks, and the
@@ -236,6 +243,22 @@ impl Ctx {
                 })
                 .collect(),
         };
+        let mut moved_setup = HashSet::new();
+        for (i, (_, a)) in aligned.iter().enumerate() {
+            let setup = |deleted: bool| -> HashSet<&str> {
+                a.steps
+                    .iter()
+                    .filter_map(|s| match *s {
+                        Step::Del(o) if deleted => Some(&a.docs.0.blocks[o]),
+                        Step::Ins(n) if !deleted => Some(&a.docs.1.blocks[n]),
+                        _ => None,
+                    })
+                    .filter(|b| b.kind == Kind::Setup && !b.is_import())
+                    .map(|b| b.key.as_str())
+                    .collect()
+            };
+            moved_setup.extend((&setup(true) & &setup(false)).into_iter().map(|k| (i, k.to_string())));
+        }
         let (mut moved_from, mut moved_to) = (HashMap::new(), HashMap::new());
         for (i, r) in moves.iter().enumerate() {
             moves::gather(&mut aligned[r.new.0].1.steps, &r.new.1);
@@ -251,6 +274,18 @@ impl Ctx {
                 .difference(&union(&new_files, definitions))
                 .cloned()
                 .collect(),
+            defined: (
+                &union(&old_files, definitions) | &union(&new_files, definitions),
+                old_files.iter().chain(&new_files).any(|(_, s)| {
+                    parse(s)
+                        .children()
+                        .filter_map(|n| n.cast::<ast::ModuleImport>())
+                        .any(|i| {
+                            matches!(i.imports(), Some(ast::Imports::Wildcard))
+                                && !matches!(i.source(), ast::Expr::Str(s) if !s.get().starts_with('@'))
+                        })
+                }),
+            ),
             pairs,
             old_files,
             new_files,
@@ -260,6 +295,7 @@ impl Ctx {
             moves,
             moved_from,
             moved_to,
+            moved_setup,
         }
     }
 
@@ -310,6 +346,15 @@ impl Ctx {
             }
         }
         (code, files)
+    }
+
+    /// Whether code `call` calls a function of Typst's own: a name that the
+    /// project does not define or import.
+    fn builtin(&self, call: &str) -> bool {
+        let (names, any) = &self.defined;
+        !any && !call.is_empty()
+            && call.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            && !names.contains(call)
     }
 
     fn entry(&self) -> &str {
@@ -430,7 +475,16 @@ struct Writer<'a> {
     after_item: bool,
     /// The moves whose new place is written, with the section it is in.
     arrived: HashMap<usize, Option<String>>,
+    /// Diffing the arguments of the first call of code that shows as
+    /// content, laid out as a block or not.
+    content_code: Option<bool>,
+    /// The argument marked by [`Self::marked_arg`] in that code: the code
+    /// that binds its values, the id of its first change and the steps.
+    hoisted: Option<(String, usize, StepPair)>,
 }
+
+/// The steps shown with a deletion and with the insertion that replaces it.
+type StepPair = (Option<u8>, Option<u8>);
 
 /// A run of tokens that is the same in both versions or changed.
 #[derive(Clone)]
@@ -589,6 +643,8 @@ impl<'a> Writer<'a> {
             old_scope: false,
             after_item: false,
             arrived: HashMap::new(),
+            content_code: None,
+            hoisted: None,
         }
     }
 
@@ -687,13 +743,7 @@ impl<'a> Writer<'a> {
 
     /// [`Self::mark`] with the step to show, if any.
     fn emit(&mut self, kind: ChangeKind, args: &str, body: String, toks: &[Tok], step: Option<u8>) {
-        let step = step.map_or(String::new(), |s| format!("step: {s}, "));
-        let args = match args {
-            "" => format!("{step}id: {}", self.changes.len()),
-            _ => format!("{args}, {step}id: {}", self.changes.len()),
-        };
-        let p = &self.ctx.prefix;
-        let call = format!("{p}-{}({args})[{body}]", kind.name());
+        let call = self.call(kind, args, &body, step, self.changes.len());
         let old_scope = kind == ChangeKind::Del
             && self.ctx.opts.eval_deleted
             && !self.file.old_path.is_empty()
@@ -706,6 +756,75 @@ impl<'a> Writer<'a> {
             self.out.push_str(&format!("#{call};"));
         }
         self.record(kind, body);
+    }
+
+    /// The call that marks `body` as change `id`, without `#`.
+    fn call(&self, kind: ChangeKind, args: &str, body: &str, step: Option<u8>, id: usize) -> String {
+        let step = step.map_or(String::new(), |s| format!("step: {s}, "));
+        let args = match args {
+            "" => format!("{step}id: {id}"),
+            _ => format!("{args}, {step}id: {id}"),
+        };
+        format!("{}-{}({args})[{body}]", self.ctx.prefix, kind.name())
+    }
+
+    /// Whether deleted code can be evaluated with the definitions of its
+    /// file.
+    fn evaluates_deleted(&self) -> bool {
+        self.ctx.opts.eval_deleted && !self.file.old_path.is_empty()
+    }
+
+    /// Code that binds `{prefix}-old` to the value of the old code `old`
+    /// (as [`Self::sanitize`] gives it) and `{prefix}-new` to the new code
+    /// `new`.
+    fn bind(&mut self, old: &str, new: &str) -> String {
+        self.old_scope = true;
+        let p = &self.ctx.prefix;
+        let file = typst_str(&format!("/{OLD_DIR}/{}", self.file.old_path));
+        format!("let {p}-old = {{import {file}: *; {old}}}; let {p}-new = {new}; ")
+    }
+
+    /// A code block that shows the content that [`Self::bind`] binds
+    /// deleted and inserted, as the changes `id` and `id + 1` that
+    /// [`Self::record_replaced`] records, or the new content alone where both
+    /// are the same: then the marks are not laid out, and the summary lists
+    /// them. Content compares equal whatever the styles it sets and the
+    /// code of its `context` expressions, so content with these is taken to
+    /// differ.
+    fn replacing(&self, id: usize, steps: StepPair, block: bool) -> String {
+        let p = &self.ctx.prefix;
+        let (dargs, iargs) = if block {
+            ("block: true", "block: true")
+        } else {
+            ("gap: true", "")
+        };
+        let del = self.call(ChangeKind::Del, dargs, &format!("#{p}-old"), steps.0, id);
+        let ins = self.call(ChangeKind::Ins, iargs, &format!("#{p}-new"), steps.1, id + 1);
+        format!(
+            "{{let {p}-plain(c) = if type(c) == content {{ c.func() not in ((context none).func(), [#set text(red); a].func()) and c.fields().values().all({p}-plain) }} else if type(c) == array {{ c.all({p}-plain) }} else {{ true }}; if {p}-old == {p}-new and {p}-plain({p}-new) {{ {p}-new }} else [#{del}#{ins}]}}"
+        )
+    }
+
+    /// Record the old code `old` replaced by `new`, the deletion with the
+    /// changed arguments of the code's call for the summary, and return
+    /// the steps that made them and the id of the first.
+    fn record_replaced(&mut self, old: &str, new: &str, toks: (&[Tok], &[Tok])) -> (StepPair, usize) {
+        let (id, steps) = (self.changes.len(), (self.step(toks.0), self.step(toks.1)));
+        let nodes = |t: &[Tok]| t.iter().flat_map(|t| t.nodes.clone()).collect::<Vec<_>>();
+        let what = self.call_args(&nodes(toks.0), &nodes(toks.1));
+        self.record(ChangeKind::Del, old.into());
+        self.changes[id].what = what;
+        self.record(ChangeKind::Ins, new.into());
+        self.join_from(id);
+        (steps, id)
+    }
+
+    /// Markup `old` (as [`Self::sanitize`] gives it) replaced by `new`
+    /// whole, as a code block: deleted and inserted, or the new markup
+    /// alone if both show the same; marked as [`Self::replacing`].
+    fn replaced_whole(&mut self, old: &str, new: &str, id: usize, steps: StepPair, block: bool) -> String {
+        let bind = self.bind(&format!("[{old}]"), &format!("[{new}]"));
+        format!("{{{bind}{}}}", self.replacing(id, steps, block))
     }
 
     /// Mark inserted tokens; with steps, each run of tokens that one step
@@ -786,18 +905,22 @@ impl<'a> Writer<'a> {
     }
 
     /// Setup code written as in the new version, its change from `old`
-    /// listed.
+    /// listed; an inserted `#import` or `#include` is not, as the files it
+    /// names show what it brings.
     fn unmarked(&mut self, old: &str, b: &Block) {
         self.out.push_str(&b.text());
-        if !b.is_import() {
-            let what = match (
-                outer_call(&parse(old).children().cloned().collect::<Vec<_>>()),
-                outer_call(&b.nodes),
-            ) {
-                (Some((oc, oargs)), Some((nc, nargs))) if oc == nc => self.changed_args(&nc, &oargs, &nargs),
-                _ => vec![],
-            };
+        if !b.is_import() || !old.is_empty() {
+            let what = self.call_args(&parse(old).children().cloned().collect::<Vec<_>>(), &b.nodes);
             self.list_what(old, &b.text(), what);
+        }
+    }
+
+    /// The changed arguments of the first call in code `o` and `n`, if
+    /// both call the same.
+    fn call_args(&self, o: &[SyntaxNode], n: &[SyntaxNode]) -> Vec<What> {
+        match (outer_call(o), outer_call(n)) {
+            (Some((oc, oargs)), Some((nc, nargs))) if oc == nc => self.changed_args(&nc, &oargs, &nargs),
+            _ => vec![],
         }
     }
 
@@ -880,13 +1003,13 @@ impl<'a> Writer<'a> {
                     .iter()
                     .any(|p| c.section == p.target && (p.target.is_some() || c.file == p.file))
             };
-            // A move is counted apart from edits, once in each section it
-            // left or reached; a moved section's own move is its label.
+            // A move is counted apart from edits, once, in the section it
+            // reached; a moved section's own move is its label.
             let n = count(&|c| here(c) && c.kind != ChangeKind::Moved && !c.joined);
             let moves: HashSet<usize> = self
                 .changes
                 .iter()
-                .filter(|c| here(c) && c.kind == ChangeKind::Moved)
+                .filter(|c| here(c) && c.kind == ChangeKind::Moved && !c.old.is_empty())
                 .filter_map(|c| c.text.parse().ok())
                 .map(part_of)
                 .collect();
@@ -934,6 +1057,13 @@ impl<'a> Writer<'a> {
                     let mv = match c.kind {
                         ChangeKind::Moved => format!("move: {}, ", c.text),
                         _ if c.joined => "joined: true, ".into(),
+                        // Replaced code, in words where not laid out.
+                        ChangeKind::Del if !c.what.is_empty() => {
+                            format!(
+                                "what: ({}), ",
+                                c.what.iter().map(|w| w.to_typst() + ",").collect::<String>()
+                            )
+                        }
                         _ => String::new(),
                     };
                     format!(
@@ -1069,6 +1199,9 @@ impl<'a> Writer<'a> {
         let mut outer = None;
         // A deleted item is written in the body of the item before it.
         let mut in_item = false;
+        // Blocks deleted and inserted next to each other in one section are
+        // one change, from its first change on; a heading starts another.
+        let mut run: Option<(usize, Option<String>)> = None;
         for (k, &s) in steps.iter().enumerate() {
             match s {
                 Step::Del(o) if old.blocks[o].kind == Kind::Heading => {
@@ -1081,6 +1214,17 @@ impl<'a> Writer<'a> {
                     }
                 }
             }
+            let block = match s {
+                Step::Del(o) if moved(&ctx.moved_from, o).is_none() => Some(&old.blocks[o]),
+                Step::Ins(n) if moved(&ctx.moved_to, n).is_none() => Some(&new.blocks[n]),
+                _ => None,
+            };
+            let start = (self.changes.len(), self.current.clone());
+            run = match block.map(|b| b.kind) {
+                None | Some(Kind::Setup) => None,
+                Some(Kind::Heading) => Some(start),
+                _ => run.filter(|r| r.1 == start.1).or(Some(start)),
+            };
             match s {
                 Step::Del(o) => {
                     // A list that ends here in the new version ends before
@@ -1093,6 +1237,7 @@ impl<'a> Writer<'a> {
                     match moved(&ctx.moved_from, o) {
                         Some(&r) if ctx.moves[r].old.1.start == o => self.moved_from(r, list_ends),
                         Some(_) => {}
+                        None if top && self.moved_setup(&old.blocks[o]) => {}
                         None => {
                             // A paragraph that went on after setup code that
                             // is kept stays in its paragraph.
@@ -1109,6 +1254,7 @@ impl<'a> Writer<'a> {
                 Step::Ins(n) => match moved(&ctx.moved_to, n) {
                     Some(&r) if ctx.moves[r].new.1.start == n => self.moved_to(r),
                     Some(_) => {}
+                    None if top && self.moved_setup(&new.blocks[n]) => self.moved_code(&new.blocks[n]),
                     None => self.write_new(old, new, s, ("", "")),
                 },
                 _ => {
@@ -1118,6 +1264,10 @@ impl<'a> Writer<'a> {
             }
             if let Step::Keep(_, n) | Step::Pair(_, n) | Step::Ins(n) = s {
                 in_item = new.blocks[n].kind == Kind::Item;
+            }
+            if let Some((start, section)) = &mut run {
+                self.join_from(*start);
+                *section = self.current.clone();
             }
         }
         if let Some(c) = outer {
@@ -1373,7 +1523,11 @@ impl<'a> Writer<'a> {
         }
         let label = self.section(nb, false);
         let (prefix, nbody, suffix) = nb.parts();
-        let (_, obody, _) = ob.parts();
+        let (_, obody, osuffix) = ob.parts();
+        // The text after a heading's or item's body is its label.
+        if collapse_ws(&osuffix) != collapse_ws(&suffix) {
+            self.list(osuffix.trim(), suffix.trim());
+        }
         match (ob.term(), nb.term()) {
             (Some((_, oterm, _)), Some((marker, nterm, colon))) => {
                 self.out.push_str(&marker);
@@ -1429,6 +1583,22 @@ impl<'a> Writer<'a> {
         }
         self.ins("block: true", &tokenize(&nodes));
         self.close(nb, marks.1, &(suffix + &label));
+    }
+
+    /// Whether top-level block `b` is setup code that moved unchanged
+    /// within its file.
+    fn moved_setup(&self, b: &Block) -> bool {
+        b.kind == Kind::Setup && self.ctx.moved_setup.contains(&(self.file.index, b.key.clone()))
+    }
+
+    /// Setup code moved unchanged, at its new place: written unmarked and
+    /// listed once.
+    fn moved_code(&mut self, b: &Block) {
+        self.begin_new(b);
+        let text = b.text();
+        self.out.push_str(&text);
+        let note = "Moved here unchanged from another place in this file.";
+        self.list_what(&text, &text, vec![What::Note(note.into())]);
     }
 
     /// The `item` argument of deleted list or enum item `o` of `old`, written
@@ -1695,14 +1865,15 @@ impl<'a> Writer<'a> {
         cover_shown_strings(&mut merged, new, &self.ctx.shown_strings);
         for s in merged {
             if !s.equal {
-                self.change(&old[s.old], &new[s.new]);
+                let last = s.new.end == new.len();
+                self.change(&old[s.old], &new[s.new], last);
                 continue;
             }
             for (ot, nt) in old[s.old].iter().zip(&new[s.new]) {
                 if ot.text == nt.text || nt.kind != TK::Atom {
                     self.out.push_str(&nt.text);
                 } else if !self.diff_code(ot, nt, false) {
-                    self.change(std::slice::from_ref(ot), std::slice::from_ref(nt));
+                    self.change(std::slice::from_ref(ot), std::slice::from_ref(nt), false);
                 }
             }
         }
@@ -1715,9 +1886,36 @@ impl<'a> Writer<'a> {
     /// written as in `n` and listed instead. Otherwise, or if the code
     /// differs outside the arguments of a call, writes nothing and returns
     /// false, so that the caller marks or lists the code whole. Also false
-    /// if diffing inside code is off.
+    /// if diffing inside code is off. Without `list`, one changed argument
+    /// of the call that the code starts with can be marked as a value, see
+    /// [`Self::marked_arg`].
     fn diff_code(&mut self, o: &Tok, n: &Tok, list: bool) -> bool {
-        self.ctx.opts.content_blocks && self.diff_code_nodes(&o.nodes, &n.nodes, list, None)
+        if !self.ctx.opts.content_blocks {
+            return false;
+        }
+        let (at, count) = (self.out.len(), self.changes.len());
+        // An argument of the call that the code starts with is evaluated
+        // where the code stands, so that it can be bound ahead of the code.
+        let top = !list && n.nodes.get(1).is_some_and(|c| c.kind() == K::FuncCall);
+        let outer = std::mem::replace(&mut self.content_code, top.then_some(n.block));
+        let outer_bound = self.hoisted.take();
+        let ok = self.diff_code_nodes(&o.nodes, &n.nodes, list, None);
+        self.content_code = outer;
+        let Some((bind, id, steps)) = std::mem::replace(&mut self.hoisted, outer_bound).filter(|_| ok) else {
+            return ok;
+        };
+        let Some(old) = self.sanitize(&o.nodes) else {
+            self.out.truncate(at);
+            self.changes.truncate(count);
+            return false;
+        };
+        let marked = self.out.split_off(at);
+        let whole = self.replaced_whole(&old, &n.text, id, steps, n.block);
+        let p = &self.ctx.prefix;
+        self.out.push_str(&format!(
+            "#{{{bind}if type({p}-old) == content and type({p}-new) == content [{marked}] else {whole}}};"
+        ));
+        true
     }
 
     /// Labels, comments and spaces are written as in `n` and compared only
@@ -1736,8 +1934,18 @@ impl<'a> Writer<'a> {
             } else {
                 ok = ok
                     && rest.next().is_some_and(|y| {
-                        self.diff_code_node(y, x, list && call.is_none(), &before)
-                            || list && call.is_some_and(|c| self.listed_arg(c, y, x))
+                        // Only the arguments of the first call are marked
+                        // as values.
+                        let top = if call.is_some() { self.content_code.take() } else { None };
+                        let same = self.diff_code_node(y, x, list && call.is_none(), &before);
+                        if call.is_some() {
+                            self.content_code = top;
+                        }
+                        same || call.is_some_and(|c| match top {
+                            _ if list => self.listed_arg(c, y, x),
+                            Some(block) => self.marked_arg(c, y, x, block),
+                            None => false,
+                        })
                     });
             }
             before.push_str(&x.full_text());
@@ -1793,6 +2001,53 @@ impl<'a> Writer<'a> {
         }
         let call = (n.kind() == K::Args).then_some(before);
         self.diff_code_nodes(&children(o), &children(n), list && n.kind() != K::Closure, call)
+    }
+
+    /// Write the changed argument `n` of a call to `call` as
+    /// [`Self::replacing`] the old argument `o`, their values bound ahead of
+    /// the code, so that what the call shows unchanged, such as a figure's
+    /// caption, is not shown twice. Only for one argument, and where both
+    /// are calls and `call` is a function of Typst's own, which takes
+    /// content as it is: a function of the project could inspect it, and
+    /// one scoped to `call`, such as `table.cell`, makes an element that
+    /// `call` treats apart. Where a value is not content, the code is
+    /// replaced whole.
+    fn marked_arg(&mut self, call: &str, o: &SyntaxNode, n: &SyntaxNode, block: bool) -> bool {
+        let value = |a: &SyntaxNode| match a.cast::<ast::Named>() {
+            Some(named) => (
+                Some(named.name().as_str().to_string()),
+                named.expr().to_untyped().clone(),
+            ),
+            None => (None, a.clone()),
+        };
+        let ((oname, ov), (nname, nv)) = (value(o), value(n));
+        let scoped = format!("{call}.");
+        let called = |v: &SyntaxNode| {
+            v.cast::<ast::FuncCall>()
+                .is_some_and(|c| !c.callee().to_untyped().full_text().starts_with(scoped.as_str()))
+        };
+        if self.hoisted.is_some()
+            || !self.evaluates_deleted()
+            || !self.ctx.builtin(call)
+            || oname != nname
+            || !called(&ov)
+            || !called(&nv)
+        {
+            return false;
+        }
+        let Some(old) = self.sanitize(std::slice::from_ref(&ov)) else {
+            return false;
+        };
+        let new = nv.full_text().to_string();
+        let toks = (tokenize(std::slice::from_ref(&ov)), tokenize(std::slice::from_ref(&nv)));
+        let (steps, id) = self.record_replaced(&old, &new, (&toks.0, &toks.1));
+        let bind = self.bind(&old, &new);
+        self.hoisted = Some((bind, id, steps));
+        if let Some(name) = nname {
+            self.out.push_str(&format!("{name}: "));
+        }
+        self.out.push_str(&self.replacing(id, steps, block));
+        true
     }
 
     /// Write the changed argument `n` of a call to `call` and list it with
@@ -1885,8 +2140,9 @@ impl<'a> Writer<'a> {
     /// whitespace stays outside the marks: before the deletion if the old
     /// text had a space there too, else between deletion and insertion, so
     /// that deleted punctuation stays next to its word. A space the new
-    /// version lacks belongs to the deletion.
-    fn change(&mut self, old: &[Tok], new: &[Tok]) {
+    /// version lacks belongs to the deletion. `last` if the run ends the
+    /// text.
+    fn change(&mut self, old: &[Tok], new: &[Tok], last: bool) {
         let (olead, ocore, otrail) = trim_spaces(old);
         let (nlead, ncore, ntrail) = trim_spaces(new);
         if let ([o], [n]) = (ocore, ncore)
@@ -1895,8 +2151,20 @@ impl<'a> Writer<'a> {
         {
             let at = self.out.len();
             self.out.push_str(&nlead);
+            let toks = (std::slice::from_ref(o), std::slice::from_ref(n));
             if self.diff_code(o, n, false) {
                 self.out.push_str(&ntrail);
+                return;
+            }
+            // Code can show the same after a change; other atoms cannot.
+            if self.evaluates_deleted()
+                && o.nodes[0].kind() == K::Hash
+                && n.nodes[0].kind() == K::Hash
+                && let Some(old) = self.sanitize(&o.nodes)
+            {
+                let (steps, id) = self.record_replaced(&old, &n.text, toks);
+                let code = self.replaced_whole(&old, &n.text, id, steps, n.block);
+                self.out.push_str(&format!("#{code};{ntrail}"));
                 return;
             }
             self.out.truncate(at);
@@ -1926,14 +2194,15 @@ impl<'a> Writer<'a> {
         if !before {
             self.out.push_str(&nlead);
         }
-        // Paragraphs wholly inserted inside the run are marked as blocks.
+        // Paragraphs wholly inserted inside the run, or at its end if it
+        // ends the text, are marked as blocks.
         let paras: Vec<&[Tok]> = ncore.split(|t| t.key == "\n\n").collect();
         let breaks = ncore.iter().filter(|t| t.key == "\n\n");
         for (i, (para, gap)) in paras.iter().zip(breaks.map(Some).chain([None])).enumerate() {
             let (lead, core, trail) = trim_spaces(para);
             self.out.push_str(&lead);
             if !core.is_empty() {
-                let args = if i > 0 && i + 1 < paras.len() {
+                let args = if i > 0 && (i + 1 < paras.len() || last) {
                     "block: true"
                 } else {
                     block_arg(core)
