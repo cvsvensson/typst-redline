@@ -79,7 +79,7 @@ From the top:
 What is listed rather than marked:
 
 - A changed string or other value, such as `title: "..."` or a colour, and changed code that does not show on the page, such as a `#set` rule or a function, are said in words, for example `title: "Sorting on small devices" → "Sorting in 32 kB"`. A changed call that shows the same as before, and a changed label, are listed too.
-- A change in content that is never shown, or inside `hide`, or in text that a function reads as a string, is listed with its source text.
+- A change in content that is never shown, or inside `hide`, or in text that a function reads as a string, is listed with its source text. A changed call that is itself hidden, such as `#hide(rect(...))`, gets only bars.
 
 A change inside a content argument in brackets, such as a template's `abstract: [...]`, is marked on the page like other text. Another call whose arguments change is marked whole, old call deleted and new one inserted. When only the body of a call that also takes content by name changed, such as the image of a `#figure(image(...), caption: [...])`, the old body is shown deleted and the new figure inserted, so that its caption shows once, with edits in it marked.
 
