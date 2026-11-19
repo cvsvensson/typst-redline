@@ -342,14 +342,16 @@
 // Whether a deleted citation of `key` can be laid out here without changing
 // the new document's bibliography or numbering: the new document cites the
 // key, and cites no other key for the first time between here and its first
-// citation of the key.
+// citation of the key, other than keys cited before here, also by deleted
+// citations laid out.
 #let redline-cite-safe(key) = {
   let new(cites) = cites.filter(x => not (x.has("label") and x.label == <redline-deleted-cite>))
   let all = new(query(cite))
   let first = all.position(x => x.key == key)
   if first == none { return false }
-  let i = new(query(selector(cite).before(here()))).len()
-  let seen = all.slice(0, i).map(x => x.key)
+  let before = query(selector(cite).before(here()))
+  let i = new(before).len()
+  let seen = before.map(x => x.key)
   all.slice(calc.min(i, first), first).all(x => x.key in seen)
 }
 
