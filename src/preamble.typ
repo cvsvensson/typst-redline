@@ -445,12 +445,20 @@
   0.2126 * r + 0.7152 * g + 0.0722 * b > 60%
 }
 
+// Text in `fill`, also where the document has a rule such as
+// `show text: set text(fill: red)`, so that a mark looks like one.
+#let redline-fill(fill, body) = {
+  set text(fill: fill)
+  show text: set text(fill: fill)
+  body
+}
+
 // Whole new blocks are coloured, lighter on a dark background; new words
 // inside a kept block are also filled and underlined, which stays visible
 // in greyscale and on any background.
 #let redline-ins-rules(body, block, st: redline-style) = {
-  if block { return context text(fill: if redline-light-text() { st.ins.lighten(60%) } else { st.ins }, body) }
-  set text(fill: st.ins)
+  if block { return context redline-fill(if redline-light-text() { st.ins.lighten(60%) } else { st.ins }, body) }
+  show: redline-fill.with(st.ins)
   let stroke = (bottom: 0.5pt + st.ins)
   // A box keeps a fill behind math but stops it from breaking across lines.
   // It reaches as far up and down as the highlight of the text around it,
@@ -637,9 +645,7 @@
       place(top + left, dy: s.height / 2, line(length: s.width, stroke: st.strike))
     })
   }
-  // A document's own text colours must not make a deletion look inserted.
-  show text: set text(fill: st.del)
-  let struck = text(fill: st.del, strike(stroke: st.strike, body))
+  let struck = redline-fill(st.del, strike(stroke: st.strike, body))
   // On a dark background, a light one of its own keeps it legible.
   context if redline-light-text() { highlight(fill: st.del-fill, struck) } else { struck }
 }
@@ -832,7 +838,7 @@
     redline-mark("del", redline-footnotes(body, look), block, look, st.del-frame, frame-style: look, bare: bare, step: step, id: id)
   } else {
     let body = redline-footnotes(body, b => redline-ins-rules(b, false, st: st))
-    redline-mark("ins", body, block, b => redline-ins-rules(b, block, st: st), st.ins-frame, frame-style: text.with(fill: st.ins), bare: bare, step: step, id: id)
+    redline-mark("ins", body, block, b => redline-ins-rules(b, block, st: st), st.ins-frame, frame-style: redline-fill.with(st.ins), bare: bare, step: step, id: id)
   }
 }
 
