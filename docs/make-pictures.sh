@@ -29,22 +29,8 @@ picture 1 moved
 run "$docs/slides" old.typ new.typ --layout side-by-side
 picture 4 slides 150
 
-# A git repository with one commit per folder of docs/report, each folder holding the files that
-# commit changes. Fixed dates and author keep the commit hashes in the pictures the same.
 repo="$tmp/report"
-git init -q "$repo"
-git -C "$repo" config core.autocrlf false
-commit() {
-  cp -r "$docs/report/$1/." "$repo/"
-  git -C "$repo" add -A
-  GIT_AUTHOR_DATE="$2T10:00:00Z" GIT_COMMITTER_DATE="$2T10:00:00Z" git -C "$repo" \
-    -c user.name="Robin Lee" -c user.email=robin@example.com -c commit.gpgsign=false commit -q -m "$3"
-}
-commit 1 2026-11-02 "First draft"
-git -C "$repo" tag draft-1
-commit 2 2026-11-04 "Tighten the introduction"
-commit 3 2026-11-06 "Rerun the benchmarks on the new board"
-commit 4 2026-11-09 "Retitle, extend the abstract, cite Knuth"
+"$docs/report/make-repo.sh" "$repo"
 
 run "$repo" main.typ --since draft-1
 picture 3 report-results
