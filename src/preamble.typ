@@ -809,6 +809,8 @@
   let nums = if nums.len() > 0 and redline-side != "old" { redline-value(nums.first()) }
   let number-size = calc.max(6pt, w / 100)
   let numbers = ()
+  // The (right margin, top, bottom) of notes that run along a bracket.
+  let along-notes = ()
   // Tags come in document order, so the first pair ending on this page is
   // found by bisection.
   let (lo, hi) = (0, n)
@@ -909,11 +911,12 @@
       place(redline-top-left, dx: x0, dy: y0, link(other.location(), box(width: calc.max(x1 - x0, 0pt), height: calc.max(y1 - y0, 1pt))))
     }
     if s.page != pg { continue }
-    // The move's number stands at the top of its bracket, the note below it.
+    // The move's number stands at the top of its bracket, a note across the
+    // margin below it.
     let num = if nums != none { nums.at("m" + str(v.id), default: none) }
     let at = if num != none { number-at(s, e-in, v.width, v.gutter, v.at("columns", default: none)) }
     if at != none { numbers.push((..at, if redline-value(a).block { y0 } else { s.y - 0.7 * number-size }, num)) }
-    let y0 = if at != none { y0 + 1.3 * number-size } else { y0 }
+    let below = if at != none { 1.3 * number-size } else { 0pt }
     // Notes that run up along the bracket have no arrow, which would turn.
     let (notes, along) = if other != none and other.location().page() != pg {
       let n = redline-page-names((other.location(),))
@@ -936,8 +939,9 @@
     if turned != none {
       let (w, h) = (measure(turned).width, measure(turned).height)
       place(redline-top-left, dx: if right-side { x + 3pt } else { x - 3pt - h }, dy: y0 + w, rotate(-90deg, origin: redline-top-left, link-to(turned)))
+      along-notes.push((right-side, y0, y0 + w))
     } else if note != none {
-      place(redline-top-left, dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0, box(width: free, align(if right-side { start } else { end }, link-to(note))))
+      place(redline-top-left, dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0 + below, box(width: free, align(if right-side { start } else { end }, link-to(note))))
     }
   }
   // The old place of a move has its number too.
@@ -960,6 +964,11 @@
       if at != none { numbers.push((..at, p.y - 0.7 * number-size, num)) }
     }
   }
+  // A number where a note runs along a bracket stands above the bracket.
+  let numbers = numbers.map(((x, r, y, num)) => {
+    let along = along-notes.find(((side, top, bottom)) => side == r and y > top - number-size and y < bottom)
+    (x, r, if along == none { y } else { along.at(1) - 1.3 * number-size }, num)
+  })
   // A number is shown once on a page, where its change starts, but at both
   // places of a move; numbers on about one line are shown together.
   let lines = ()
