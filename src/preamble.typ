@@ -193,9 +193,11 @@
   let w = if type(rel) == ratio { calc.min(rel * size.width, size.width) } else if type(rel) == relative {
     calc.min(rel.ratio * size.width + rel.length.to-absolute(), size.width)
   } else if natural.width == 0pt or natural.width > size.width or calc.abs((natural.height - h).to-absolute()) > 0.1pt { size.width } else { natural.width }
-  // A figure's caption can be wider than a body of fixed width.
-  let fixed = type(rel) != ratio and (type(rel) != relative or rel.ratio == 0%)
-  let w = if it.func() == figure and fixed and natural.width <= size.width { calc.max(w, natural.width) } else { w }
+  // A figure's caption can be wider than its body: the frame holds the
+  // figure as laid out in this width, its caption wrapped.
+  let laid = if sys.version >= version(0, 12, 0) { measure(it, width: size.width).width } else { natural.width }
+  let body-w = if type(rel) in (ratio, relative) { w } else { calc.min(measure(if it.func() == figure { it.body } else { it }, ..room).width, w) }
+  let w = if it.func() == figure { calc.min(calc.max(w, laid), size.width) } else { w }
   let a =if it.func() == align { it.alignment } else if eq or it.func() == figure { center } else { align.alignment }
   let a = if a.axis() == "horizontal" { a } else if a.axis() == none { a.x } else { start }
   it
@@ -203,9 +205,14 @@
   let empty = h == 0pt and repr(it.func()) != "line"
   place(top + a, box(width: w, height: h, {
     if not empty { place(rect(width: 100%, height: 100%, stroke: stroke, outset: st.outset)) }
-    // The cross leaves a figure's caption, which is struck, alone.
-    let ch = if it.func() == figure { measure(block(width: size.width, it.body)).height } else { h }
-    if cross and not empty { redline-cross(stroke, w, ch) }
+    // The cross covers a figure's body and leaves its caption, which is
+    // struck, alone.
+    if cross and not empty and it.func() == figure {
+      let ch = measure(block(width: size.width, it.body)).height
+      let caption = it.at("caption", default: none)
+      let above = caption != none and caption.at("position", default: figure.caption.position) == top
+      place(center, dy: if above { h - ch } else { 0pt }, box(width: body-w, height: ch, redline-cross(stroke, body-w, ch)))
+    } else if cross and not empty { redline-cross(stroke, w, h) }
     place(top + left, if start != none { redline-tag(start, -st.outset, step: step, id: id) })
     place(bottom + left, if end != none { redline-tag("end", st.outset, width: size.width) })
   }))
