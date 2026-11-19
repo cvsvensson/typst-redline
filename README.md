@@ -86,6 +86,7 @@ From the top:
 
 - One sentence counts the changes and how many of them are not marked on the pages. When the versions do not differ, it says *No changes found between the two versions*, the line on the first page says so too, and so does a note on stderr.
 - **Changes by section**: each section with changes, how many changes it has (not a page count), how many passages moved, and the page where the section starts. Changes before the first heading, such as in `#set` rules or a template call, are under *Start of the document*. Page numbers are the ones printed on the page; a page without a printed number is given as its PDF page.
+- **Marked with a bar only**: changes that have a bar in the margin but nothing else to show, such as a blank line added before a list item, which spaces it apart; each is explained in words.
 - **Not marked in place**: each change that has no mark on the pages, said in words with old in red and new in blue, above its source in grey. Bibliography entries that changed are listed here too.
 - **What this PDF shows differently**: notes on where this PDF differs from a plain proof, for example pages without bars or coarser marks; see Known problems.
 - **Commits**: for a comparison with git, the commits between the two versions that change the document or a file it reads.
@@ -130,7 +131,6 @@ Only the first and the last version are compared, so text that one commit added 
 Each of these was tried with the current version.
 
 - Some moved text shows as deleted at one place and inserted at the other: a sentence moved within or between paragraphs (text after a display equation belongs to the paragraph of the equation), paragraphs reordered inside a moved section, a nested list item moved on its own, a passage of fewer than four words unless it moves with a longer one next to it, text inside a call's content argument such as `#slide[...]`, text moved into or out of a file that is not shown in order (imported, included by code, or no longer included), a passage rewritten so much that it keeps less than about 60% of its words, and moved setup code such as `#set` and `#let`.
-- A blank line added between list items, or removed, changes the list's spacing but is neither marked nor listed.
 - Deleted content shifts line and page breaks compared with the new version.
 - Deleted content is laid out under the new version's show and set rules, so where such a rule changed, deleted content does not look as it did in the old version. Side by side shows the old pages as they were.
 - Deleted content that updates a state, for example in a show rule of a package, leaves the state changed after it, because Typst records no initial value to set it back to; the summary page names such states. Counters are set back.
@@ -143,7 +143,7 @@ Each of these was tried with the current version.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks. A text show rule with a `regex` selector stops matching where a mark cuts its match; for a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
 - A moved passage in a middle column of a page with three or more columns, and one in a narrow margin, has a bracket but no "moved" note.
-- In side by side, an inserted or deleted page is shown next to an empty one only when the pages have headings; otherwise it can be paired with a neighbouring page.
+- In side by side, an inserted or deleted page is shown next to an empty one only when the pages have headings or a moved passage on them; otherwise it can be paired with a neighbouring page.
 - Files outside the project root and package files are not checked for changes.
 - Typst 0.12 and 0.13 are not tested. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked. With Typst 0.11, the summary keeps the document's header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.
 
