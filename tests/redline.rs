@@ -1294,6 +1294,18 @@ fn citation_added_to_a_group_marks_the_group() {
 }
 
 #[test]
+fn deleted_citation_group_shows_each_citation() {
+    // Citations cannot be queried before Typst 0.14, so deleted ones show
+    // their keys there.
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = compile("deleted-citation-group", &run("deleted-citation-group").files).unwrap();
+    let keys = query_field(&dir, "<redline-deleted-cite>", "key");
+    assert!(keys.contains("<a>") && keys.contains("<b>"), "{keys}");
+}
+
+#[test]
 fn new_gone_and_edited_bibliography_entries_are_listed() {
     let r = run("bib-entries");
     assert!(
