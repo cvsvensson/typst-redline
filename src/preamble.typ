@@ -29,10 +29,10 @@
 //   new, moved, code: array of (id, old, new): changed code that is not
 //   marked, either empty if inserted or deleted, bars: array of (id, old,
 //   new, what): marks that show only a bar, said in `what`, marks: array of (id,
-//   move: number of the move if it is one, joined: true if it continues
-//   the mark before it, old, new, what: for replaced code, its changed
-//   arguments as in `bars`): its marks), bib: (added, removed,
-//   changed: arrays of citation keys whose bibliography entry is new, gone
+//   move: number of the move if it is one, from: true at its old place,
+//   joined: true if it continues the mark before it, old, new, what: for
+//   replaced code, its changed arguments as in `bars`): its marks), bib:
+//   (added, removed, changed: arrays of citation keys whose bibliography entry is new, gone
 //   or edited, files: paths of other files that the document reads and
 //   that differ, unchecked: whether files read through a computed path were
 //   not checked, names: the entries of those keys by authors and year, such
@@ -1321,17 +1321,17 @@
 // The marks among `marks` that were not laid out (`shown` is from
 // `redline-laid-out`), such as marks in content that a function reads as
 // text, listed as code; a move counts as laid out if its new place is.
-#let redline-lost(marks, shown) = marks.filter(m => if "move" in m {
+#let redline-lost(marks, shown) = marks.filter(m => if m.at("from", default: false) { false } else if "move" in m {
   query(label("redline-move-to-" + str(m.move))).len() == 0
 } else { str(m.id) not in shown })
 
 // Marks as the summary lists them: an insertion that continues a deletion
-// is one change with it, old and new.
+// is listed with it, old and new.
 #let redline-joined(marks) = {
   let out = ()
   for m in marks {
     let i = out.len() - 1
-    if m.at("joined", default: false) and i >= 0 and out.at(i).new == "" and "move" not in out.at(i) {
+    if m.at("joined", default: false) and m.old == "" and i >= 0 and out.at(i).new == "" and "move" not in out.at(i) {
       out.at(i).new = m.new
     } else { out.push(m) }
   }
@@ -1402,17 +1402,19 @@
   let kept(x) = x.level <= 2 and (x.at("outlined", default: true) or x.at("bookmarked", default: auto) != false)
   let groups = ()
   for m in marks {
-    let loc = if "move" in m { redline-move-start(m.move) } else { at.at(str(m.id), default: none) }
+    let from = m.at("from", default: false)
+    let loc = if from { redline-move-find("from", m.move) } else if "move" in m { redline-move-start(m.move) } else { at.at(str(m.id), default: none) }
+    if from and loc != none { loc = loc.location() }
     if loc == none { continue }
     let head = query(selector(heading).before(loc)).filter(kept).at(-1, default: none)
     let i = groups.position(g => if head == none { g.heading == none } else { g.heading != none and g.heading.location() == head.location() })
     if i == none {
-      groups.push((heading: head, count: 0, moves: (), at: (), marks: ()))
+      groups.push((heading: head, count: 0, moves: (), out: 0, at: (), marks: ()))
       i = groups.len() - 1
     }
     groups.at(i).at.push(loc)
     groups.at(i).marks.push(m)
-    if "move" in m { groups.at(i).moves.push(m.move) } else if not m.at("joined", default: false) { groups.at(i).count += 1 }
+    if from { groups.at(i).out += 1 } else if "move" in m { groups.at(i).moves.push(m.move) } else if not m.at("joined", default: false) { groups.at(i).count += 1 }
   }
   groups
 }
@@ -1522,7 +1524,9 @@
     if lost-ids.len() > 0 { redline-ints(lost-ids, <redline-lost>) }
     let lost = lost.map(redline-joined)
     let unmarked = listed + info.entries.map(e => e.code.len()).sum(default: 0)
-    let apart = unmarked + lost.flatten().len()
+    // The parts of a change count as one.
+    let counted(l) = l.filter(m => not m.at("joined", default: false)).len()
+    let apart = unmarked + lost.map(counted).sum(default: 0)
     let total = info.entries.map(e => e.count).sum(default: 0) + info.at("moved", default: 0) + listed
     let unchecked = bib.at("unchecked", default: false)
     redline-meta((unmarked: apart, notes: redline-fallback-note != none or unchecked, empty: total == 0), <redline-summary>)
@@ -1533,10 +1537,11 @@
     if total == 0 [No changes found between the two versions.] else [#total #if total == 1 [change] else [changes]#if apart == total [, not marked on the pages but listed below] else if apart > 0 [, #apart of them not marked on the pages but listed below].]
 
     let min-level = calc.min(..info.entries.map(e => e.level), 9)
-    let what(n, moves, unmarked, ..label) = {
+    let what(n, moves, unmarked, out: 0, ..label) = {
       let parts = label.pos()
       if n > 0 { parts.push[#n~#if n == 1 [change] else [changes]] }
       if moves > 0 { parts.push[#moves~#if moves == 1 [move] else [moves]] }
+      if out > 0 { parts.push[#out~moved away] }
       [#parts.join[, ]#if unmarked > 0 [ (#unmarked~not marked)]]
     }
     // Pages by their number in this PDF, which is the number printed on
@@ -1550,13 +1555,15 @@
     let rows = ()
     for (e, l) in info.entries.zip(lost) {
       let moves = e.at("moves", default: 0)
-      let k = e.code.len() + l.len()
+      // Passages that moved out, counted where they arrived.
+      let out = e.marks.filter(m => m.at("from", default: false)).len()
+      let k = e.code.len() + counted(l)
       let ns = numbers(e.marks + e.code)
       if e.deleted {
         rows += row(e.level, text(fill: st.del, strike(e.title)), what(0, 0, k, [deleted section]), ns, redline-under-headings(e.marks).map(g => g.at).flatten())
       } else if e.target != none {
         let label = if e.new { ([new section],) } else if e.at("moved", default: false) { ([moved section],) } else { () }
-        rows += heading-row(e.level, query(e.target).first(), e.title, what(e.count, moves, k, ..label), ns)
+        rows += heading-row(e.level, query(e.target).first(), e.title, what(e.count, moves, k, out: out, ..label), ns)
       } else {
         // Headings that the source does not have at its top level, such as
         // those inside calls, are found where they are laid out.
@@ -1565,13 +1572,14 @@
         let placed = found.map(g => g.count).sum(default: 0)
         let left = calc.max(0, moves - found.map(g => g.moves).flatten().dedup().len())
         let elsewhere = found.map(g => numbers(g.marks)).flatten()
-        if found.len() == 0 or e.count > placed or left > 0 {
+        let away = out - found.map(g => g.out).sum(default: 0)
+        if found.len() == 0 or e.count > placed or left > 0 or away > 0 {
           let at = groups.filter(g => found.len() == 0 or g.heading == none).map(g => g.at).flatten()
-          rows += row(e.level, e.title, what(e.count - placed, left, k), ns.filter(n => n not in elsewhere), at)
+          rows += row(e.level, e.title, what(e.count - placed, left, k, out: away), ns.filter(n => n not in elsewhere), at)
         }
         let top = calc.min(..found.map(g => g.heading.level), 9)
         for g in found {
-          rows += heading-row(e.level + g.heading.level - top, g.heading, redline-plain(g.heading.body).trim(), what(g.count, g.moves.dedup().len(), 0), numbers(g.marks))
+          rows += heading-row(e.level + g.heading.level - top, g.heading, redline-plain(g.heading.body).trim(), what(g.count, g.moves.dedup().len(), 0, out: g.out), numbers(g.marks))
         }
       }
     }
