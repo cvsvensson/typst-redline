@@ -78,12 +78,12 @@
           "default": "ask",
           "enumDescriptions": [
             "Ask each time, with the last used view first",
-            "Marked PDF: the new version with the changes marked",
-            "Side by side: changed pages of the old and the new version next to each other",
-            "Coloured by commit: each change in the colour of the commit that made it",
+            "Marked: the new version with the changes marked",
+            "Side by side: old and new pages next to each other",
+            "Marked, coloured by commit",
             "Side by side, coloured by commit"
           ],
-          "description": "How to show the changes. A view coloured by commit falls back to the one with the same layout when there are no commits to colour, as for another file."
+          "description": "How to show the changes. A view set here is not asked for. A view coloured by commit set here takes one colour per commit, or six steps when there can be more than six commits, and gives the same layout without colours where there is nothing to colour, as for another file."
         },
         "typstRedline.openPdf": {
           "type": "string",

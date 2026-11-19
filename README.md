@@ -112,7 +112,7 @@ This is the layout for slides. In the default layout, deleted content is shown o
 
 **Send a co-author what changed since the version they read.** Tag the commit you sent, `git tag sent-to-anna`, and later run `typst-redline paper.typ --since sent-to-anna`. The summary lists the commits in between.
 
-**What changed since you last read it.** When you have read the document, run `typst-redline paper.typ --mark-reviewed`; later, `typst-redline paper.typ --since reviewed` shows what changed since. The mark is the last commit, kept in a local git ref per document, printed when you set it; `git push` does not send it, and `git update-ref -d <that ref>` removes it. If the repository has a branch or tag named `reviewed`, `--since reviewed` means that instead and says so on stderr.
+**What changed since you last read it.** When you have read the document, run `typst-redline paper.typ --mark-reviewed`; later, `typst-redline paper.typ --since reviewed` shows what changed since. The mark is the last commit, kept in a local git ref per document, printed when you set it; `git push` does not send it, and `git update-ref -d <that ref>` removes it. If the repository has a branch or tag named `reviewed`, `--since reviewed` means that instead and says so on stderr. `typst-redline paper.typ --show-reviewed` prints the hash of the commit `--since reviewed` uses, or nothing.
 
 **What changed since a date.** Find the last commit before it and compare with that: `typst-redline paper.typ --since $(git rev-list -1 --before="2026-11-16 00:00" HEAD)`. Give a date, not a weekday name, which git reads loosely; if no commit is that old, the command prints nothing and `--since` reports a missing value.
 
@@ -160,27 +160,30 @@ To see what changed:
 
 1. Open the main `.typ` file of the document.
 2. Run *Typst Redline: Show changes since...* from the Command Palette.
-3. Pick what to compare with: *Last reviewed version* (once there is one), a commit, *Several commits...* or *Another file...*.
+3. Pick what to compare with: *Last reviewed version* (once there is one), a commit, or *Another file...*. With at least two commits, *Several commits...* lets you tick commits instead: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick.
 4. Pick the view. The one used last is at the top, so Enter repeats it.
 5. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
-6. When you have read it, run *Typst Redline: Mark as reviewed*. Next time, *Last reviewed version* compares with the commit you read.
+6. When you have read it, run *Typst Redline: Mark as reviewed*. It marks the commit that is checked out; uncommitted changes are not part of it. Next time, *Last reviewed version* shows what changed since that commit.
+
+Changes *since* a commit are those made after it. A commit picked *from* or *to*, in *Several commits...* and *Between two commits...*, has its own change included.
 
 The views:
 
-- *Marked PDF* ([picture](docs/gallery.md#text-formulas-and-figures)): the new version with the changes marked.
+- *Marked* ([picture](docs/gallery.md#text-formulas-and-figures)): the new version with the changes marked.
 - *Side by side* ([picture](docs/gallery.md#slides-side-by-side)): changed pages of the old and the new version next to each other. Needs Typst 0.14 or later.
-- *Coloured by commit* ([picture](docs/gallery.md#who-changed-what)) and *Side by side, coloured by commit*: each change in the colour of the commit that made it; with more than six commits, six colours for groups of commits. They are offered when there are at least two commits, or a commit and uncommitted changes, to colour.
-- *Several commits...* lets you tick commits: the changes since the oldest ticked one are shown, in a new colour after each ticked commit.
+- *Marked, coloured by commit* ([picture](docs/gallery.md#who-changed-what)) and *Side by side, coloured by commit*: each change in the colour of the commit that made it. These are offered for comparisons with commits.
 
-The run saves the open files of the project first, and its progress notification can cancel it. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.
+**Between two commits and steps.** *Between two commits...* asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. When a coloured view covers more than two commits, one more list offers *One colour per commit* (when there are at most six) or *2 steps* to *6 steps*, which split the commits into groups of about equal change. The choice used last is at the top.
+
+The run saves the open files of the project first, and its progress notification can cancel it. The PDF is written next to the file as `<name>.redline.pdf`. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.
 
 Settings, with their defaults:
 
-- `typstRedline.view`: `ask`. Set `marked`, `side-by-side`, `by-commit` or `side-by-side-by-commit` to skip step 4.
+- `typstRedline.view`: `ask`. Set `marked`, `side-by-side`, `by-commit` or `side-by-side-by-commit` to skip step 4; a coloured view set here takes one colour per commit, or six steps when there can be more than six commits.
 - `typstRedline.executable`: `typst-redline`, and `typstRedline.typst`: empty, for `typst` on `PATH`.
 - `typstRedline.root`: empty, for the workspace folder, or the git repository if the workspace folder contains it.
 - `typstRedline.openPdf`: `auto`; `editor` or `external` choose one place.
-- `typstRedline.extraArgs`: empty; further arguments, such as `["--no-moves"]` or `["--", "--font-path", "fonts"]`.
+- `typstRedline.extraArgs`: empty; further arguments, such as `["--no-moves"]` or `["--", "--font-path", "fonts"]`. The command sets `--since`, `--to`, `--layout`, `--each-commit` and `--steps` itself and refuses to run if this setting holds one of them.
 
 ## Claude Code
 
