@@ -4,7 +4,7 @@ Each picture is a page of a PDF that `typst-redline` made from the files linked 
 
 ## Text, formulas and figures
 
-Deleted words are struck out in red and new ones highlighted in blue; a new paragraph is blue. The old formula and plot are in dashed red frames, the plot crossed out, above the new ones in blue frames. The equation and the figure keep their numbers. Bars in the margin mark each changed line.
+Deleted words are struck out in red and new ones highlighted in blue; a new paragraph is blue. The old formula and plot are in dashed red frames, the plot crossed out, above the new ones in blue frames. The equation and the figure keep their numbers. Bars in the margin mark each changed line, with the number of each change next to them; the old and the new formula are one change and share a number.
 
 ```
 typst-redline old.typ new.typ
@@ -16,13 +16,13 @@ Files: [paper/old.typ](paper/old.typ), [paper/new.typ](paper/new.typ).
 
 ## Moved text
 
-The camera paragraph moved from *Setup* to *Analysis*, and its frame rate changed on the way. It is shown once, at its new place, with a grey bracket and a "moved" note in the margin; the edit is marked as usual. At the old place, a grey line names its first words and links to it.
+The camera paragraph moved from *Setup* to *Analysis*, and its frame rate changed on the way. It is shown once, at its new place, with a grey bracket in the margin, which here is too narrow for a "moved" note next to so short a bracket; the edit is marked as usual. At the old place, a grey line names its first words and links to it. Both places show the move's number, 1.
 
 ```
 typst-redline old.typ new.typ
 ```
 
-<img src="moved.png" width="560" alt="A page where a paragraph that moved to another section has a grey bracket and a moved note, its changed number marked, and a grey line at its old place">
+<img src="moved.png" width="560" alt="A page where a paragraph that moved to another section has a grey bracket and the number 1, its changed number marked, and a grey line with the same number at its old place">
 
 Files: [moved/old.typ](moved/old.typ), [moved/new.typ](moved/new.typ).
 
@@ -40,7 +40,7 @@ Files: the four commits are the folders [report/1](report/1) to [report/4](repor
 
 ## The summary page
 
-The last page of the same PDF. It counts the changes per section and lists what has no mark on the pages: here the report's new title, which the template prints from a string argument, and a new bibliography entry. Then the commits in the range, and the legend.
+The last page of the same PDF. It gives the numbers and the count of the changes in each section and lists, by number, what has no mark on the pages: here the report's new title, which the template prints from a string argument, and a new bibliography entry. Then the commits in the range, and the legend.
 
 <img src="report-summary.png" width="560" alt="The summary page with changed sections, the changed title in words, a new bibliography entry, three commits and the legend">
 

@@ -29,7 +29,7 @@ When the user only asks for the changes, the redline alone is enough: it is the 
 Diagnostics go to stderr; pass on any warning or note. Then read the last page of the PDF, the summary (`pdftotext` or reading the PDF works):
 
 - *No changes found between the two versions*: say so and do not send the PDF as if it showed changes. Check that you compared with the right revision.
-- *Changes by section*: the number after each section counts changes, not pages.
+- *Changes by section*: *No.* gives the numbers of the section's changes, which also stand next to their marks in the margin; the count after it counts changes, not pages. Refer to changes by these numbers when you report them.
 - *Not marked in place*: changes with no mark on the pages, such as a changed title string, a `#set` rule, a function body or a replaced data file. A `#set` rule or function can change the whole document. Tell the user about each in words; they are easy to miss in the PDF.
 - *What this PDF shows differently*: notes such as coarser marks or pages without bars. Mention them.
 

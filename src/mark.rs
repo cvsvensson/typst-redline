@@ -890,17 +890,19 @@ impl<'a> Writer<'a> {
             let code: String = self
                 .changes
                 .iter()
-                .filter(|c| here(c) && c.kind == ChangeKind::Unmarked)
-                .map(|c| format!("({}),", c.code_fields()))
+                .enumerate()
+                .filter(|(_, c)| here(c) && c.kind == ChangeKind::Unmarked)
+                .map(|(id, c)| format!("(id: {id}, {}),", c.code_fields()))
                 .collect();
             // Marks that show only a bar, with what they mark in words.
             let bars: String = self
                 .changes
                 .iter()
-                .filter(|c| here(c) && c.kind == ChangeKind::Ins && !c.what.is_empty())
-                .map(|c| {
+                .enumerate()
+                .filter(|(_, c)| here(c) && c.kind == ChangeKind::Ins && !c.what.is_empty())
+                .map(|(id, c)| {
                     format!(
-                        "({}),",
+                        "(id: {id}, {}),",
                         Change {
                             old: c.text.clone(),
                             ..c.clone()
