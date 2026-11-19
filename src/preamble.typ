@@ -897,7 +897,9 @@
   let mark = if unseen [#redline-tag("del", -0.8em, step: step, id: id)#body#context redline-tag("end", 0.3em, width: 0pt)] else {
     redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, whole: true, bare: bare, step: step, id: id)
   }
-  if item == none { mark } else { redline-item(item, st.del, mark) }
+  let mark = if item == none { mark } else { redline-item(item, st.del, mark) }
+  // Line numbers belong to the lines of the new version.
+  if apart and sys.version >= version(0, 12, 0) { set par.line(numbering: none); mark } else { mark }
   redline-restore(start)
   if apart { parbreak() } else if gap and not unseen { h(0.25em) }
 }
@@ -1780,6 +1782,7 @@
     let fits = measure(block(width: w - 2 * margin, text(size: size, fill: black, body))).height <= 1.5 * sheet - 2 * margin
     set page(width: w, height: if fits { auto } else { sheet }, margin: margin, flipped: false, columns: 1, fill: none, header: none, footer: none, numbering: none, foreground: none, background: none)
     set text(size: size, fill: black)
+    set par.line(numbering: none)
     // The empty column keeps the page as high as the document's.
     if fits { grid(columns: (0pt, 1fr), block(height: calc.max(0pt, h - 2 * margin)), body) } else { body }
   }
