@@ -104,8 +104,10 @@ fn moves_of(side: &[Placed]) -> (HashMap<u64, Vec<usize>>, Vec<Option<u64>>) {
 /// headings, or the place of a passage moved from or to it, are on other
 /// pages in the version with the content: the content fills pages of its
 /// own. Pages without changes that are drawn differently (`looks`) between
-/// the same pages drawn alike are paired as well, unless a page among them
-/// has a change, which can explain the difference. Consecutive pairs with
+/// the same pages drawn alike are paired as well: all together, or one by
+/// one if a page among them has a change, which shows them next to its own. Whether such a page shows a
+/// listed change or only reflows after a marked one cannot be told, so it is
+/// shown. Consecutive pairs with
 /// the same marks are steps of one slide; only the last is kept.
 pub fn pair_pages(
     old: &[Placed],
@@ -204,9 +206,18 @@ pub fn pair_pages(
     for seg in segments(looks.0, looks.1).into_iter().filter(|s| !s.equal) {
         let pages = |r: std::ops::Range<usize>| r.map(|i| i + 1).collect::<BTreeSet<_>>();
         let (o, n) = (pages(seg.old), pages(seg.new));
-        let changed = |side: &[Placed], pages: &BTreeSet<usize>| side.iter().any(|c| pages.contains(&c.page));
-        if !changed(old, &o) && !changed(new, &n) {
+        let changed = |side: &[Placed], p: usize| side.iter().any(|c| c.pages().contains(&p));
+        if !o.iter().any(|&p| changed(old, p)) && !n.iter().any(|&p| changed(new, p)) {
             groups.push((o, n));
+            continue;
+        }
+        let (o, n): (Vec<_>, Vec<_>) = (o.into_iter().collect(), n.into_iter().collect());
+        for i in 0..o.len().max(n.len()) {
+            let at = |v: &[usize]| v.get(i.min(v.len().saturating_sub(1))).copied();
+            let (po, pn) = (at(&o), at(&n));
+            if !po.is_some_and(|p| changed(old, p)) || !pn.is_some_and(|p| changed(new, p)) {
+                join(&mut groups, po, pn);
+            }
         }
     }
     // A page without a counterpart is shown next to the page with its
