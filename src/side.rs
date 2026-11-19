@@ -9,13 +9,20 @@ use crate::{Change, ChangeKind, History, PREAMBLE_PATH};
 
 /// A change as laid out in one version: its kind, an identity that is the
 /// same in both versions, the mark in this version's source that draws it,
-/// and its page.
+/// and its first and last page.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub kind: PlacedKind,
     pub id: u64,
     pub mark: usize,
     pub page: usize,
+    pub last: usize,
+}
+
+impl Placed {
+    fn pages(&self) -> std::ops::RangeInclusive<usize> {
+        self.page..=self.last.max(self.page)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -76,9 +83,14 @@ fn moves_of(side: &[Placed]) -> (HashMap<u64, Vec<usize>>, Vec<Option<u64>>) {
             open.last().copied()
         };
         if let Some(k) = key {
-            pages.entry(k).or_default().push(c.page);
+            pages.entry(k).or_default().extend(c.pages());
         }
         inside.push(key);
+    }
+    // A move's place spans the pages between its ends.
+    for p in pages.values_mut() {
+        let (first, a, b) = (p[0], *p.iter().min().unwrap(), *p.iter().max().unwrap());
+        *p = std::iter::once(first).chain((a..=b).filter(|&q| q != first)).collect();
     }
     (pages, inside)
 }
@@ -170,8 +182,7 @@ pub fn pair_pages(
             if os.is_empty() || ns.is_empty() {
                 for (in_old, c) in os.iter().map(|c| (true, c)).chain(ns.iter().map(|c| (false, c))) {
                     unpaired.push((in_old, *c));
-                    let page = Some(c.page);
-                    join(&mut groups, page.filter(|_| in_old), page.filter(|_| !in_old));
+                    join(&mut groups, c.pages().filter(|_| in_old), c.pages().filter(|_| !in_old));
                 }
             }
             for (i, c) in os.iter().enumerate() {
@@ -182,8 +193,8 @@ pub fn pair_pages(
                         let alone = elsewhere(ins, absent, real) || elsewhere(!ins, real, absent);
                         join(
                             &mut groups,
-                            (!(alone && ins)).then_some(c.page),
-                            (!(alone && !ins)).then_some(d.page),
+                            c.pages().filter(|_| !(alone && ins)),
+                            d.pages().filter(|_| !(alone && !ins)),
                         );
                     }
                 }
@@ -270,12 +281,16 @@ pub fn pair_pages(
     (pairs, unpaired)
 }
 
-/// Put old page `o` and new page `n` into one group, merging the groups
-/// that hold either.
-fn join(groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>, o: Option<usize>, n: Option<usize>) {
+/// Put old pages `o` and new pages `n` into one group, merging the groups
+/// that hold any of them.
+fn join(
+    groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>,
+    o: impl IntoIterator<Item = usize>,
+    n: impl IntoIterator<Item = usize>,
+) {
     let mut group: (BTreeSet<usize>, BTreeSet<usize>) = (o.into_iter().collect(), n.into_iter().collect());
     groups.retain(|(go, gn)| {
-        let joined = o.is_some_and(|o| go.contains(&o)) || n.is_some_and(|n| gn.contains(&n));
+        let joined = !group.0.is_disjoint(go) || !group.1.is_disjoint(gn);
         if joined {
             group.0.extend(go);
             group.1.extend(gn);
@@ -291,12 +306,20 @@ fn join(groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>, o: Option<usize>, 
 /// than those the summary of the new version lists, and the commits if
 /// there are any.
 pub fn composite(old: &Side, new: &Side, moved: bool, unmarked: &[Change], history: &History) -> String {
-    let (pairs, unpaired) = pair_pages(
+    let (mut pairs, mut unpaired) = pair_pages(
         old.changes,
         new.changes,
         (old.headings, new.headings),
         (old.looks, new.looks),
     );
+    // A change at the end of a version without pages of its own, such as an
+    // empty file, is placed on the summary after them.
+    for p in &mut pairs {
+        p.old.retain(|&q| q <= old.pages);
+        p.new.retain(|&q| q <= new.pages);
+    }
+    pairs.retain(|p| !p.old.is_empty() || !p.new.is_empty());
+    unpaired.retain(|(in_old, c)| c.page <= if *in_old { old.pages } else { new.pages });
     let list = |v: &[usize]| format!("({})", v.iter().map(|p| format!("{p},")).collect::<String>());
     let side = |s: &Side| {
         format!(

@@ -2464,6 +2464,7 @@ fn side_by_side_pairs_pages_with_the_same_changes() {
         id,
         mark: id as usize,
         page,
+        last: page,
     };
     let old = [
         c(false, 1, 1),
@@ -2506,6 +2507,7 @@ fn side_by_side_pairs_changes_written_differently() {
         id,
         mark: id as usize,
         page,
+        last: page,
     };
     let old = [c(true, 5, 1), c(true, 6, 2), c(true, 7, 3), c(false, 1, 4)];
     let new = [
@@ -2536,6 +2538,7 @@ fn side_by_side_shows_an_inserted_or_deleted_page_without_a_counterpart() {
         id,
         mark: id as usize,
         page,
+        last: page,
     };
     let pages = |ins, anchors| {
         let (pairs, _) = pair_pages(&[c(ins, 7, 3)], &[c(ins, 7, 3)], anchors, (&[], &[]));
@@ -2555,6 +2558,7 @@ fn side_by_side_pairs_slides_by_their_headings_where_the_versions_mark_them_diff
         id,
         mark: id as usize,
         page,
+        last: page,
     };
     // Old slides: title, "First", "Changes" in two steps, "Box". New slides:
     // title, "Changes" in two steps, "Box", "New". Each version's own
@@ -2607,6 +2611,7 @@ fn side_by_side_shows_a_page_inserted_after_a_moved_one_without_a_counterpart() 
         id,
         mark: id as usize,
         page,
+        last: page,
     };
     let (mv, ins) = (PlacedKind::Move, PlacedKind::Ins);
     // The old version marks the place of new page 4 on page 3, whose moved
@@ -2694,6 +2699,71 @@ fn side_by_side_shows_changed_pages() {
     assert!(out.status.success(), "{stderr}");
     // The overview, the one changed pair and the summary.
     assert_eq!(pdf_pages(&dir.join("out.pdf")), 3);
+}
+
+/// The pairs of pages that a side-by-side run in `dir` shows, as the
+/// composite source lists them.
+fn shown_pairs(dir: &Path) -> Vec<String> {
+    let src = marked(
+        dir,
+        &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
+        ".redline-side-by-side.typ",
+    );
+    src.lines()
+        .filter_map(|l| Some(l.trim().strip_prefix("(old: ")?.split(", steps").next()?.to_string()))
+        .collect()
+}
+
+#[test]
+fn side_by_side_shows_the_pages_of_a_changed_page_call() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-page-call");
+    for side in ["old", "new"] {
+        let src = read_fixture("changed-page-call", side, "main.typ").unwrap();
+        std::fs::write(dir.join(format!("{side}.typ")), src).unwrap();
+    }
+    assert_eq!(shown_pairs(&dir), ["(2,), new: (2,)"]);
+}
+
+#[test]
+fn side_by_side_shows_every_page_of_a_long_insertion() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-long");
+    let long = (1..25)
+        .map(|i| format!("Inserted sentence number {i} keeps running. "))
+        .collect::<String>();
+    let doc = |middle: &str| format!("#set page(width: 10cm, height: 6cm)\nIntro.\n\n{middle}\n\nEnd.\n");
+    std::fs::write(dir.join("old.typ"), doc("")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc(&long)).unwrap();
+    assert_eq!(shown_pairs(&dir), ["(1,), new: (1,2,3,)"]);
+}
+
+#[test]
+fn summary_pages_do_not_count_towards_the_number_of_pages() {
+    let doc = |w: &str| {
+        format!("The {w} word.\n#pagebreak()\nEnd.\n#context [#metadata(counter(page).final().first())<probe>]\n")
+    };
+    let r = redline_of(&doc("old"), &doc("new"));
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let Some(dir) = compile("summary-page-count", &files) else {
+        return;
+    };
+    assert_eq!(query(&dir, "<probe>"), "[2]");
+}
+
+#[test]
+fn side_by_side_shows_no_page_for_an_empty_file() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-empty-new");
+    std::fs::write(dir.join("old.typ"), "= Doc\nLine one.\n").unwrap();
+    std::fs::write(dir.join("new.typ"), "").unwrap();
+    assert_eq!(shown_pairs(&dir), ["(1,), new: ()"]);
 }
 
 #[test]
@@ -2814,6 +2884,7 @@ fn side_by_side_pairs_changes_around_a_move_in_either_order() {
         id,
         mark: id as usize,
         page,
+        last: page,
     };
     use PlacedKind::{Ins, Move};
     // Text moved from page 2 to page 4 with an insertion inside it, and an

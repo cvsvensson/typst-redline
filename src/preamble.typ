@@ -307,6 +307,8 @@
     or repr(c.func()) == "styled" and redline-inline(c.child)
 )
 
+#let redline-styled = [#set text(red); a].func()
+
 // The parts of a mark with its tags and frames: `style` applied to each run
 // of parts that are not framed, `frame-style` to each framed part that shows
 // text. A drawing, an image, or content with colours of its own is drawn as
@@ -326,6 +328,27 @@
   let bare-end = not block and bare in ("end", "both")
   let end-tag = if bare-end { context redline-tag("end", 0.3em, width: 0pt) } else { redline-tag("end", 0.3em) }
   let (lead, ch, trail) = redline-parts(body)
+  // A page call makes pages of its own, so it is marked inside them: a tag
+  // before it is on the page before, and one after it starts another page.
+  // Typst 0.11 makes a page element of it, later versions its body between
+  // page breaks, with styles.
+  let c = ch.at(0, default: none)
+  if block and ch.len() == 1 and c.func() in (page, redline-styled) {
+    let mark = b => redline-mark(kind, b, block, style, stroke, frame-style: frame-style, plain: plain, whole: whole, step: step, id: id)
+    if c.func() == page {
+      let fs = c.fields()
+      let body = fs.remove("body")
+      return lead + page(..fs, mark(body)) + trail
+    }
+    let parts = if c.child.func() == [].func() { c.child.children } else { () }
+    let breaks = x => x.func() == pagebreak or repr(x.func()) == "flush"
+    let i = parts.position(x => not breaks(x))
+    if i != none and i > 0 and parts.last().func() == pagebreak {
+      let j = parts.len() - 1
+      while breaks(parts.at(j - 1)) { j -= 1 }
+      return lead + redline-styled(parts.slice(0, i).join() + mark(parts.slice(i, j).join()) + parts.slice(j).join(), c.styles) + trail
+    }
+  }
   let n = ch.len()
   let framed = ch.map(c => redline-framed(c, block and n == 1))
   let roomless = block and ch.all(redline-roomless)
@@ -1610,19 +1633,36 @@
 // pages before the summary and of the summary's pages, the ids of the marks
 // that were not laid out, each change's kind (0
 // deleted, 1 inserted, 3 the start or end of a move's place), identity, mark
-// (its id plus one, or 0) and page, and the same for each heading (kind 2),
+// (its id plus one, or 0), first and last page, and the same for each heading (kind 2),
 // whose identity is its text, all as one flat array of integers.
 #let redline-layout() = {
   let drawn = query(<redline-page>).map(m => m.location().page())
   let unbarred = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location().page()).dedup().filter(p => p not in drawn)
   redline-ints(unbarred, <redline-unbarred>)
   if redline-side != none {
-    let changes = query(<redline-change>).map(m => {
+    // The pages where the marks of each id end, in order: the tags of a mark
+    // are the visible tags that follow each other, its id on the first.
+    let tags = query(<redline-tag>)
+    let ends = (:)
+    for i in range(calc.quo(tags.len(), 2)) {
+      let id = redline-value(tags.at(2 * i)).at(6, default: none)
+      if id != none { ends.insert(str(id), ends.at(str(id), default: ()) + (tags.at(2 * i + 1).location().page(),)) }
+    }
+    let seen = (:)
+    let changes = ()
+    for m in query(<redline-change>) {
       let (kind, identity, id, ..) = redline-value(m)
       let start = if kind == "move" { if id != none { redline-move-start(id) } } else { redline-start-at(m.location(), id) }
-      ((del: 0, ins: 1, move: 3).at(kind), identity, if id == none { 0 } else { id + 1 }, if start != none { start.page() } else { m.location().page() })
-    })
-    let headings = query(heading).map(h => (2, redline-hash(3, h.body), 0, h.location().page()))
+      let first = if start != none { start.page() } else { m.location().page() }
+      let last = first
+      if id != none and kind != "move" {
+        let k = seen.at(str(id), default: 0)
+        seen.insert(str(id), k + 1)
+        last = calc.max(first, ends.at(str(id), default: ()).at(k, default: first))
+      }
+      changes.push(((del: 0, ins: 1, move: 3).at(kind), identity, if id == none { 0 } else { id + 1 }, first, last))
+    }
+    let headings = query(heading).map(h => (2, redline-hash(3, h.body), 0, h.location().page(), h.location().page()))
     let triples = (..changes, ..headings).flatten()
     let lost = query(<redline-lost>).map(redline-value).flatten()
     let (start, end) = (query(<redline-summary>), query(<redline-summary-end>)).map(q => q.map(m => m.location().page()))
@@ -1795,6 +1835,12 @@
       redline-marks-legend(info)
     }
     redline-meta(none, <redline-summary-end>)
+    // The summary's pages do not count: the page counter ends where the
+    // document does, for a footer that shows the number of pages.
+    context {
+      let (s, e) = (query(<redline-summary>), query(<redline-summary-end>))
+      if s.len() > 0 and e.len() > 0 { counter(page).update(n => n - (e.first().location().page() - s.first().location().page() + 1)) }
+    }
   })
 } else {
   context {

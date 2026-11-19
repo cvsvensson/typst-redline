@@ -1502,9 +1502,9 @@ fn compose(
             }
         }
         let (lost, rest) = counted(rest);
-        let (quads, _) = counted(rest);
+        let (placed, _) = counted(rest);
         let (mut changes, mut headings) = (vec![], vec![]);
-        for &[kind, id, mark, page] in quads.as_chunks::<4>().0 {
+        for &[kind, id, mark, page, last] in placed.as_chunks::<5>().0 {
             let kind = match kind {
                 0 => PlacedKind::Del,
                 1 => PlacedKind::Ins,
@@ -1519,6 +1519,7 @@ fn compose(
                 id: id as u64,
                 mark,
                 page,
+                last,
             });
         }
         Ok((*pages, *summary, unbarred.to_vec(), lost.to_vec(), changes, headings))
@@ -1536,7 +1537,7 @@ fn compose(
             l.1 = l.1.min(count);
             l.0 = count - l.1;
             let last = l.0.max(1);
-            let pages = l.4.iter_mut().map(|c| &mut c.page);
+            let pages = l.4.iter_mut().flat_map(|c| [&mut c.page, &mut c.last]);
             pages
                 .chain(l.5.iter_mut().map(|h| &mut h.1))
                 .for_each(|p| *p = (*p).min(last));
