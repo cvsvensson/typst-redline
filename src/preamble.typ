@@ -1719,7 +1719,8 @@
   }
   // The summary's pages, as many next to each other as the width of the
   // pages above holds.
-  let across = calc.max(1, calc.floor((width + gap) / (wn + gap)))
+  let ws = if n.summary > 0 { measure(image(n.pdf, page: n.pages + 1)).width } else { wn }
+  let across = calc.max(1, calc.floor((width + gap) / (ws + gap)))
   for k in range(0, n.summary, step: across) {
     pagebreak()
     let ks = range(k, calc.min(k + across, n.summary))
