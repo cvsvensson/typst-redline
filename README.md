@@ -112,7 +112,7 @@ This is the layout for slides. In the default layout, deleted content is shown o
 
 **Send a co-author what changed since the version they read.** Tag the commit you sent, `git tag sent-to-anna`, and later run `typst-redline paper.typ --since sent-to-anna`. The summary lists the commits in between.
 
-**What changed since you last read it.** When you have read the document, run `typst-redline paper.typ --mark-reviewed`; later, `typst-redline paper.typ --since reviewed` shows what changed since. The mark is the last commit, kept in a local git ref per document, printed when you set it; `git push` does not send it, and `git update-ref -d <that ref>` removes it. If the repository has a branch or tag named `reviewed`, `--since reviewed` means that instead and says so on stderr. `typst-redline paper.typ --show-reviewed` prints the hash of the commit `--since reviewed` uses, or nothing.
+**What changed since you last read it.** When you have read the document, run `typst-redline paper.typ --mark-reviewed`; later, `typst-redline paper.typ --since reviewed` shows what changed since. The mark is the last commit, kept in a local git ref per document, printed when you set it; `git push` does not send it, and `git update-ref -d <that ref>` removes it. If the repository has a branch or tag named `reviewed`, `--since reviewed` means that instead and says so on stderr. `typst-redline paper.typ --show-reviewed` prints the hash of the commit `--since reviewed` uses, or nothing if there is none.
 
 **What changed since a date.** Find the last commit before it and compare with that: `typst-redline paper.typ --since $(git rev-list -1 --before="2026-11-16 00:00" HEAD)`. Give a date, not a weekday name, which git reads loosely; if no commit is that old, the command prints nothing and `--since` reports a missing value.
 
@@ -160,7 +160,7 @@ To see what changed:
 
 1. Open the main `.typ` file of the document.
 2. Run *Typst Redline: Show changes since...* from the Command Palette, or from the right-click menu of a `.typ` file in the Explorer, the editor or its tab.
-3. Press Enter for the changes since the newest commit, or since the last reviewed version once there is one; or pick another commit or *Another file...*. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
+3. Press Enter for the changes since the newest commit that touches the project, or since the last reviewed version once there is one; or pick another commit or *Another file...*. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
 4. When you have read it, run *Typst Redline: Mark as reviewed*. It marks the commit that is checked out; uncommitted changes are not part of it. Next time, *Last reviewed version* shows what changed since that commit.
 
 **The view.** The first entry of the list, *View: Marked* at first, shows how the changes are shown. Picking it changes the view and returns to the list; the workspace keeps the view until you change it.
@@ -171,7 +171,7 @@ To see what changed:
 
 **More ways to compare.** Changes *since* a commit are those made after it; a commit picked *from* or *to* has its own change included.
 
-- *Several commits...* (with at least two commits) lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view.
+- *Several commits...* lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view.
 - *Between two commits...* asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. It uses the view, colours included.
 
 The run saves the open files of the project first, and its progress notification can cancel it. The PDF is written next to the file as `<name>.redline.pdf`. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.

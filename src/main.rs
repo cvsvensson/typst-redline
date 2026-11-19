@@ -28,7 +28,7 @@ under refs/typst-redline/reviewed/, and makes no PDF. --since reviewed then
 compares with that commit, unless git already resolves `reviewed` as a branch,
 tag or other revision, which then takes its place. --show-reviewed prints the
 hash of the commit that --since reviewed compares with, or nothing if there is
-none.
+none; outside a git repository it is an error.
 
 Options:
   -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
@@ -197,6 +197,9 @@ fn parse_args() -> Result<Parsed, String> {
     }
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
         return Err("--to cannot be combined with a range in --since".into());
+    }
+    if a.mark_reviewed && a.show_reviewed {
+        return Err("give one of --mark-reviewed and --show-reviewed".into());
     }
     for (set, opt) in [
         (a.mark_reviewed, "--mark-reviewed"),

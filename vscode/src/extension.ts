@@ -226,8 +226,8 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promi
     if (reviewed) {
       targets.push({
         label: "$(eye) Last reviewed version",
-        description: `${date.trim()} \u00b7 marked with Mark as reviewed`,
-        base: { rev: reviewed, what: "since the last reviewed version" },
+        description: date.trim(),
+        base: { rev: "reviewed", what: "since the last reviewed version" },
       });
     }
     targets.push(
@@ -252,12 +252,12 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promi
   }
   targets.push({ label: "$(file) Another file...", description: "compare with a .typ file of your choice", base: "other" });
   for (;;) {
-    const viewItem: BaseItem = { label: `$(settings) View: ${viewName(currentView())}`, description: "change...", base: "view" };
+    const viewItem: BaseItem = { label: `$(settings) View: ${viewName(currentView())}`, description: "change: marked, side by side, coloured by commit", base: "view" };
     const items = [viewItem, { label: "", kind: vscode.QuickPickItemKind.Separator }, ...targets];
     const [choice] = (await pick(items, {
       title: "Typst Redline: Show changes since...",
       placeholder: `${why ? `${why} ` : ""}Compare the file as it is now with...`,
-      active: targets[0],
+      active: targets.find((t) => t.kind !== vscode.QuickPickItemKind.Separator),
     })) ?? [undefined];
     const base = choice?.base;
     if (base === "view") {
@@ -265,7 +265,7 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promi
       continue;
     }
     if (base === "several" || base === "between") {
-      const picked = await (base === "several" ? pickSeveral(list) : pickBetween(list));
+      const picked = await (base === "several" ? pickSeveral(list, dir) : pickBetween(list, dir));
       if (picked === "back") {
         continue;
       }
@@ -286,10 +286,15 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promi
 // The most steps the CLI has colours for.
 const maxColours = 6;
 
+// The parents' short hashes, which name the steps in the PDF.
+async function parents(dir: string, commits: Commit[]) {
+  return Promise.all(commits.map(async (c) => (await git(dir, "rev-parse", "--short", `${c.hash}^`)).trim()));
+}
+
 // Commits picked "from" include their own change, so the base is their parent. A commit
 // without a parent in the repository, the first or the edge of a shallow clone, cannot be
 // picked so.
-async function pickSeveral(list: Commit[]): Promise<Base | "back" | undefined> {
+async function pickSeveral(list: Commit[], dir: string): Promise<Base | "back" | undefined> {
   let items = list.filter((c) => !c.root).map(commitItem);
   for (;;) {
     const ticked = await pick(items, {
@@ -308,16 +313,13 @@ async function pickSeveral(list: Commit[]): Promise<Base | "back" | undefined> {
       items = items.map((i) => ({ ...i, picked: ticked.includes(i) }));
       continue;
     }
-    const [oldest, ...later] = ticked.map((i) => i.c).reverse();
-    return {
-      rev: `${oldest.hash}^`,
-      what: `from ${quote(oldest)} on`,
-      ends: later.length ? later.map((c) => `${c.hash}^`) : undefined,
-    };
+    const commits = ticked.map((i) => i.c).reverse();
+    const [rev, ...ends] = await parents(dir, commits);
+    return { rev, what: `from ${quote(commits[0])} on`, ends: ends.length ? ends : undefined };
   }
 }
 
-async function pickBetween(list: Commit[]): Promise<Base | undefined> {
+async function pickBetween(list: Commit[], dir: string): Promise<Base | undefined> {
   const [from] = (await pick(list.filter((c) => !c.root).map(commitItem), {
     title: "Typst Redline: changes from...",
     placeholder: "Pick the oldest commit to show; its own change is included",
@@ -329,7 +331,7 @@ async function pickBetween(list: Commit[]): Promise<Base | undefined> {
     title: `Typst Redline: changes from ${quote(from.c)} to...`,
     placeholder: "Pick the newest commit to show; its own change is included",
   })) ?? [undefined];
-  return to && { rev: `${from.c.hash}^`, to: to.c.hash, what: `from ${quote(from.c)} to ${quote(to.c)}` };
+  return to && { rev: (await parents(dir, [from.c]))[0], to: to.c.hash, what: `from ${quote(from.c)} to ${quote(to.c)}` };
 }
 
 type View = { layout: "marked" | "side-by-side"; colours: "none" | "each" | number };
@@ -340,7 +342,11 @@ const layouts = [
 ] as const;
 
 function currentView(): View {
-  return state.get<View>("view") ?? { layout: "marked", colours: "none" };
+  const v = state.get<View>("view");
+  const valid =
+    layouts.some((l) => l.layout === v?.layout) &&
+    (v?.colours === "none" || v?.colours === "each" || [2, 3, 4, 5, 6].includes(v?.colours as number));
+  return valid ? v! : { layout: "marked", colours: "none" };
 }
 
 function viewName(v: View) {
@@ -415,12 +421,12 @@ function checkExtraArgs(extra: string[]) {
 
 // Why the CLI cannot colour these changes by commit, in the terms of the command, or
 // undefined for other errors.
-function noColours(message: string, base: Base) {
+function noColours(message: string) {
   if (/has nothing to colour/.test(message)) {
-    return `no commit ${base.what} changes this document`;
+    return "no commit in this range changes this document";
   }
   if (/to be an ancestor of/.test(message)) {
-    return `the commit is not an earlier commit of this branch`;
+    return "the commit is not an earlier commit of this branch";
   }
 }
 
@@ -485,7 +491,7 @@ async function showChanges(clicked?: vscode.Uri) {
           return await runCli(doc, args(viewArgs(view, base, true)), token);
         } catch (e) {
           const message = (e as Error).message;
-          const why = coloured && noColours(message, base);
+          const why = coloured && noColours(message);
           const more = coloured && /colours at most \d+ steps/.test(message);
           if (!why && !more) {
             throw e;
@@ -494,7 +500,7 @@ async function showChanges(clicked?: vscode.Uri) {
           if (more) {
             const layout = viewArgs(view, base, false);
             vscode.window.showInformationMessage(
-              `Typst Redline: more than ${maxColours} commits, so they are coloured in ${maxColours} steps.`,
+              `Typst Redline: more than ${maxColours} colours would be needed, so the commits are coloured in ${maxColours} steps.`,
             );
             return await runCli(doc, args([...layout, "--steps", String(maxColours)]), token);
           }
