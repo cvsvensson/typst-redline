@@ -520,7 +520,7 @@ fn fallback_note(fallbacks: &[&str]) -> String {
     let parts: Vec<&str> = fallbacks
         .iter()
         .map(|f| match *f {
-            "states" => "state updates in deleted content are kept",
+            "states" => "state and counter updates in deleted content are kept",
             "frames" => "changed content computed at layout is not framed",
             "names" => "deleted code is shown by name",
             _ => "changed code is marked whole",

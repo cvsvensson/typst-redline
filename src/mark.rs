@@ -1075,9 +1075,8 @@ impl<'a> Writer<'a> {
                 (_, false) => format!("moves: {moves}, "),
                 _ => format!("moves: {moves}, moved: true, "),
             };
-            let before = if std::ptr::eq(s, &first) { "before: true, " } else { "" };
             entries.push_str(&format!(
-                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, {moved}{before}deleted: {}, new: {}, code: ({code}), bars: ({bars}), marks: ({marks})),\n",
+                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, {moved}deleted: {}, new: {}, code: ({code}), bars: ({bars}), marks: ({marks})),\n",
                 typst_str(&s.file),
                 s.level,
                 s.title,
@@ -1085,12 +1084,19 @@ impl<'a> Writer<'a> {
                 s.new,
             ));
         }
+        let sections: String = self
+            .sections
+            .iter()
+            .filter(|s| !s.deleted)
+            .filter_map(|s| s.target.as_ref())
+            .map(|l| format!("<{l}>, "))
+            .collect();
         let p = &self.ctx.prefix;
         let history = history
             .to_typst(old_label, new_label)
             .map_or(String::new(), |h| format!("  history: {h},\n"));
         format!(
-            "{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},{}\n  entries: (\n{entries}  ),\n  bib: {},\n{history}))",
+            "{p}-summary((\n  old: {}, new: {}, ins: {}, del: {},{}\n  sections: ({sections}),\n  entries: (\n{entries}  ),\n  bib: {},\n{history}))",
             typst_str(old_label),
             typst_str(new_label),
             count(&|c| c.kind == ChangeKind::Ins),
@@ -1891,7 +1897,7 @@ impl<'a> Writer<'a> {
         let top = !list && n.block && n.nodes.get(1).is_some_and(|c| c.kind() == K::FuncCall);
         let outer = std::mem::replace(&mut self.content_code, top);
         let outer_bound = self.hoisted.take();
-        let ok = self.diff_code_nodes(&o.nodes, &n.nodes, list, None);
+        let ok = self.diff_code_nodes(&o.nodes, &n.nodes, list, None, "");
         self.content_code = outer;
         let Some(arg) = std::mem::replace(&mut self.hoisted, outer_bound).filter(|_| ok) else {
             return ok;
@@ -1911,13 +1917,20 @@ impl<'a> Writer<'a> {
     /// Labels, comments and spaces are written as in `n` and compared only
     /// for the summary: they do not show. `call` is the code before the
     /// nodes if they are the arguments of a call: what is called, or a set
-    /// rule up to its arguments.
-    fn diff_code_nodes(&mut self, o: &[SyntaxNode], n: &[SyntaxNode], list: bool, call: Option<&str>) -> bool {
+    /// rule up to its arguments, from `start` on.
+    fn diff_code_nodes(
+        &mut self,
+        o: &[SyntaxNode],
+        n: &[SyntaxNode],
+        list: bool,
+        call: Option<&str>,
+        start: &str,
+    ) -> bool {
         let (at, count) = (self.out.len(), self.changes.len());
         let trivia = |x: &&SyntaxNode| matches!(x.kind(), K::Label | K::LineComment | K::BlockComment | K::Space);
         let mut rest = o.iter().filter(|x| !trivia(x));
         let mut ok = true;
-        let mut before = String::new();
+        let mut before = start.to_string();
         // The body of a call that also takes content by name, such as a
         // figure's next to its caption: its only positional argument.
         let positional = |x: &SyntaxNode| x.cast::<ast::Expr>().is_some();
@@ -1997,7 +2010,13 @@ impl<'a> Writer<'a> {
             return same;
         }
         let call = (n.kind() == K::Args).then_some(before);
-        self.diff_code_nodes(&children(o), &children(n), list && n.kind() != K::Closure, call)
+        // A set rule that a show rule applies is named with it.
+        let start = if n.kind() == K::SetRule && before.starts_with("show") {
+            before
+        } else {
+            ""
+        };
+        self.diff_code_nodes(&children(o), &children(n), list && n.kind() != K::Closure, call, start)
     }
 
     /// Write the changed body `n` of a call as it is and keep the old body

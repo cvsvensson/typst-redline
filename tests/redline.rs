@@ -3242,3 +3242,109 @@ fn steps_and_each_commit_together_are_a_usage_error() {
     let out = cli(&dir, &["main.typ", "--steps", "3", "--each-commit"]);
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn deletion_in_a_document_with_numbered_lines_is_marked_in_full() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("numbered-lines");
+    std::fs::write(dir.join("old.typ"), "#set par.line(numbering: \"1\")\nSome old text.\n").unwrap();
+    std::fs::write(dir.join("new.typ"), "#set par.line(numbering: \"1\")\nSome new text.\n").unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ", "-o", "out.pdf"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && !stderr.contains("note:"), "{stderr}");
+}
+
+/// The marked pages of `old` against `new` as glyphs, with `preamble`.
+fn proof_glyphs(name: &str, old: &str, new: &str) -> Option<Vec<Vec<Glyph>>> {
+    let r = redline_of(old, new);
+    glyphs(name, &[r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat())
+}
+
+#[test]
+fn change_numbers_go_to_the_margin_that_has_room() {
+    // A header, a left column next to a margin too narrow for a number and
+    // a middle column: each change's number stands in the right margin.
+    let page =
+        "#set page(width: 14cm, height: 8cm, margin: (left: 0.3cm, rest: 1.5cm), columns: 3, header: [Head WORD])\n";
+    let text = |w: &str| {
+        format!(
+            "{page}Left {w} column.\n#colbreak()\nMiddle column.\n\nIts {w} second paragraph.\n#colbreak()\nRight column.\n"
+        )
+    };
+    let Some(pages) = proof_glyphs(
+        "margin-numbers",
+        &text("old").replace("WORD", "old"),
+        &text("new").replace("WORD", "new"),
+    ) else {
+        return;
+    };
+    let cm = 72.0 / 2.54;
+    let mut rows: Vec<i64> = pages[0]
+        .iter()
+        .filter(|g| g.x > 12.5 * cm)
+        .map(|g| g.y.round() as i64)
+        .collect();
+    rows.sort();
+    rows.dedup();
+    assert_eq!(rows.len(), 3, "{rows:?}");
+}
+
+/// The summary's rows of changes by section, as (name, changes, pages).
+fn section_rows(name: &str, old: &str, new: &str) -> Option<String> {
+    let r = redline_of(old, new);
+    let probe = "\n#let redline-summary(info) = context [#metadata(redline-section-rows(info, info.entries.map(e => ()), redline-numbering(info.entries)).map(r => (redline-plain(r.name).trim(), redline-plain(r.what), r.pages)))<probe>]\n";
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.to_string() + probe)]].concat();
+    Some(query(&compile(name, &files)?, "<probe>"))
+}
+
+#[test]
+fn summary_rows_are_the_headings_laid_out_with_the_pages_of_their_changes() {
+    // The header and footer stay with the code that sets them, a heading
+    // written as a call is a section, and a section's pages are those of
+    // its changes.
+    let doc = |w: &str| {
+        format!(
+            "#set page(height: 8cm, header: [Head {w}], footer: [Foot {w}])\n= Alpha\nOne {w}.\n#pagebreak()\nTwo {w}.\n#heading[Beta]\nThree {w}.\n"
+        )
+    };
+    if let Some(rows) = section_rows("section-rows", &doc("old"), &doc("new")) {
+        assert_eq!(
+            rows,
+            r#"[[["Startofthedocument","2changes",[1]],["Alpha","2changes",[1,2]],["Beta","1change",[2]]]]"#
+        );
+    }
+}
+
+#[test]
+fn picture_inside_a_mark_of_text_is_framed() {
+    let files = [
+        (
+            "a.svg".into(),
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"10\"/>".into(),
+        ),
+        (PREAMBLE_PATH.into(), PREAMBLE.into()),
+        (
+            "main.typ".into(),
+            format!(
+                "#import \"/{PREAMBLE_PATH}\": redline-framed
+#metadata(redline-framed(image(\"a.svg\"), false))<probe>
+"
+            ),
+        ),
+    ];
+    if let Some(dir) = compile("picture-in-text", &files) {
+        assert_eq!(query(&dir, "<probe>"), "[true]");
+    }
+}
+
+#[test]
+fn set_rule_of_a_show_rule_is_listed_with_it() {
+    let r = redline_of(
+        "#show emph: set text(fill: red)\n_a_\n",
+        "#show emph: set text(fill: blue)\n_a_\n",
+    );
+    let texts: Vec<&str> = r.changes.iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(texts, ["show emph: set text(fill: blue)"]);
+}
