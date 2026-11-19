@@ -16,7 +16,27 @@ With `--layout side-by-side`, the old page is shown next to the new one instead:
 
 ## Install
 
-You need [Typst](https://github.com/typst/typst#installation), [git](https://git-scm.com/downloads) and [Rust](https://rustup.rs). Then:
+`typst-redline` runs the [`typst`](https://github.com/typst/typst#installation) on your `PATH` to compile, and [git](https://git-scm.com/downloads) for comparisons with git revisions; comparing two files needs no git.
+
+Download the archive for your platform from the [Releases page](https://github.com/cvsvensson/typst-redline/releases):
+
+| Platform | Archive |
+|---|---|
+| Linux x86_64 | `typst-redline-x86_64-unknown-linux-musl.tar.gz` |
+| Linux ARM64 | `typst-redline-aarch64-unknown-linux-musl.tar.gz` |
+| macOS Apple silicon | `typst-redline-aarch64-apple-darwin.tar.gz` |
+| macOS Intel | `typst-redline-x86_64-apple-darwin.tar.gz` |
+| Windows x86_64 | `typst-redline-x86_64-pc-windows-msvc.zip` |
+
+Unpack it and put `typst-redline` (`typst-redline.exe` on Windows) in a folder on your `PATH`, such as `~/.local/bin`. The Linux binaries are statically linked and need no particular distribution. Each archive has a `.sha256` checksum file next to it. On Linux and macOS, one command does it, here for Apple silicon:
+
+```sh
+curl -sSL https://github.com/cvsvensson/typst-redline/releases/latest/download/typst-redline-aarch64-apple-darwin.tar.gz   | tar -xz -C ~/.local/bin typst-redline
+```
+
+The macOS binaries are not notarized. If you download one with a browser, macOS marks it as quarantined and refuses to run it; `xattr -d com.apple.quarantine ~/.local/bin/typst-redline` removes the mark. Files downloaded with `curl` are not marked.
+
+With [Rust](https://rustup.rs), you can instead build it from source:
 
 ```sh
 cargo install --git https://github.com/cvsvensson/typst-redline

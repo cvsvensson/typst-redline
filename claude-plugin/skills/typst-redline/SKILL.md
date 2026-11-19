@@ -40,4 +40,4 @@ curl -sSL https://github.com/cvsvensson/typst-redline/releases/latest/download/t
   | tar -xz -C ~/.local/bin typst-redline
 ```
 
-Other platforms use the same release pages with their target name (`aarch64-apple-darwin`, `x86_64-pc-windows-msvc` as `.zip`, ...). If no release fits, `cargo install --git https://github.com/cvsvensson/typst-redline`.
+Other platforms use the same release page with their target name: `aarch64-unknown-linux-musl`, `aarch64-apple-darwin`, `x86_64-apple-darwin`, and `x86_64-pc-windows-msvc` as a `.zip`. If no release fits, `cargo install --git https://github.com/cvsvensson/typst-redline`.
