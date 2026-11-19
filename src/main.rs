@@ -1846,46 +1846,72 @@ fn pick(
     if file_only {
         return Ok(Some(vec![file]));
     }
-    let log = [
-        "log",
-        "--first-parent",
-        "-n",
-        "15",
-        "--date=short",
-        "--format=%h  %ad  %<(60,trunc)%s",
-        "--",
-        ".",
-    ];
-    let commits = git_text(dir, &log).unwrap_or_default();
-    if commits.is_empty() {
-        return Err(match git_text(dir, &["rev-parse", "--git-dir"]) {
-            Ok(_) => "No commit of this folder to compare with.",
-            Err(_) => "This folder is not in a git repository, so there is no earlier version to compare with.",
-        }
-        .into());
+    if git_text(dir, &["rev-parse", "--git-dir"]).is_err() {
+        return Err("This folder is not in a git repository, so there is no earlier version to compare with.".into());
     }
+    // Each entry and the --since it gives; none for the uncommitted changes,
+    // which are compared with HEAD by default.
+    let mut entries: Vec<(String, Option<String>)> = vec![];
     let (marked, named) = reviewed_commits(&dir.join(&file).to_string_lossy()).unwrap_or_default();
-    let reviewed = named.or(marked).is_some();
-    let mut entries: Vec<&str> = commits.lines().map(str::trim_end).collect();
-    if reviewed {
-        entries.insert(0, "the last reviewed version");
+    if named.or(marked).is_some() {
+        entries.push(("the last reviewed version".into(), Some("reviewed".into())));
     }
-    let Some(k) = choose(
-        input,
-        out,
-        documents == 1,
-        &format!("Show the changes to {file} made after:"),
-        &entries,
-    )
-    .map_err(io)?
-    else {
+    let version = Version {
+        label: String::new(),
+        entry: file.clone(),
+        read: &read,
+    };
+    let mut paths = project_files(&version, None);
+    if paths.is_empty() {
+        paths.push(".".into());
+    }
+    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let status = |args: &[&str], paths: &[&str]| {
+        git_text(
+            dir,
+            &[&["--no-optional-locks", "status", "--porcelain"], args, &["--"], paths].concat(),
+        )
+        .is_ok_and(|s| !s.is_empty())
+    };
+    if status(&["--untracked-files=no"], &paths) || status(&[], &[&file]) {
+        entries.push(("changes since the last commit".into(), None));
+    }
+    let log = [
+        &[
+            "log",
+            "--first-parent",
+            "-n",
+            "15",
+            "--date=short",
+            "--format=%h%x09%p%x09%ad%x09%<(60,trunc)%s",
+            "--",
+        ],
+        &paths[..],
+    ]
+    .concat();
+    // A commit stands for its own change, so it is compared from its parent;
+    // a commit without one is not listed.
+    for line in git_text(dir, &log).unwrap_or_default().lines() {
+        if let [hash, parents, date, subject] = line.splitn(4, '\t').collect::<Vec<_>>()[..]
+            && let Some(parent) = parents.split(' ').next().filter(|p| !p.is_empty())
+        {
+            entries.push((format!("{hash}  {date}  {}", subject.trim_end()), Some(parent.into())));
+        }
+    }
+    if entries.is_empty() {
+        return Err(format!(
+            "{file} has no uncommitted changes and no commit to compare with."
+        ));
+    }
+    let labels: Vec<&str> = entries.iter().map(|(l, _)| l.as_str()).collect();
+    let title = format!("Show the changes to {file}.\nA commit stands for its own change and every change after it.");
+    let Some(k) = choose(input, out, documents == 1, &title, &labels).map_err(io)? else {
         return Ok(None);
     };
-    let since = match (reviewed, k) {
-        (true, 0) => "reviewed",
-        _ => entries[k].split(' ').next().unwrap_or_default(),
-    };
-    Ok(Some(vec![file, "--since".into(), since.into()]))
+    let since = entries.swap_remove(k).1;
+    Ok(Some(
+        [vec![file], since.map_or(vec![], |s| vec!["--since".into(), s])].concat(),
+    ))
 }
 
 /// Print `title` and the numbered `entries` on `out`, after how to get help
@@ -2020,7 +2046,7 @@ mod tests {
     use super::{balanced_cuts, pick, reviewed_ref};
 
     #[test]
-    fn picker_yields_the_chosen_file_since_the_last_commit() {
+    fn picker_yields_the_chosen_file_since_before_the_chosen_commit() {
         let dir = std::env::temp_dir().join(format!("typst-redline-pick-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -2044,10 +2070,13 @@ mod tests {
         git(&["commit", "-q", "-m", "first"]);
         std::fs::write(dir.join("b.typ"), "#include \"a-chapter.typ\"\nMore.\n").unwrap();
         git(&["commit", "-q", "-am", "second"]);
-        let head = git(&["rev-parse", "--short", "HEAD"]);
-        let picked = pick(&mut "2\n\n".as_bytes(), &mut vec![], &dir, false).unwrap();
+        let before = git(&["rev-parse", "--short", "HEAD~1"]);
+        // Entry 1 is the uncommitted change to the included file, entry 2
+        // the second commit; the first commit has no parent and is not listed.
+        std::fs::write(dir.join("a-chapter.typ"), "Changed.\n").unwrap();
+        let picked = pick(&mut "2\n2\n".as_bytes(), &mut vec![], &dir, false).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(picked.unwrap(), ["b.typ", "--since", head.as_str()]);
+        assert_eq!(picked.unwrap(), ["b.typ", "--since", before.as_str()]);
     }
 
     #[test]

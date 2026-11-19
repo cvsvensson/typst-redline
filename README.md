@@ -49,13 +49,15 @@ typst-redline paper.typ --since v1         # changes since a tag, branch or comm
 typst-redline paper.typ --since v1..v2     # changes between two commits
 ```
 
-Run `typst-redline` without a file in a terminal and it asks which file and which version to compare with, then prints the command it runs, such as `typst-redline paper.typ --since a82c764`. Files that another file in the folder includes come last, and with one document there is no file question. The versions are the last reviewed version, if there is one, and the newest commits:
+Run `typst-redline` without a file in a terminal and it asks which file and which version to compare with, then prints the command it runs, such as `typst-redline paper.typ --since 7213f75`. Files that another file in the folder includes come last, and with one document there is no file question. The versions are the last reviewed version, the changes since the last commit, and the newest commits that change the document's files, each where it applies:
 
 ```
-Show the changes to paper.typ made after:
+Show the changes to paper.typ.
+A commit stands for its own change and every change after it.
    1  the last reviewed version
-   2  5c09e25  2026-11-19  Revise the body
-   3  a82c764  2026-11-19  Expand the introduction
+   2  changes since the last commit
+   3  41e39a9  2026-11-19  Revise the body
+   4  8d3f096  2026-11-19  Expand the introduction
 Number [1]:
 ```
 
