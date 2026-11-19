@@ -1502,9 +1502,9 @@ fn compose(
             }
         }
         let (lost, rest) = counted(rest);
-        let (triples, mut texts) = counted(rest);
+        let (quads, mut texts) = counted(rest);
         let (mut changes, mut headings) = (vec![], vec![]);
-        for &[kind, id, page] in triples.as_chunks::<3>().0 {
+        for &[kind, id, mark, page] in quads.as_chunks::<4>().0 {
             let kind = match kind {
                 0 => PlacedKind::Del,
                 1 => PlacedKind::Ins,
@@ -1524,6 +1524,7 @@ fn compose(
             changes.push(Placed {
                 kind,
                 id: id as u64,
+                mark,
                 page,
             });
         }

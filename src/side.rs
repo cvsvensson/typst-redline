@@ -8,11 +8,13 @@ use crate::mark::{segments, typst_str};
 use crate::{Bib, Change, ChangeKind, History, PREAMBLE_PATH};
 
 /// A change as laid out in one version: its kind, an identity that is the
-/// same in both versions, and its page.
+/// same in both versions, the mark in this version's source that draws it,
+/// and its page.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub kind: PlacedKind,
     pub id: u64,
+    pub mark: usize,
     pub page: usize,
 }
 
@@ -92,7 +94,7 @@ fn moves_of(side: &[Placed]) -> (HashMap<u64, Vec<usize>>, Vec<Option<u64>>) {
 /// the content would be. That place's page is not a counterpart if its
 /// headings, or the place of a passage moved from or to it, are on other
 /// pages in the version with the content: the content fills pages of its
-/// own. Consecutive pairs with the same changes are steps
+/// own. Consecutive pairs with the same marks are steps
 /// of one slide; only the last is kept.
 pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor])) -> (Vec<Pair>, Vec<(bool, Placed)>) {
     let unique = |a: &[Anchor]| {
@@ -201,10 +203,12 @@ pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor]
         )
     });
 
+    // The steps of a slide lay out the same marks again; two pages that
+    // merely make the same edit do not.
     let changes = |side: &[Placed], pages: &BTreeSet<usize>| {
         side.iter()
             .filter(|c| pages.contains(&c.page))
-            .map(|c| (c.kind, c.id))
+            .map(|c| (c.kind, c.mark))
             .collect::<Vec<_>>()
     };
     let follows = |a: &BTreeSet<usize>, b: &BTreeSet<usize>| a.last().map(|p| p + 1) == b.first().copied();
