@@ -1,9 +1,11 @@
 import * as vscode from "vscode";
+import * as fs from "fs";
 import * as path from "path";
 import { ChildProcess, execFile, spawn } from "child_process";
 
 let output: vscode.OutputChannel;
 let state: vscode.Memento;
+let extensionDir = "";
 
 const running = new Set<ChildProcess>();
 
@@ -56,9 +58,17 @@ function run(
   });
 }
 
+// The setting if the user set it, else the binary in the extension's bin folder, else PATH.
+export function executable(config: vscode.WorkspaceConfiguration, dir = extensionDir) {
+  const set = config.inspect<string>("executable");
+  const user = set?.workspaceFolderValue || set?.workspaceValue || set?.globalValue;
+  const bundled = path.join(dir, "bin", process.platform === "win32" ? "typst-redline.exe" : "typst-redline");
+  return user || (fs.existsSync(bundled) ? bundled : "typst-redline");
+}
+
 function runCli(doc: vscode.TextDocument, args: string[], token?: vscode.CancellationToken) {
   const config = vscode.workspace.getConfiguration("typstRedline", doc.uri);
-  const exe = config.get<string>("executable") || "typst-redline";
+  const exe = executable(config);
   output.appendLine(`> ${exe} ${args.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" ")}`);
   return run(exe, args, path.dirname(doc.fileName), exeHint, token).then(({ stdout, stderr }) => {
     if (stderr.trim()) {
@@ -138,7 +148,7 @@ async function git(dir: string, ...args: string[]) {
 }
 
 function exe(doc: vscode.TextDocument) {
-  return vscode.workspace.getConfiguration("typstRedline", doc.uri).get<string>("executable") || "typst-redline";
+  return executable(vscode.workspace.getConfiguration("typstRedline", doc.uri));
 }
 
 // One list; resolves to the accepted items, or undefined when the list is closed.
@@ -550,6 +560,7 @@ function command(name: string, body: (uri?: vscode.Uri) => Promise<void>) {
 export function activate(context: vscode.ExtensionContext) {
   output = vscode.window.createOutputChannel("Typst Redline");
   state = context.workspaceState;
+  extensionDir = context.extensionPath;
   context.subscriptions.push(
     output,
     command("typstRedline.showChanges", showChanges),

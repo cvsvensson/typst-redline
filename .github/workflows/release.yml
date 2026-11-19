@@ -49,9 +49,46 @@ jobs:
             ${{ steps.build.outputs.sha256 }}
           if-no-files-found: error
 
+  # One .vsix per platform, with that platform's binary inside. Packaged on Linux so that
+  # the executable bit of the Unix binaries is kept; the script fails if it is lost.
+  vsix:
+    needs: build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: vscode/package-lock.json
+      - run: npm ci
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/dist
+      - run: |
+          package() { # <rust target> <vsce target>
+            dir="$RUNNER_TEMP/dist/typst-redline-$1"
+            mkdir "$dir/x"
+            case $1 in *windows*) unzip -q "$dir"/*.zip -d "$dir/x" ;; *) tar xzf "$dir"/*.tar.gz -C "$dir/x" ;; esac
+            ./package-vsix.sh "$2" "$(find "$dir/x" -type f -name 'typst-redline*' ! -name '*.sha256' | head -n 1)"
+          }
+          package x86_64-unknown-linux-musl linux-x64
+          package aarch64-unknown-linux-musl linux-arm64
+          package x86_64-apple-darwin darwin-x64
+          package aarch64-apple-darwin darwin-arm64
+          package x86_64-pc-windows-msvc win32-x64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: typst-redline-vsix
+          path: vscode/*.vsix
+          if-no-files-found: error
+
   release:
     if: github.event_name == 'push'
-    needs: build
+    needs: [build, vsix]
     runs-on: ubuntu-latest
     permissions:
       contents: write

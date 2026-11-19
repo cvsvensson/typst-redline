@@ -2,7 +2,9 @@ import * as assert from "assert";
 import * as fs from "fs";
 import * as path from "path";
 import * as childProcess from "child_process";
+import * as os from "os";
 import * as vscode from "vscode";
+import { executable } from "../extension";
 
 // A release build of this repository if there is one, otherwise typst-redline on PATH.
 const release = path.resolve(
@@ -515,5 +517,24 @@ suite("Typst Redline commands", () => {
     await sleep(1500);
     assert.strictEqual(size(), after);
     assert.deepStrictEqual(errors, []);
+  });
+});
+
+suite("Typst Redline executable lookup", () => {
+  const config = () => vscode.workspace.getConfiguration("typstRedline");
+  const name = process.platform === "win32" ? "typst-redline.exe" : "typst-redline";
+  let dir: string;
+  setup(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "typst-redline-ext-"));
+  });
+  teardown(() => config().update("executable", undefined, vscode.ConfigurationTarget.Global));
+
+  test("setting, then bundled binary, then PATH", async () => {
+    assert.strictEqual(executable(config(), dir), "typst-redline");
+    fs.mkdirSync(path.join(dir, "bin"));
+    fs.writeFileSync(path.join(dir, "bin", name), "");
+    assert.strictEqual(executable(config(), dir), path.join(dir, "bin", name));
+    await config().update("executable", "/my/typst-redline", vscode.ConfigurationTarget.Global);
+    assert.strictEqual(executable(config(), dir), "/my/typst-redline");
   });
 });

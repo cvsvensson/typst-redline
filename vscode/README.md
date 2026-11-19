@@ -2,7 +2,7 @@
 
 Shows what changed in a Typst document as a PDF of the new version with the changes marked. The extension runs the [`typst-redline`](https://github.com/cvsvensson/typst-redline) command-line tool, which needs `typst` and, for comparisons with commits, git. Install `typst-redline` first and restart VS Code so that it is on the `PATH`, or set `typstRedline.executable` to its full path.
 
-The extension is not on the Marketplace. Build the `.vsix` from the [`vscode/`](https://github.com/cvsvensson/typst-redline/tree/main/vscode) folder of the repository with `npm ci` and `npm run package`, and install it with *Extensions: Install from VSIX...*. It is turned off in Restricted Mode, because it runs git and the programs its settings name.
+The extension is not on the Marketplace. The release workflow attaches one `.vsix` per platform (win32-x64, darwin-x64, darwin-arm64, linux-x64, linux-arm64) to the release page, with `typst-redline` inside, so no `PATH` setup is needed; install it with *Extensions: Install from VSIX...*. A `typstRedline.executable` you set takes precedence. To build a `.vsix` without the binary, run `npm ci` and `npm run package` in the [`vscode/`](https://github.com/cvsvensson/typst-redline/tree/main/vscode) folder of the repository. It is turned off in Restricted Mode, because it runs git and the programs its settings name.
 
 To see what changed:
 
