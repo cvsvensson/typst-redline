@@ -42,14 +42,15 @@ suite("Typst Redline commands", () => {
   const settings = ["executable", "typst", "extraArgs", "openPdf", "root"];
   let tmp: string;
   let file: string;
-  // The labels to pick in the lists shown, in order: "" accepts the active item, and a
-  // missing one closes the list.
+  // The labels to pick in the lists shown, in order: "" accepts the active item, a missing
+  // one closes the list, and "[button]" or "[key]" switches the layout in the open list.
   let picks: string[];
   // The labels to tick in each list of commits to tick, in order.
   let ticks: string[][];
   let lists: Item[][];
   let actives: (Item | undefined)[];
   let placeholders: string[];
+  let titles: string[];
   let otherFile: string;
   let dialogs: string[];
   let opened: { uri: vscode.Uri; options: any }[];
@@ -73,6 +74,7 @@ suite("Typst Redline commands", () => {
     lists = [];
     actives = [];
     placeholders = [];
+    titles = [];
   }
 
   function fakeQuickPick() {
@@ -82,13 +84,18 @@ suite("Typst Redline commands", () => {
       selectedItems: [],
       onDidAccept: (f: () => void) => (list.accept = f),
       onDidHide: (f: () => void) => (list.closed = f),
+      onDidTriggerButton: (f: (b: vscode.QuickInputButton) => Promise<void>) => (list.button = f),
       hide: () => list.closed?.(),
       dispose: () => {},
       show: () =>
-        setTimeout(() => {
+        setTimeout(async () => {
           lists.push(list.items);
           actives.push(list.activeItems[0]);
           placeholders.push(list.placeholder);
+          titles.push(list.title);
+          for (; picks[0] === "[button]" || picks[0] === "[key]"; titles.push(list.title)) {
+            await (picks.shift() === "[button]" ? list.button(list.buttons[0]) : vscode.commands.executeCommand("typstRedline.switchLayout"));
+          }
           if (list.canSelectMany) {
             const t = ticks.shift();
             list.selectedItems = t ? list.items.filter((i: Item) => t.includes(i.label)) : [];
@@ -132,6 +139,7 @@ suite("Typst Redline commands", () => {
     lists = [];
     actives = [];
     placeholders = [];
+    titles = [];
     otherFile = "";
     dialogs = [];
     opened = [];
@@ -198,7 +206,7 @@ suite("Typst Redline commands", () => {
     picks = [];
     await show();
     const words = labels(lists[0]).map((l) => l.replace(/^\$\([^)]*\) /, ""));
-    assert.deepStrictEqual(words, ["third – ändrad “här”", "second", "", "Another file...", "Several commits...", "More options..."]);
+    assert.deepStrictEqual(words, ["third – ändrad “här”", "second", "", "Another file...", "Several commits...", "Between two commits..."]);
   });
 
   test("Enter shows the newest commit's change, and the PDF opens beside the editor", async () => {
@@ -225,13 +233,29 @@ suite("Typst Redline commands", () => {
     assert.deepStrictEqual(runs[0].slice(0, 3), [vscode.Uri.file(other).fsPath, "--since", hash("third.*")]);
   });
 
-  test("the view chosen under More options is shown there and used by later runs", async () => {
+  test("the first list names the view, and its button switches the layout in place for this and later runs", async () => {
     await setView("Side by side, coloured by commit", "4 steps");
+    picks = ["[button]", "second"];
+    await show();
+    assert.deepStrictEqual(titles, [
+      "Typst Redline: Show Changes (view: Side by side, coloured by commit, 4 steps)",
+      "Typst Redline: Show Changes (view: Marked, coloured by commit, 4 steps)",
+    ]);
+    assert.strictEqual(lists.length, 1);
+    assert.strictEqual(actives[0]?.label, "third – ändrad “här”");
+    assert.deepStrictEqual(runs[0].slice(5), ["--steps", "4"]);
     picks = [];
     await show();
-    assert.strictEqual(lists[0].at(-1)!.description, "View: Side by side, coloured by commit, 4 steps");
-    assert.strictEqual(actives[0]?.label, "third – ändrad “här”");
-    assert.deepStrictEqual(runs, []);
+    assert.strictEqual(titles[2], titles[1]);
+  });
+
+  test("the layout key switches the layout of the open list", async () => {
+    picks = ["Several commits", "[key]"];
+    await show();
+    assert.deepStrictEqual(titles.slice(1), [
+      "Typst Redline: colour the changes by step (view: Marked)",
+      "Typst Redline: colour the changes by step (view: Side by side)",
+    ]);
   });
 
   test("each view passes its options", async () => {
@@ -268,10 +292,10 @@ suite("Typst Redline commands", () => {
 
   test("changes between two commits include both and nothing after", async () => {
     await setView("Marked, coloured by commit", "One colour per commit");
-    picks = ["More options", "Between two commits", "second", "third"];
+    picks = ["Between two commits", "second", "third"];
     await show();
     assertOpenedPdf();
-    assert.deepStrictEqual(labels(lists[3]), ["third – ändrad “här”", "second"]);
+    assert.deepStrictEqual(labels(lists[2]), ["third – ändrad “här”", "second"]);
     const args = [file, "--since", hash("first"), "--to", hash("third.*"), "--root"];
     assert.deepStrictEqual(runs[0].slice(0, 6), args);
     assert.deepStrictEqual(runs[0].slice(7), ["--each-commit"]);
@@ -330,7 +354,7 @@ suite("Typst Redline commands", () => {
     await show();
     assert.deepStrictEqual(runs, []);
     assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /typstRedline\.extraArgs holds --steps.*More options/);
+    assert.match(errors[0], /typstRedline\.extraArgs holds --steps.*Choose View/);
   });
 
   test("with nothing to colour, the changes are marked without colours and it says so", async () => {
@@ -478,12 +502,10 @@ suite("Typst Redline commands", () => {
   test("cancelling at any step runs nothing", async () => {
     const steps = [
       [],
-      ["More options"],
-      ["More options", "View"],
-      ["More options", "View", "Marked, coloured by commit"],
+      ["[button]"],
       ["Several commits"],
-      ["More options", "Between two commits"],
-      ["More options", "Between two commits", "second"],
+      ["Between two commits"],
+      ["Between two commits", "second"],
       ["Another file"],
     ];
     for (const p of steps) {

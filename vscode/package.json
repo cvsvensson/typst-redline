@@ -26,23 +26,26 @@
     "commands": [
       {
         "command": "typstRedline.showChanges",
-        "title": "Show changes...",
-        "category": "Typst Redline",
+        "title": "Typst Redline: Show Changes...",
         "icon": "$(git-compare)"
       },
       {
         "command": "typstRedline.compareFiles",
-        "title": "Show changes between these files",
-        "category": "Typst Redline"
+        "title": "Typst Redline: Show Changes Between These Files"
       },
       {
         "command": "typstRedline.chooseView",
-        "title": "Choose view",
+        "title": "Choose View",
+        "category": "Typst Redline"
+      },
+      {
+        "command": "typstRedline.switchLayout",
+        "title": "Switch Between Marked and Side by Side",
         "category": "Typst Redline"
       },
       {
         "command": "typstRedline.markReviewed",
-        "title": "Mark as reviewed",
+        "title": "Mark as Reviewed",
         "category": "Typst Redline"
       }
     ],
@@ -68,11 +71,18 @@
           "when": "editorLangId == typst || resourceExtname == .typ"
         },
         {
+          "command": "typstRedline.switchLayout",
+          "when": "false"
+        },
+        {
           "command": "typstRedline.markReviewed",
           "when": "editorLangId == typst || resourceExtname == .typ"
         }
       ]
     },
+    "keybindings": [
+      { "command": "typstRedline.switchLayout", "key": "alt+l", "when": "typstRedline.viewButton" }
+    ],
     "configuration": {
       "title": "Typst Redline",
       "properties": {

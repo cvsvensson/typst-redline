@@ -136,7 +136,7 @@ async function project(doc: vscode.TextDocument): Promise<Project> {
 type Base = { rev: string; to?: string; ends?: string[]; what: string } | { file: string; what: string };
 // `parent` is the first parent's short hash: the base that includes the commit's own change.
 type Commit = { hash: string; parent: string; date: string; subject: string };
-type BaseItem = vscode.QuickPickItem & { base?: Base | "more" | "several" | "other" };
+type BaseItem = vscode.QuickPickItem & { base?: Base | "between" | "several" | "other" };
 
 function unsaved(doc: vscode.TextDocument, root: string) {
   return vscode.workspace.textDocuments.filter(
@@ -152,10 +152,14 @@ function exe(doc: vscode.TextDocument) {
   return executable(vscode.workspace.getConfiguration("typstRedline", doc.uri));
 }
 
-// One list; resolves to the accepted items, or undefined when the list is closed.
+// Switches the layout of the open list that has the view button; the layout key calls it.
+let switchShown: (() => Promise<void>) | undefined;
+
+// One list; resolves to the accepted items, or undefined when the list is closed. With
+// `view`, the title names the view and a button switches the layout in place.
 function pick<T extends vscode.QuickPickItem>(
   items: readonly T[],
-  o: { title: string; placeholder: string; active?: T; many?: boolean },
+  o: { title: string; placeholder: string; active?: T; many?: boolean; view?: (v: View) => string },
 ): Promise<readonly T[] | undefined> {
   return new Promise((resolve) => {
     const list = vscode.window.createQuickPick<T>();
@@ -169,6 +173,23 @@ function pick<T extends vscode.QuickPickItem>(
     } else if (o.active) {
       list.activeItems = [o.active];
     }
+    let switcher: (() => Promise<void>) | undefined;
+    if (o.view) {
+      const name = o.view;
+      const showView = () => {
+        const v = currentView();
+        list.title = `${o.title} (view: ${name(v)})`;
+        list.buttons = [layoutButton(v)];
+      };
+      switcher = async () => {
+        await switchLayout();
+        showView();
+      };
+      showView();
+      list.onDidTriggerButton(switcher);
+      switchShown = switcher;
+      vscode.commands.executeCommand("setContext", "typstRedline.viewButton", true);
+    }
     let accepted = false;
     list.onDidAccept(() => {
       accepted = true;
@@ -178,6 +199,10 @@ function pick<T extends vscode.QuickPickItem>(
     list.onDidHide(() => {
       if (!accepted) {
         resolve(undefined);
+      }
+      if (switcher && switchShown === switcher) {
+        switchShown = undefined;
+        vscode.commands.executeCommand("setContext", "typstRedline.viewButton", false);
       }
       list.dispose();
     });
@@ -292,22 +317,25 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promi
   if (list.length > 1) {
     targets.push({ label: "$(list-selection) Several commits...", description: "a new colour at each ticked commit", base: "several" });
   }
+  if (list.length > 0) {
+    targets.push({ label: "$(git-compare) Between two commits...", description: "not up to the file as it is now", base: "between" });
+  }
   for (;;) {
-    const more: BaseItem = { label: "$(settings) More options...", description: `View: ${viewName(currentView())}`, base: "more" };
-    const [choice] = (await pick([...targets, more], {
-      title: "Typst Redline: Show changes",
+    const [choice] = (await pick(targets, {
+      title: "Typst Redline: Show Changes",
       placeholder: meaning,
       active: targets.find((t) => t.kind !== vscode.QuickPickItemKind.Separator),
+      view: viewName,
     })) ?? [undefined];
     const base = choice?.base;
-    if (base === "more" || base === "several") {
-      const picked = await (base === "more" ? pickMore(list) : pickSeveral(list));
+    if (base === "several") {
+      const picked = await pickSeveral(list);
       if (picked === "back") {
         continue;
       }
       return picked;
     }
-    return base === "other" ? pickFile(doc) : base;
+    return base === "between" ? pickBetween(list) : base === "other" ? pickFile(doc) : base;
   }
 }
 
@@ -320,21 +348,6 @@ async function pickFile(doc: vscode.TextDocument): Promise<Base | undefined> {
   return other && { file: other[0].fsPath, what: `changes since ${path.basename(other[0].fsPath)}` };
 }
 
-async function pickMore(list: Commit[]): Promise<Base | "back" | undefined> {
-  const items = [
-    { label: `$(eye) View: ${viewName(currentView())}`, description: "marked, side by side, coloured by commit", view: true },
-    ...(list.length > 0
-      ? [{ label: "$(git-compare) Between two commits...", description: "not up to the file as it is now", view: false }]
-      : []),
-  ];
-  const [choice] = (await pick(items, { title: "Typst Redline: More options", placeholder: meaning })) ?? [undefined];
-  if (choice?.view) {
-    await pickView();
-    return "back";
-  }
-  return choice && pickBetween(list);
-}
-
 // The most steps the CLI has colours for.
 const maxColours = 6;
 
@@ -345,6 +358,7 @@ async function pickSeveral(list: Commit[]): Promise<Base | "back" | undefined> {
       title: "Typst Redline: colour the changes by step",
       placeholder: `Tick up to ${maxColours} commits; each one starts a new colour`,
       many: true,
+      view: layoutName,
     });
     if (!ticked) {
       return undefined;
@@ -366,6 +380,7 @@ async function pickBetween(list: Commit[]): Promise<Base | undefined> {
   const [from] = (await pick(list.map(commitItem), {
     title: "Typst Redline: changes from...",
     placeholder: "Pick the oldest commit to show",
+    view: viewName,
   })) ?? [undefined];
   if (!from) {
     return undefined;
@@ -373,6 +388,7 @@ async function pickBetween(list: Commit[]): Promise<Base | undefined> {
   const [to] = (await pick(list.slice(0, list.indexOf(from.c) + 1).map(commitItem), {
     title: `Typst Redline: changes from ${quote(from.c)} to...`,
     placeholder: "Pick the newest commit to show",
+    view: viewName,
   })) ?? [undefined];
   return to && { rev: from.c.parent, to: to.c.hash, what: `changes from ${quote(from.c)} to ${quote(to.c)}` };
 }
@@ -392,11 +408,29 @@ function currentView(): View {
   return valid ? v! : { layout: "marked", colours: "none" };
 }
 
+function layoutName(v: View) {
+  return layouts.find((l) => l.layout === v.layout)!.label;
+}
+
 function viewName(v: View) {
-  const layout = layouts.find((l) => l.layout === v.layout)!.label;
+  const layout = layoutName(v);
   return v.colours === "none"
     ? layout
     : `${layout}, coloured by commit${typeof v.colours === "number" ? `, ${v.colours} steps` : ""}`;
+}
+
+// Keeps the colours of the view.
+function switchLayout() {
+  const v = currentView();
+  return state.update("view", { ...v, layout: v.layout === "marked" ? "side-by-side" : "marked" });
+}
+
+function layoutButton(v: View): vscode.QuickInputButton {
+  const other = layouts.find((l) => l.layout !== v.layout)!.label.toLowerCase();
+  return {
+    iconPath: new vscode.ThemeIcon(v.layout === "marked" ? "file" : "book"),
+    tooltip: `${layoutName(v)} view. Switch to ${other} (Alt+L)`,
+  };
 }
 
 // Chooses and stores the view; a coloured view also chooses how the commits are coloured.
@@ -457,7 +491,7 @@ function checkExtraArgs(extra: string[]) {
   if (owned.length) {
     throw new Error(
       `typstRedline.extraArgs holds ${owned.join(" and ")}, which this command sets itself. ` +
-        "Remove it from that setting; choose the view under More options.",
+        "Remove it from that setting; choose the view with Typst Redline: Choose View or the button of the list.",
     );
   }
 }
@@ -648,7 +682,7 @@ async function compareFiles(clicked?: vscode.Uri, selected?: vscode.Uri[]) {
     [older, newer],
     [newer, older],
   ].map(([old, now]) => ({ label: `Changes in ${name(now)} since ${name(old)}`, old, now }));
-  const [choice] = (await pick(items, { title: "Typst Redline: Show changes", placeholder: "Which file is the newer version?", active: items[0] })) ?? [
+  const [choice] = (await pick(items, { title: "Typst Redline: Show Changes", placeholder: "Which file is the newer version?", active: items[0] })) ?? [
     undefined,
   ];
   if (choice) {
@@ -688,6 +722,7 @@ export function activate(context: vscode.ExtensionContext) {
     command("typstRedline.showChanges", (uri?: vscode.Uri) => showChanges(uri)),
     command("typstRedline.compareFiles", compareFiles),
     command("typstRedline.chooseView", pickView),
+    command("typstRedline.switchLayout", async () => switchShown?.()),
     command("typstRedline.markReviewed", markReviewed),
   );
 }
