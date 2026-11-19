@@ -1530,12 +1530,35 @@ fn compose(
         }
         Ok((*pages, *summary, unbarred.to_vec(), lost.to_vec(), changes, headings))
     };
+    // In a document whose layout does not settle, the pages that the
+    // document finds for its changes can be past its last page as compiled.
+    let fit = |mut l: Layout, pdf: &str, label: &str| {
+        let Some(count) = pdf_pages(&dir.join(pdf)) else {
+            return l;
+        };
+        if l.0 + l.1 > count {
+            eprintln!(
+                "warning: the layout of {label} did not settle; the pages shown can differ from those of the changes"
+            );
+            l.1 = l.1.min(count);
+            l.0 = count - l.1;
+            let last = l.0.max(1);
+            let pages = l.4.iter_mut().map(|c| &mut c.page);
+            pages
+                .chain(l.5.iter_mut().map(|h| &mut h.page))
+                .for_each(|p| *p = (*p).min(last));
+        }
+        l
+    };
     let (
         (old_pages, _, old_unbarred, old_lost, old, old_headings),
         (new_pages, summary, new_unbarred, new_lost, new, new_headings),
     ) = {
         let (old, new) = both(|| query(sides[0]), || query(sides[1]));
-        (layout(old?, labels.0)?, layout(new?, labels.1)?)
+        (
+            fit(layout(old?, labels.0)?, sides[0].3, labels.0),
+            fit(layout(new?, labels.1)?, sides[1].3, labels.1),
+        )
     };
     // A mark that a side did not lay out is listed as not marked, once: by
     // the new side's summary, or on the first page for the old side.
@@ -1618,6 +1641,14 @@ fn compose(
         ));
     }
     Ok(())
+}
+
+/// The number of pages of a PDF that typst wrote, if it has any.
+fn pdf_pages(path: &Path) -> Option<usize> {
+    let pdf = std::fs::read(path).ok()?;
+    let count = |pat: &[u8]| pdf.windows(pat.len()).filter(|w| *w == pat).count();
+    let pages = count(b"/Type /Page") + count(b"/Type/Page") - count(b"/Type /Pages") - count(b"/Type/Pages");
+    (pages > 0).then_some(pages)
 }
 
 /// `f` and `g` run at the same time.
