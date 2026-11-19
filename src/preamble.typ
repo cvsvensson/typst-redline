@@ -752,8 +752,24 @@
   if runs.len() == 0 { "–" } else { runs.map(r => str(r.first()) + if r.len() > 1 { "–" + str(r.last()) } else { "" }).join(", ") }
 }
 
+// `body` in text set as `set text(..args)` sets it, also where the document
+// has a rule such as `show text: set text(fill: red)`: a show-set rule wins
+// over set rules and outer show-set rules, a set rule does not. The tool's
+// own text, such as numbers and notes, is set with it. The size is the one
+// set, so that a relative size applies once.
+#let redline-text(..args, body) = {
+  set text(..args)
+  context {
+    show text: set text(..args.named() + (size: text.size))
+    body
+  }
+}
+
+// The tool's own text, from its root: of `size`, in the document's font.
+#let redline-own-text(size, body) = redline-text(size: size, fill: black, weight: "regular", style: "normal", tracking: 0pt, lang: "en", dir: ltr, body)
+
 // Numbers of changes as the margin and the summary show them.
-#let redline-number(ns) = text(fill: redline-style.number, number-type: "lining", redline-pages(ns.sorted().dedup()))
+#let redline-number(ns) = redline-text(fill: redline-style.number, number-type: "lining", redline-pages(ns.sorted().dedup()))
 
 // Content as pieces that can be cut between: words of text, other elements
 // whole.
@@ -771,8 +787,8 @@
   parbreak()
   context {
     let spacing = if sys.version >= version(0, 12, 0) { par.spacing } else { 1.2em }
-    block(above: spacing, below: spacing, width: 100%, layout(size => {
-      set text(size: 0.85em, fill: redline-style.move, hyphenate: false)
+    let look = b => redline-own-text(0.85em, redline-text(fill: redline-style.move, hyphenate: false, b))
+    block(above: spacing, below: spacing, width: 100%, layout(size => look({
       redline-move-tag("from", m.id, step: step)
       let pieces = redline-pieces(redline-neutral(note))
       let style = if m.heading { strong } else { emph }
@@ -780,7 +796,7 @@
       let head = if to == none [Moved:] else {
         let down = m.at("down", default: true)
         let where = if to.page() != here().page() [to #redline-page-names((to,))] else if down [below] else [above]
-        [#text(fill: redline-step-style(step).del, if down { sym.arrow.b } else { sym.arrow.t }) Moved #where:]
+        [#redline-text(fill: redline-step-style(step).del, if down { sym.arrow.b } else { sym.arrow.t }) Moved #where:]
       }
       let line(k) = {
         let more = if k < pieces.len() or m.at("more", default: false) [ …]
@@ -797,7 +813,7 @@
       let line = redline-del-unlisted(line(k))
       if to == none { line } else { link(to, line) }
       redline-restore(label("redline-move-from-" + str(m.id)))
-    }))
+    })))
   }
   parbreak()
 }
@@ -893,7 +909,7 @@
 
 #let redline-swatch(st) = box(width: 0.8em, height: 0.8em, fill: st.ins-fill, stroke: 0.6pt + st.ins)
 
-#let redline-mono = text.with(font: "DejaVu Sans Mono", size: 0.85em)
+#let redline-mono = redline-text.with(font: "DejaVu Sans Mono", size: 0.85em)
 
 // A revision label: a revision in monospace, a name such as "working tree"
 // as text.
@@ -911,13 +927,10 @@
     hist.commits.enumerate().map(p => (hist.earlier + p.at(0) + 1, mono(p.at(1).hash), p.at(1).subject.clusters()))
   }
   if hist.uncommitted and "groups" not in hist { items.push((hist.earlier + hist.commits.len() + 1, [uncommitted], ())) }
-  let legend(n) = {
-    set text(size: size, fill: luma(90), weight: "regular", style: "normal")
-    items.map(((step, hash, subject)) => {
-      let more = if subject.len() > n { "…" }
-      box[#redline-swatch(redline-step-style(step))#h(0.35em)#hash#if n > 0 and subject.len() > 0 [ #subject.slice(0, calc.min(n, subject.len())).join().trim()#more]]
-    }).join(h(1.2em))
-  }
+  let legend(n) = redline-own-text(size, redline-text(fill: luma(90), items.map(((step, hash, subject)) => {
+    let more = if subject.len() > n { "…" }
+    box[#redline-swatch(redline-step-style(step))#h(0.35em)#hash#if n > 0 and subject.len() > 0 [ #subject.slice(0, calc.min(n, subject.len())).join().trim()#more]]
+  }).join(h(1.2em))))
   let fits(n) = measure(legend(n)).width <= width
   let longest = calc.max(0, ..items.map(i => i.at(2).len()))
   if fits(longest) { return legend(longest) }
@@ -938,14 +951,14 @@
   let v = redline-value(at.first())
   let n = v.unmarked
   let more = if n > 0 [ · #n #if n == 1 [change is] else [changes are] listed there, not marked] else if v.notes or query(<redline-unrestored>).len() > 0 [ · with notes on what this PDF shows differently]
-  set text(size: 6.5pt, lang: "en", dir: ltr, weight: "regular", style: "normal")
+  show: redline-own-text.with(6.5pt)
   set par(justify: false)
   let lead = if v.at("empty", default: false) [typst-redline found no changes] else [Changes marked by typst-redline]
   let pages = redline-page-names((at.first().location(),))
   // The colours inside the link, which the document can style. Without
   // its first words where it would wrap; on white and at the right, to read
   // on a header band beside a title.
-  let line(head) = [#text(fill: luma(110), head)#text(fill: redline-style.del, more)]
+  let line(head) = [#redline-text(fill: luma(110), head)#redline-text(fill: redline-style.del, more)]
   let full = line[#lead · summary on #pages]
   let line = context if measure(full).width <= width { full } else { line[Summary on #pages] }
   let line = box(fill: white, outset: (x: 2pt, y: 1.5pt), radius: 1pt, line)
@@ -1166,7 +1179,7 @@
     let size = calc.min(calc.max(v.at("size", default: 0pt).to-absolute() * 6.5 / 11, 6.5pt), 14pt)
     let styled(notes, size) = notes.map(n => {
       set par(leading: 0.4em)
-      text(size: size, fill: if redline-side == "old" { sst.del } else { sst.ins }, top-edge: "cap-height", bottom-edge: "baseline", hyphenate: false, n)
+      redline-own-text(size, redline-text(fill: if redline-side == "old" { sst.del } else { sst.ins }, top-edge: "cap-height", bottom-edge: "baseline", hyphenate: false, n))
     })
     let link-to(note) = if other != none { link(other.location(), note) } else { note }
     let note = styled(notes, size).find(n => measure(n).width <= free)
@@ -1195,22 +1208,27 @@
     let p = from.location().position()
     numbers.push((number-at(p, p, none, none, none), p.y - 0.7 * number-size, num))
   }
-  // On the new side of the side-by-side layout, a deletion has its number
-  // where it was: a deleted block's mark is at the end of the block before
-  // it, on its baseline, and the number goes below that.
+  // On the new side of the side-by-side layout, a deletion whose change has
+  // no bar on the page has its number where it was: a deleted block's mark
+  // is at the end of the block before it, on its baseline, and the number
+  // goes below that.
   if nums != none and redline-side == "new" {
+    let barred = numbers.map(n => n.at(2))
     for c in query(<redline-change>).filter(c => c.location().page() == pg) {
       let (kind, _, id, _, block) = redline-value(c)
       let num = if kind == "del" { nums.at(str(id), default: none) }
+      if num in barred { continue }
       let p = c.location().position()
       let at = if num != none { number-at(p, p, none, none, none) }
       if at != none { numbers.push((at, p.y + if block { 0.3 } else { -0.7 } * number-size, num)) }
     }
   }
-  // A number where a note runs along a bracket stands above the bracket.
+  let label(ns, size) = redline-own-text(size, redline-text(top-edge: "cap-height", bottom-edge: "baseline", redline-number(ns)))
+  // A number where a note runs along a bracket stands on top of the bracket.
+  let above = measure(label((1,), number-size)).height + 1.5pt
   let numbers = numbers.map(((r, y, num)) => {
     let along = along-notes.find(((side, top, bottom)) => side == r and y > top - number-size and y < bottom)
-    (r: r, y: if along == none { y } else { along.at(1) - 1.3 * number-size }, ns: (num,))
+    (r: r, y: if along == none { y } else { along.at(1) - above }, ns: (num,))
   })
   // A number is shown once on a page, where its change starts, but at both
   // places of a move; numbers on about one line on one side are shown
@@ -1235,7 +1253,6 @@
   // down to two thirds of their size, at the edge of the page.
   let anchor(r) = if r { calc.min(left + body + gap(right) + 3 * st.lane, w - st.bar-width / 2) + 3pt } else { calc.max(left - gap(left) - 3 * st.lane, st.bar-width / 2) - 3pt }
   let room(r) = if r { w - 1pt - anchor(r) } else { anchor(r) - 1pt }
-  let label(ns, size) = text(size: size, top-edge: "cap-height", bottom-edge: "baseline", redline-number(ns))
   let width(ns) = measure(label(ns, number-size)).width
   let lines = together(together(shown).map(l => {
     if width(l.ns) > room(l.r) and width(l.ns) <= room(not l.r) { l.r = not l.r }
