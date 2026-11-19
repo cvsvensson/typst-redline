@@ -446,10 +446,12 @@
 }
 
 // Text in `fill`, also where the document has a rule such as
-// `show text: set text(fill: red)`, so that a mark looks like one.
+// `show text: set text(fill: red)`, so that a mark looks like one. Text
+// given a colour of its own inside the mark keeps it: it may sit on a fill
+// of its own, such as a white tag on a dark box.
 #let redline-fill(fill, body) = {
   set text(fill: fill)
-  show text: set text(fill: fill)
+  show text.where(fill: fill): set text(fill: fill)
   body
 }
 

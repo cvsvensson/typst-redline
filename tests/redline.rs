@@ -1172,6 +1172,21 @@ fn inserted_text_has_its_colour_under_the_documents_text_colour() {
 }
 
 #[test]
+fn text_with_a_colour_of_its_own_keeps_it_in_a_mark() {
+    let tag = "#let tag(t) = box(fill: navy, inset: 2pt, text(fill: white, t))\n";
+    let r = redline_of(
+        &format!("{tag}Kept.\n\nThe deleted paragraph #tag[old].\n"),
+        &format!("{tag}An inserted line #tag[new].\n\nKept.\n"),
+    );
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let Some(pages) = glyphs("own-colour-in-mark", &files) else {
+        return;
+    };
+    let white = pages[0].iter().filter(|g| g.fill.as_deref() == Some("#ffffff")).count();
+    assert_eq!(white, "oldnew".len());
+}
+
+#[test]
 fn change_number_on_a_page_without_margins_is_clear_of_its_bar() {
     let doc = |w: &str| {
         format!(

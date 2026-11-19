@@ -12,7 +12,7 @@ Each of these was tried with the current version. Within each group, the ones a 
 - A figure whose body changed is deleted and inserted whole, caption and all, when it is passed to another call, as in `#align(center, figure(...))`, when it is inline, or when an argument other than its body and content in brackets changed.
 - A raw block with one changed line is deleted and inserted whole.
 - A citation added to or removed from a group such as `@a @b` marks the whole group.
-- Inserted and deleted text is shown in the colour of its mark, also where the document gives it a colour of its own.
+- Inserted or deleted text that the document gives a colour of its own, such as a link or a white tag on a dark box, keeps that colour and is marked only by its strike, highlight or bar; under a rule such as `show text: set text(fill: ...)` it takes that rule's colour.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks; a text show rule with a `regex` selector stops matching where a mark cuts its match, and for a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
 - Pages where a template or a later `set page` rule gives both its own page foreground and background get no margin bars; the summary lists those pages.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
