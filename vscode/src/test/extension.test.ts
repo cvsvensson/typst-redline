@@ -66,9 +66,9 @@ suite("Typst Redline commands", () => {
   const labels = (list: Item[]) => list.map((i) => i.label);
   const show = () => vscode.commands.executeCommand("typstRedline.showChanges");
 
-  // Chooses the view with the View entry, then leaves the list.
+  // Chooses the view under More options, then leaves the list.
   async function setView(...choice: string[]) {
-    picks = ["View", ...choice];
+    picks = ["More options", "View", ...choice];
     await show();
     lists = [];
     actives = [];
@@ -159,7 +159,7 @@ suite("Typst Redline commands", () => {
     await config.update("executable", binary, vscode.ConfigurationTarget.Global);
     await config.update("openPdf", "editor", vscode.ConfigurationTarget.Global);
     await setView("Marked");
-    picks = ["first"];
+    picks = [""];
   });
 
   teardown(async () => {
@@ -190,25 +190,26 @@ suite("Typst Redline commands", () => {
     }
   });
 
-  test("lists the view, then commits by their subject as written", async () => {
+  test("lists commits that have a parent by their subject as written, then the other choices", async () => {
     picks = [];
     await show();
-    assert.deepStrictEqual(labels(lists[0]).slice(0, 5), [
-      "$(settings) View: Marked",
-      "",
+    assert.deepStrictEqual(labels(lists[0]), [
       "third – ändrad “här”",
       "second",
-      "first",
+      "",
+      "$(file) Another file...",
+      "$(list-selection) Several commits...",
+      "$(settings) More options...",
     ]);
   });
 
-  test("Enter runs at once with the newest commit, and the PDF opens beside the editor", async () => {
+  test("Enter shows the newest commit's change, and the PDF opens beside the editor", async () => {
     picks = [""];
     await show();
     assertOpenedPdf();
     assert.strictEqual(lists.length, 1);
     assert.strictEqual(opened[0].options.viewColumn, vscode.ViewColumn.Beside);
-    assert.deepStrictEqual(runs[0].slice(0, 4), [file, "--since", hash("third.*"), "--root"]);
+    assert.deepStrictEqual(runs[0].slice(0, 4), [file, "--since", hash("second"), "--root"]);
     assert.strictEqual(runs[0].length, 5);
   });
 
@@ -223,14 +224,14 @@ suite("Typst Redline commands", () => {
     await vscode.commands.executeCommand("typstRedline.showChanges", vscode.Uri.file(other));
     assertOpenedPdf();
     assert.strictEqual(vscode.window.activeTextEditor?.document.fileName, file);
-    assert.deepStrictEqual(runs[0].slice(0, 3), [vscode.Uri.file(other).fsPath, "--since", hash("add other")]);
+    assert.deepStrictEqual(runs[0].slice(0, 3), [vscode.Uri.file(other).fsPath, "--since", hash("third.*")]);
   });
 
-  test("the view entry changes the view, which later runs use", async () => {
+  test("the view chosen under More options is shown there and used by later runs", async () => {
     await setView("Side by side, coloured by commit", "4 steps");
     picks = [];
     await show();
-    assert.strictEqual(lists[0][0].label, "$(settings) View: Side by side, coloured by commit, 4 steps");
+    assert.strictEqual(lists[0].at(-1)!.description, "View: Side by side, coloured by commit, 4 steps");
     assert.strictEqual(actives[0]?.label, "third – ändrad “här”");
     assert.deepStrictEqual(runs, []);
   });
@@ -244,7 +245,7 @@ suite("Typst Redline commands", () => {
     ];
     for (const [view, args] of expected) {
       await setView(...view);
-      picks = ["first"];
+      picks = ["second"];
       opened = [];
       runs = [];
       await show();
@@ -260,7 +261,7 @@ suite("Typst Redline commands", () => {
       git(dir, "commit", "-q", "-am", `line ${i}`);
     }
     await setView("Marked, coloured by commit", "One colour per commit");
-    picks = ["first"];
+    picks = ["second"];
     await show();
     assertOpenedPdf();
     assert.deepStrictEqual(runs[1].slice(5), ["--steps", "6"]);
@@ -269,10 +270,10 @@ suite("Typst Redline commands", () => {
 
   test("changes between two commits include both and nothing after", async () => {
     await setView("Marked, coloured by commit", "One colour per commit");
-    picks = ["Between two commits", "second", "third"];
+    picks = ["More options", "Between two commits", "second", "third"];
     await show();
     assertOpenedPdf();
-    assert.deepStrictEqual(labels(lists[2]), ["third – ändrad “här”", "second"]);
+    assert.deepStrictEqual(labels(lists[3]), ["third – ändrad “här”", "second"]);
     const args = [file, "--since", hash("first"), "--to", hash("third.*"), "--root"];
     assert.deepStrictEqual(runs[0].slice(0, 6), args);
     assert.deepStrictEqual(runs[0].slice(7), ["--each-commit"]);
@@ -291,8 +292,6 @@ suite("Typst Redline commands", () => {
     ticks = [["third – ändrad “här”", "second"]];
     await show();
     assertOpenedPdf();
-    // The first commit has no parent to compare with.
-    assert.deepStrictEqual(labels(lists[1]), ["third – ändrad “här”", "second"]);
     assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", hash("first")]);
     assert.deepStrictEqual(runs[0].slice(5), ["--layout", "side-by-side", "--steps", hash("second")]);
   });
@@ -304,8 +303,8 @@ suite("Typst Redline commands", () => {
       git(dir, "commit", "-q", "-am", `line ${i}`);
     }
     const seven = ["line 0", "line 1", "line 2", "line 3", "line 4", "line 5", "second"];
-    picks = ["Several commits", "Several commits"];
-    ticks = [seven, [], []];
+    picks = ["Several commits"];
+    ticks = [seven, []];
     await show();
     assert.strictEqual(warnings.length, 1);
     assert.strictEqual(lists[2].filter((i) => i.picked).length, 7);
@@ -334,7 +333,7 @@ suite("Typst Redline commands", () => {
     await show();
     assert.deepStrictEqual(runs, []);
     assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /typstRedline\.extraArgs holds --steps.*View entry/);
+    assert.match(errors[0], /typstRedline\.extraArgs holds --steps.*More options/);
   });
 
   test("with nothing to colour, the changes are marked without colours and it says so", async () => {
@@ -342,7 +341,7 @@ suite("Typst Redline commands", () => {
     fs.writeFileSync(path.join(dir, "new.typ"), "New.\n");
     await open(path.join(dir, "new.typ"));
     await setView("Marked, coloured by commit", "One colour per commit");
-    picks = ["first"];
+    picks = ["second"];
     await show();
     assertOpenedPdf();
     assert.deepStrictEqual(infos, [
@@ -365,6 +364,19 @@ suite("Typst Redline commands", () => {
     await config.update("root", path.join(empty, "sub"), vscode.ConfigurationTarget.Global);
     await show();
     assert.match(placeholders[1], /^No commits touch this folder\. /);
+  });
+
+  test("uncommitted changes in tracked files are listed first and shown on Enter", async () => {
+    fs.writeFileSync(path.join(path.dirname(file), "untracked.pdf"), "");
+    picks = [];
+    await show();
+    assert.ok(!labels(lists[0]).some((l) => l.includes("Uncommitted")));
+    fs.writeFileSync(file, "= Title\n\nUncommitted.\n");
+    picks = [""];
+    await show();
+    assertOpenedPdf();
+    assert.strictEqual(actives[1]?.label, "$(edit) Uncommitted changes");
+    assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", hash("third.*")]);
   });
 
   test("unsaved changes are saved and compared", async () => {
@@ -454,11 +466,12 @@ suite("Typst Redline commands", () => {
   test("cancelling at any step runs nothing", async () => {
     const steps = [
       [],
-      ["View"],
-      ["View", "Marked, coloured by commit"],
+      ["More options"],
+      ["More options", "View"],
+      ["More options", "View", "Marked, coloured by commit"],
       ["Several commits"],
-      ["Between two commits"],
-      ["Between two commits", "second"],
+      ["More options", "Between two commits"],
+      ["More options", "Between two commits", "second"],
       ["Another file"],
     ];
     for (const p of steps) {
@@ -506,7 +519,7 @@ suite("Typst Redline commands", () => {
       await sleep(100);
     }
     assert.ok(size() > 0, "typst did not start");
-    picks = ["first"];
+    picks = [""];
     await show();
     assert.deepStrictEqual(warnings, ["Typst Redline is still running for this file."]);
     assert.strictEqual(runs.length, 1);
