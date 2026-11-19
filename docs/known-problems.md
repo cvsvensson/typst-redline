@@ -17,7 +17,7 @@ Each of these was tried with the current version. Within each group, the ones a 
 - Pages where a template or a later `set page` rule gives both its own page foreground and background get no margin bars; the summary lists those pages.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
 - Change numbers and bars can overlap the document's own margin notes and line numbers, and with `par.line` numbering a change number stands just left of the line number.
-- Where neither margin has room for a number, it is set smaller at the page edge and can touch a bar; on a page without margins it stands just inside the bars, over the text where the text reaches the edge of the page.
+- Where neither margin has room for a number, it is set smaller at the page edge, where it can stand on a bar; on a page without margins it stands just inside the bars, over the text where the text reaches the edge of the page.
 - In Chinese and Japanese text, a change that starts a line with a letter or digit right after a Chinese or Japanese character has its bar and number on the line before, and a change that ends with or next to such a character in a table cell or `columns` has its bar in the left margin.
 
 ## Moved text
