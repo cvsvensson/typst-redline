@@ -1100,7 +1100,8 @@
 // The number and title of the heading `el`, as the summary lists it.
 #let redline-heading-name(el, title) = {
   let num = if el.numbering != none { numbering(el.numbering, ..counter(heading).at(el.location())) + h(0.5em) }
-  [#num#title]
+  // A word joiner keeps the number on the line of the title's first word.
+  if num == none { title } else [#box(num)#sym.wj#title]
 }
 
 // The text of content without its deletions, whose marks must not be laid
@@ -1211,9 +1212,9 @@
     let min-level = calc.min(..info.entries.map(e => e.level), 9)
     let what(n, moves, unmarked, ..label) = {
       let parts = label.pos()
-      if n > 0 { parts.push[#n #if n == 1 [change] else [changes]] }
-      if moves > 0 { parts.push[#moves #if moves == 1 [passage] else [passages] moved] }
-      [#parts.join[, ]#if unmarked > 0 [ (#unmarked not marked)]]
+      if n > 0 { parts.push[#n~#if n == 1 [change] else [changes]] }
+      if moves > 0 { parts.push[#moves~#if moves == 1 [passage] else [passages] moved] }
+      [#parts.join[, ]#if unmarked > 0 [ (#unmarked~not marked)]]
     }
     let row(level, name, what, at) = (pad(left: (level - min-level) * 1.2em, name), what, if at.len() > 0 { redline-page-names(at, prefix: false) })
     let heading-row(level, el, title, what) = {
@@ -1249,13 +1250,25 @@
     if rows.len() > 0 {
       redline-head[Changes by section]
       let grey = text.with(size: 0.85em, fill: luma(110))
-      grid(
-        columns: (1fr, auto, auto),
-        column-gutter: 1.5em,
-        row-gutter: 0.6em,
-        grey[Section], grey[Changes], grey[Page],
-        ..rows,
-      )
+      let head = (grey[Section], grey[Changes], grey[Page])
+      // Section names get their width first, as long as the changes keep a
+      // third of what the pages leave; neither gets less than its longest
+      // unbreakable part, such as a number and its word (Typst 0.11 cannot
+      // measure that). The changes wrap.
+      layout(size => {
+        let gutter = 1.2em.to-absolute()
+        let widest(k, ..room) = calc.max(..(head + rows).enumerate().filter(((i, _)) => calc.rem(i, 3) == k).map(((_, c)) => measure([#c], ..room).width))
+        let room = size.width - widest(2) - 2 * gutter
+        let least(k) = if sys.version >= version(0, 12, 0) { widest(k, width: 1pt) } else { 0pt }
+        let changes = calc.min(widest(1), calc.max(room / 3, least(1)))
+        grid(
+          columns: (calc.max(least(0), calc.min(widest(0), room - changes)), 1fr, auto),
+          column-gutter: gutter,
+          row-gutter: 0.6em,
+          ..head,
+          ..rows,
+        )
+      })
     }
 
     let groups = info.entries.zip(lost).filter(((e, l)) => e.code.len() + l.len() > 0)
