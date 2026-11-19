@@ -34,7 +34,7 @@ pub struct Ctx {
     old_files: Vec<(String, String)>,
     new_files: Vec<(String, String)>,
     /// New file path to the path of the old file it is compared with.
-    pairs: HashMap<String, String>,
+    pub(crate) pairs: HashMap<String, String>,
     /// The project files of the versions between the old and the new one,
     /// if each change is marked with the step that made it.
     steps: Option<Vec<Vec<(String, String)>>>,

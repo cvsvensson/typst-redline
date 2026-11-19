@@ -86,6 +86,9 @@ pub struct Redline {
     /// The files of the new version that the comparison marks, or lists if
     /// they change.
     pub checked: Vec<String>,
+    /// Each marked file of the new version with the old file it is compared
+    /// with, as (old, new) paths.
+    pub pairs: Vec<(String, String)>,
 }
 
 /// Top-level blocks moved together: the blocks `old.1` of the old file at
@@ -202,6 +205,7 @@ pub fn redline(
         warnings,
         moves: ctx.moves(),
         checked: checked.into_iter().collect(),
+        pairs: ctx.pairs.iter().map(|(n, o)| (o.clone(), n.clone())).collect(),
     }
 }
 
