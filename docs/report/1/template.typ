@@ -21,6 +21,6 @@
     #align(center, smallcaps[Abstract])
     #abstract
   ]
-  set page(numbering: "1", number-align: top + right)
+  set page(numbering: "1")
   body
 }

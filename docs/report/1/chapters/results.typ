@@ -4,5 +4,5 @@
 
 #figure(
   image("../figures/speed.svg", width: 65%),
-  caption: [Time per sort by list length.],
+  caption: [Time per sort, for lists of 10 to 1000 numbers.],
 ) <speed>
