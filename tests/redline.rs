@@ -690,12 +690,14 @@ fn render(name: &str, files: &[(String, String)]) -> Option<Vec<Vec<u8>>> {
     Some(pages.iter().map(|p| std::fs::read(p).unwrap()).collect())
 }
 
-/// A glyph or image on a page: what it shows and where, in points.
+/// A glyph or image on a page: what it shows, where, in points, and in
+/// which colour.
 #[derive(Debug)]
 struct Glyph {
     id: String,
     x: f64,
     y: f64,
+    fill: Option<String>,
 }
 
 /// The glyphs and images on each page of a project, from its SVG rendering,
@@ -780,6 +782,7 @@ fn svg_glyphs(svg: &str) -> Vec<Glyph> {
                     id,
                     x: m[0] * x + m[2] * y + m[4],
                     y: m[1] * x + m[3] * y + m[5],
+                    fill: attr(tag, "fill"),
                 });
             }
             _ => {}
@@ -1110,6 +1113,37 @@ fn insertion_of_content_that_takes_no_room_adds_no_space() {
     };
     let new = compile("roomless-new", &[("main.typ".into(), doc("blue"))]).unwrap();
     assert_eq!(query(&marked, "<probe>"), query(&new, "<probe>"));
+}
+
+#[test]
+fn tool_text_keeps_its_look_under_the_documents_text_rules() {
+    // The glyphs of the pointer line above the text area, and of the change
+    // number in the left margin by what they show and their colour.
+    let tool_text = |name: &str, rules: &str| {
+        let r = redline_of(&format!("{rules}Alpha beta.\n"), &format!("{rules}Alpha gamma.\n"));
+        let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+        let page = glyphs(name, &files)?.remove(0);
+        let shown = |g: &Glyph| match g.y < 60. {
+            true => format!("{} {:?} {:.1} {:.1}", g.id, g.fill, g.x, g.y),
+            false => format!("{} {:?}", g.id, g.fill),
+        };
+        Some(
+            page.iter()
+                .filter(|g| g.x < 60. || g.y < 60.)
+                .map(shown)
+                .collect::<Vec<_>>(),
+        )
+    };
+    let Some(plain) = tool_text("tool-text-plain", "") else {
+        return;
+    };
+    let styled = tool_text(
+        "tool-text-styled",
+        "#show text: set text(fill: red)\n#set text(size: 20pt, weight: \"bold\", style: \"italic\", tracking: 1pt)\n",
+    )
+    .unwrap();
+    assert!(plain.len() > 1);
+    assert_eq!(plain, styled);
 }
 
 /// The `<probe>` values of the marked document and of the old version.
