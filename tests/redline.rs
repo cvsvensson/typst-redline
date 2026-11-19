@@ -1224,10 +1224,21 @@ fn deleted_code_that_would_fail_compiles_when_shown_by_name() {
     compile("deleted-code", &generate("deleted-code", PREAMBLE, BY_NAME).files);
 }
 
-/// The preamble with deletions and the summary left out: insertions, moves
-/// and bars as the proof shows them.
+/// The preamble without the summary and with what was deleted left out:
+/// insertions, moves and bars as the proof shows them, and each deletion
+/// with what the tool puts around it (tags, paragraph breaks, the restoring
+/// of counters) but none of the deleted content, nor the space after it or
+/// the marker of a deleted item, which are there for that content.
 fn without_deletions() -> String {
-    format!("{PREAMBLE}\n#let redline-del(..args) = none\n#let redline-summary(info) = none\n")
+    format!(
+        "{PREAMBLE}
+#let redline-del-real = redline-del
+#let redline-del(body, move: none, item: none, gap: false, block: false, ..args) = if move == none {{
+  redline-del-real([], block: block or item != none, ..args)
+}}
+#let redline-summary(info) = none
+"
+    )
 }
 
 /// Every fixture: each change found is marked and on the summary's list of

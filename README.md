@@ -150,7 +150,7 @@ Each of these was tried with the current version.
 - In side by side, a document whose layout does not settle (Typst warns that it did not converge) can show other pages than those of its changes; the tool warns about it.
 - In side by side, an inserted or deleted page is shown next to an empty one only when the pages have headings or a moved passage on them; otherwise it can be paired with a neighbouring page.
 - Files outside the project root and package files are not checked for changes.
-- Typst 0.12 and 0.13 are not tested. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked. With Typst 0.11, the summary is laid out on the document's pages, with its header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.
+- Typst 0.12 and 0.13 are not tested. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked. With Typst 0.12 and 0.13, inserted CJK text can show as missing-glyph boxes; with 0.11, 0.14 and 0.15 it shows as written. With Typst 0.11, the summary is laid out on the document's pages, with its header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.
 
 ## Styling
 
