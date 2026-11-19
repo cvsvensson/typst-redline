@@ -67,15 +67,17 @@
     del-fill: rgb("#fde4e4"),
     // As thick as the text is large, so that it does not cover small text.
     strike: 0.065em + del,
-    // Frames of block-level elements, this far outside them.
+    // Frames of block-level elements, this far outside them. A block ends
+    // at the baseline of its last line: the frame clears the descenders.
     ins-frame: 0.6pt + ins,
     del-frame: (paint: del, thickness: 0.6pt, dash: "dashed"),
-    outset: 3pt,
+    outset: (x: 0.4em, top: 0.3em, bottom: 0.5em),
     // Change bars sit this far outside the text area, at most half the
     // margin; deletion bars one lane further out, so that the two never
     // touch.
     bar-gap: 0.5cm,
     bar-width: 2pt,
+    del-bar-width: 1.5pt,
     lane: 3.5pt,
     // Brackets and lines of moved text.
     move: luma(110),
@@ -173,11 +175,14 @@
     or sole and repr(c.func()) in ("context", "layout") and "frames" not in redline-fallback
 )
 
-// The two lines that cross out a deleted drawing of size `w` by `h`.
+// The two lines that cross out deleted content of size `w` by `h`, light
+// enough that the content stays legible, on a white edge that shows them
+// on a fill of their own colour.
 #let redline-cross(stroke, w, h) = {
-  let s = 0.6pt + stroke.paint.transparentize(40%)
-  place(top + left, line(start: (0pt, 0pt), end: (w, h), stroke: s))
-  place(top + left, line(start: (0pt, h), end: (w, 0pt), stroke: s))
+  for s in (1.5pt + white.transparentize(45%), 0.75pt + stroke.paint.transparentize(30%)) {
+    place(top + left, line(start: (0pt, 0pt), end: (w, h), stroke: s))
+    place(top + left, line(start: (0pt, h), end: (w, 0pt), stroke: s))
+  }
 }
 
 // A frame around a block-level element, outside it so that nothing moves;
@@ -222,8 +227,8 @@
       let above = caption != none and caption.at("position", default: figure.caption.position) == top
       place(center, dy: if above { h - ch } else { 0pt }, box(width: body-w, height: ch, redline-cross(stroke, body-w, ch)))
     } else if cross and not empty { redline-cross(stroke, w, h) }
-    place(top + left, if start != none { redline-tag(start, -st.outset, step: step, id: id) })
-    place(bottom + left, if end != none { redline-tag("end", st.outset, width: size.width) })
+    place(top + left, if start != none { redline-tag(start, -st.outset.top, step: step, id: id) })
+    place(bottom + left, if end != none { redline-tag("end", st.outset.bottom, width: size.width) })
   }))
 })))
 
@@ -254,10 +259,11 @@
 // of parts that are not framed, `frame-style` to each framed part that shows
 // text. A drawing, an image, or content with colours of its own is drawn as
 // written, with only `plain` applied: its frame is the mark. A colour would
-// reach the labels of a drawing but not its lines. A deleted drawing is also
-// crossed. A box in the text that shows no text is a drawing too, framed at
-// its own size. A figure's caption is styled all the same. The tags around
-// content that takes no room are placed, so that they do not form a line.
+// reach the labels of a drawing but not its lines. Deleted content that is
+// not struck, such content or a displayed equation, is crossed. A box in
+// the text that shows no text is a drawing too, framed at its own size. A
+// figure's caption is styled all the same. The tags around content that
+// takes no room are placed, so that they do not form a line.
 #let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, whole: false, step: none, id: none) = {
   let (lead, ch, trail) = redline-parts(body)
   let n = ch.len()
@@ -275,10 +281,11 @@
       run = ()
       let start = if i == 0 { kind }
       let b = if c.func() == figure { c.body } else { c }
-      let drawing = not redline-textual(b)
-      let own = drawing or redline-own-colours(b)
-      let f = redline-frame(c, stroke, cross: kind == "del" and drawing, whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
-      out.push(if not own { frame-style(f) } else if c.func() == figure {
+      let own = not redline-textual(b) or redline-own-colours(b)
+      // A strike reaches only the words of an equation.
+      let eq = kind == "del" and c.func() == math.equation
+      let f = redline-frame(c, stroke, cross: kind == "del" and (own or eq), whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
+      out.push(if eq { plain(text(fill: stroke.paint, f)) } else if not own { frame-style(f) } else if c.func() == figure {
         show figure.caption: frame-style
         plain(f)
       } else { plain(f) })
@@ -287,7 +294,7 @@
       // text starts; a tag alone stays on the line before a break.
       if i == 0 { run.push(if block { redline-tag(kind, start-dy, step: step, id: id) } else [#box(redline-tag(kind, -0.8em, step: step, id: id))\u{2060}]) }
       let c = if c.func() == box and c.at("body", default: none) != none and not redline-textual(c) {
-        box(stroke: stroke, outset: redline-style.outset, {
+        box(stroke: stroke, outset: redline-style.outset.top, {
           c
           if kind == "del" { context { let s = measure(c); redline-cross(stroke, s.width, s.height) } }
         })
@@ -323,11 +330,22 @@
 #let redline-ins-rules(body, block, st: redline-style) = {
   if block { return context text(fill: if redline-light-text() { st.ins.lighten(60%) } else { st.ins }, body) }
   set text(fill: st.ins)
+  let stroke = (bottom: 0.5pt + st.ins)
   // A box keeps a fill behind math but stops it from breaking across lines.
-  show math.equation.where(block: false): it => context if measure(it).width < 0.2 * page.width {
-    box(fill: st.ins-fill, outset: (y: 2pt), it)
-  } else { it }
-  highlight(fill: st.ins-fill, stroke: (bottom: 0.5pt + st.ins), body)
+  // It reaches as far up and down as the highlight of the text around it,
+  // from the ascender to the descender of the text's font, which inside
+  // math is the math font.
+  context {
+    let edge(top, bottom) = measure(text(top-edge: top, bottom-edge: bottom)[x]).height
+    let (ascender, descender) = (edge("ascender", "baseline"), edge("baseline", "descender"))
+    show math.equation.where(block: false): it => context if measure(it).width < 0.2 * page.width {
+      let h = measure(box(it)).height
+      let depth = measure(box[#it#text(top-edge: 100pt, bottom-edge: "baseline", sym.zwj)]).height - 100pt
+      let outset = (top: calc.max(0pt, ascender - h + depth), bottom: calc.max(0pt, descender - depth))
+      box(fill: st.ins-fill, stroke: stroke, outset: outset, it)
+    } else { it }
+    highlight(fill: st.ins-fill, stroke: stroke, body)
+  }
 }
 
 // Whether state updates in deleted content are kept. A state cannot be set
@@ -595,8 +613,8 @@
 } else { (c,) }
 
 // The line at the old place of moved text, linked to its new place: the
-// first words of what moved, as many as fit on one line. It takes the place
-// of a paragraph, with the paragraph spacing above and below. Its arrow has
+// first words of what moved in quotes, as many as fit on one line. It
+// takes the place of a paragraph, with the paragraph spacing above and below. Its arrow has
 // the colour of deletions.
 #let redline-move-line(m, note, step) = {
   parbreak()
@@ -614,8 +632,8 @@
         [#text(fill: redline-step-style(step).del, if down { sym.arrow.b } else { sym.arrow.t }) Moved #where:]
       }
       let line(k) = {
-        let words = if k > 0 { style(pieces.slice(0, k).join()) }
-        [#head #words#if k < pieces.len() or m.at("more", default: false) [ …]]
+        let more = if k < pieces.len() or m.at("more", default: false) [ …]
+        [#head #if k > 0 ["#style(pieces.slice(0, k).join())#more"] else { more }]
       }
       let k = pieces.len()
       let full = measure(line(k)).width
@@ -681,6 +699,11 @@
   if move != none { return redline-move-line(move, body, step) }
   let block = block or heading != none or item != none
   let body = redline-neutral(body)
+  // Deleted white space alone, such as a non-breaking space, is shown by a
+  // space sign: struck, it would read as a hyphen.
+  if type(body) == content and body.func() != raw and body.has("text") and body.text.trim() == "" {
+    body = box(width: 0.45em, height: 0.25em, stroke: (x: 0.07em + st.del, bottom: 0.07em + st.del))
+  }
   if block { parbreak() }
   let rules = redline-del-rules.with(st: st)
   // A deleted line break inside a paragraph is shown by a sign, as breaking
@@ -755,9 +778,15 @@
   set text(size: 6.5pt, lang: "en", dir: ltr, weight: "regular", style: "normal")
   set par(justify: false)
   let lead = if v.at("empty", default: false) [typst-redline found no changes] else [Changes marked by typst-redline]
-  // The colours inside the link, which the document can style.
-  let line = [#text(fill: luma(110))[#lead · summary on #redline-page-names((at.first().location(),))]#text(fill: redline-style.del, more)]
-  place(top + left, dx: x, dy: calc.max(2pt, margin / 4 - 3pt), block(width: width, link(at.first().location(), line)))
+  let pages = redline-page-names((at.first().location(),))
+  // The colours inside the link, which the document can style. Without
+  // its first words where it would wrap; on white and at the right, to read
+  // on a header band beside a title.
+  let line(head) = [#text(fill: luma(110), head)#text(fill: redline-style.del, more)]
+  let full = line[#lead · summary on #pages]
+  let line = context if measure(full).width <= width { full } else { line[Summary on #pages] }
+  let line = box(fill: white, outset: (x: 2pt, y: 1.5pt), radius: 1pt, line)
+  place(top + left, dx: x, dy: calc.max(2pt, margin / 4 - 3pt), block(width: width, align(end, link(at.first().location(), line))))
 }
 
 // The bars of one page, drawn from the page foreground or background
@@ -812,6 +841,10 @@
     let k = calc.clamp(calc.floor(((if s.page == pg { s.x } else { e.x }) - left) / (cw + g)), 0, cols - 1)
     (k, cols, cw, g)
   }
+  // The distance of the bars from the text in a margin `m` wide, smaller in
+  // a narrow margin, so that a move's bracket three lanes out stays clear
+  // of the page edge.
+  let gap(m) = calc.max(3pt, calc.min(st.bar-gap, m / 2, m - 3 * st.lane - 6pt))
   let bar-x(s, e, cw, g, n, lane) = {
     let (k, cols, cw, g) = column(s, e, cw, g, n)
     let at = calc.min(s.x, e.x) - left
@@ -820,9 +853,9 @@
       let edge = left + k * (cw + g) - g
       (calc.max(left + k * (cw + g) - calc.min(st.bar-gap, g / 2) + l / 2 - lane * l, edge + 3pt), false, edge)
     } else if cols == 1 and at > cw and at + cw > body - 1pt {
-      (calc.min(left + body + calc.min(st.bar-gap, right / 2) + lane * st.lane, w - st.bar-width / 2), true, w)
+      (calc.min(left + body + gap(right) + lane * st.lane, w - st.bar-width / 2), true, w)
     } else {
-      (calc.max(left - calc.min(st.bar-gap, left / 2) - lane * st.lane, st.bar-width / 2), false, 0pt)
+      (calc.max(left - gap(left) - lane * st.lane, st.bar-width / 2), false, 0pt)
     }
   }
   // Where the number of a change goes: (x, whether it is in the right
@@ -877,18 +910,28 @@
     }
     i += 1
   }
-  // Overlapping bars of one kind and colour in one place are drawn as one,
-  // so that dashes do not overlap.
+  // Bars of one kind and colour in one place that overlap, or are too close
+  // for a line of text between them, are drawn as one, so that changes on
+  // consecutive lines share a bar. Between paragraphs, a gap can be as
+  // wide as an unchanged line, so bars there stay apart.
+  let join = 0.5em.to-absolute()
   let merged = ()
   for bar in bars.sorted(key: b => (b.at(0).pt(), b.at(1).pt())) {
     let last = if merged.len() > 0 { merged.last() }
-    if last != none and last.at(0) == bar.at(0) and last.slice(3) == bar.slice(3) and bar.at(1) <= last.at(2) + 2pt {
+    if last != none and last.at(0) == bar.at(0) and last.slice(3) == bar.slice(3) and bar.at(1) <= last.at(2) + join {
       merged.last().at(2) = calc.max(last.at(2), bar.at(2))
     } else { merged.push(bar) }
   }
+  // A deletion bar is thinner and dashed, with whole dashes at its ends and
+  // at least three, so that a short one does not read as a colon.
   for (x, y0, y1, ins, paint) in merged {
-    let stroke = (paint: paint, thickness: st.bar-width, dash: if ins { none } else { (3pt, 2pt) })
-    place(redline-top-left, dx: x, dy: y0, line(angle: 90deg, length: calc.max(y1 - y0, 0pt), stroke: stroke))
+    let len = calc.max(y1 - y0, 0pt)
+    let k = calc.max(3, calc.round((len + 1.5pt) / 4.5pt))
+    let space = calc.min(1.5pt, len / (2 * k))
+    let stroke = if ins { st.bar-width + paint } else {
+      (paint: paint, thickness: st.del-bar-width, dash: ((len - (k - 1) * space) / k, space))
+    }
+    place(redline-top-left, dx: x, dy: y0, line(angle: 90deg, length: len, stroke: stroke))
   }
   // A move's bracket, from the start of its new place to its end, linked to
   // its old place, with the x of the far side of the free space for its
@@ -904,7 +947,7 @@
     } else if cols > 1 and k > 0 {
       let x = left + k * (cw + g) - calc.min(3.5pt, g / 4)
       (x, false, x - 5pt)
-    } else { bar-x(s, e, cw, g, n, 2.5) }
+    } else { bar-x(s, e, cw, g, n, 3) }
   }
   let ends = query(<redline-move>)
   let (lo, hi) = (0, ends.len())
