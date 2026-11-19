@@ -2552,6 +2552,38 @@ fn side_by_side_shows_an_inserted_or_deleted_page_without_a_counterpart() {
 }
 
 #[test]
+fn side_by_side_does_not_take_slides_with_the_same_changed_header_for_steps() {
+    let c = |ins, page| Placed {
+        kind: if ins { PlacedKind::Ins } else { PlacedKind::Del },
+        id: 1,
+        mark: 1,
+        page,
+        last: page,
+    };
+    // Each of three slides shows the same changed header.
+    let old: Vec<_> = (1..4).map(|p| c(false, p)).collect();
+    let new: Vec<_> = (1..4).map(|p| c(true, p)).collect();
+    let anchors = [(1, 1), (2, 2), (3, 3)];
+    let (pairs, _) = pair_pages(&old, &new, (&anchors, &anchors), (&[], &[]));
+    assert_eq!(pairs.len(), 3);
+    assert!(pairs.iter().all(|p| p.steps_old.is_empty() && p.steps_new.is_empty()));
+}
+
+#[test]
+fn side_by_side_pairs_pages_drawn_differently_by_their_headings() {
+    // A listed change adds a step to a slide built in a loop: old pages
+    // 4 and 5 (the last step and the end) and new pages 4 to 6 look different.
+    let (build, end) = (1, 2);
+    let anchors_old = [(build, 2), (build, 3), (build, 4), (end, 5)];
+    let anchors_new = [(build, 2), (build, 3), (build, 4), (build, 5), (end, 6)];
+    let looks_old = [1, 2, 3, 4, 5];
+    let looks_new = [1, 2, 3, 14, 15, 16];
+    let (pairs, _) = pair_pages(&[], &[], (&anchors_old, &anchors_new), (&looks_old, &looks_new));
+    let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone())).collect();
+    assert_eq!(pages, [(vec![4], vec![4, 5]), (vec![5], vec![6])]);
+}
+
+#[test]
 fn side_by_side_pairs_slides_by_their_headings_where_the_versions_mark_them_differently() {
     let c = |ins, id, page| Placed {
         kind: if ins { PlacedKind::Ins } else { PlacedKind::Del },
@@ -2844,17 +2876,47 @@ fn side_by_side_shows_pages_changed_by_a_listed_change_next_to_a_marked_edit() {
     }
     let dir = temp_dir("side-by-side-listed-and-marked");
     let doc = |to: &str, word: &str| {
-        format!("#show \"colour\": \"{to}\"
+        format!(
+            "#show \"colour\": \"{to}\"
 The {word} word.
 #pagebreak()
 A colour.
 #pagebreak()
 The end.
-")
+"
+        )
     };
     std::fs::write(dir.join("old.typ"), doc("color", "old")).unwrap();
     std::fs::write(dir.join("new.typ"), doc("hue", "new")).unwrap();
     assert_eq!(shown_pairs(&dir), ["(1,), new: (1,)", "(2,), new: (2,)"]);
+}
+
+#[test]
+fn side_by_side_summary_finds_the_section_of_a_deletion() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("side-deletion-section");
+    std::fs::write(dir.join(PREAMBLE_PATH), PREAMBLE).unwrap();
+    let main = format!(
+        "#import \"/{PREAMBLE_PATH}\": redline-del, redline-under-headings
+= Intro
+A.
+= Build
+Text #redline-del(id: 0)[gone] more.
+#context [#metadata(redline-under-headings(((id: 0),)).map(g => g.heading.body.text))<probe>]
+"
+    );
+    std::fs::write(dir.join("main.typ"), main).unwrap();
+    let out = Command::new("typst")
+        .args(["query", "--input", "redline-side=new", "--root"])
+        .arg(&*dir)
+        .arg(dir.join("main.typ"))
+        .args(["<probe>", "--field", "value"])
+        .output()
+        .unwrap();
+    let found: String = String::from_utf8_lossy(&out.stdout).split_whitespace().collect();
+    assert_eq!(found, "[[\"Build\"]]", "{}", String::from_utf8_lossy(&out.stderr));
 }
 
 #[test]

@@ -107,7 +107,8 @@ fn moves_of(side: &[Placed]) -> (HashMap<u64, Vec<usize>>, Vec<Option<u64>>) {
 /// the same pages drawn alike are paired as well: all together, or one by
 /// one if a page among them has a change, which shows them next to its own. Whether such a page shows a
 /// listed change or only reflows after a marked one cannot be told, so it is
-/// shown. Consecutive pairs with
+/// shown; those with the same headings are paired with each other first.
+/// Consecutive pairs with
 /// the same marks are steps of one slide; only the last is kept.
 pub fn pair_pages(
     old: &[Placed],
@@ -205,7 +206,21 @@ pub fn pair_pages(
     }
     for seg in segments(looks.0, looks.1).into_iter().filter(|s| !s.equal) {
         let pages = |r: std::ops::Range<usize>| r.map(|i| i + 1).collect::<BTreeSet<_>>();
-        let (o, n) = (pages(seg.old), pages(seg.new));
+        let (mut o, mut n) = (pages(seg.old), pages(seg.new));
+        // Pages with the same headings are each other's counterparts.
+        let pairs: Vec<_> = same
+            .iter()
+            .copied()
+            .filter(|(p, q)| o.contains(p) && n.contains(q))
+            .collect();
+        for (p, q) in pairs {
+            join(&mut groups, Some(p), Some(q));
+            o.remove(&p);
+            n.remove(&q);
+        }
+        if o.is_empty() && n.is_empty() {
+            continue;
+        }
         let changed = |side: &[Placed], p: usize| side.iter().any(|c| c.pages().contains(&p));
         if !o.iter().any(|&p| changed(old, p)) && !n.iter().any(|&p| changed(new, p)) {
             groups.push((o, n));
@@ -257,12 +272,19 @@ pub fn pair_pages(
         )
     });
 
-    // The steps of a slide lay out the same marks again; two pages that
-    // merely make the same edit do not.
+    // The steps of a slide lay out the same marks and headings again; two
+    // pages that merely make the same edit, or show the same changed page
+    // header, do not.
     let changes = |side: &[Placed], pages: &BTreeSet<usize>| {
         side.iter()
             .filter(|c| pages.contains(&c.page))
             .map(|c| (c.kind, c.mark))
+            .collect::<Vec<_>>()
+    };
+    let headings = |a: &[Anchor], pages: &BTreeSet<usize>| {
+        a.iter()
+            .filter(|(_, p)| pages.contains(p))
+            .map(|(id, _)| *id)
             .collect::<Vec<_>>()
     };
     let follows = |a: &BTreeSet<usize>, b: &BTreeSet<usize>| a.last().map(|p| p + 1) == b.first().copied();
@@ -280,6 +302,8 @@ pub fn pair_pages(
                 && follows(pn, n)
                 && changes(old, po) == changes(old, o)
                 && changes(new, pn) == changes(new, n)
+                && headings(anchors.0, po) == headings(anchors.0, o)
+                && headings(anchors.1, pn) == headings(anchors.1, n)
             {
                 let prev = pairs.pop().unwrap();
                 pair.steps_old = [prev.steps_old, prev.old].concat();

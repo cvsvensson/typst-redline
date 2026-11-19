@@ -1542,6 +1542,11 @@
     let id = redline-value(t).at(6)
     if id != none and str(id) not in at { at.insert(str(id), redline-start-at(t.location(), id)) }
   }
+  // On the new side of the side-by-side layout, a deletion has no tags.
+  for c in query(<redline-change>) {
+    let id = redline-value(c).at(2)
+    if id != none and str(id) not in at { at.insert(str(id), c.location()) }
+  }
   let kept(x) = x.level <= 2 and (x.at("outlined", default: true) or x.at("bookmarked", default: auto) != false)
   let groups = ()
   for m in marks {
@@ -1932,7 +1937,7 @@
     redline-not-marked(files.map(f => ([In #redline-mono(f)], info.unmarked.filter(u => u.file == f))), (added: (), removed: (), changed: ()))
     if o.unbarred.len() > 0 { redline-notes(([Changes on pages #pages(o.unbarred) of #name(o) have no bars in the margin, because the document sets its own page foreground and background there.],)) }
   })
-  let head(side, pg, s, ps) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]] else if ps.len() == 0 [Not in #name(side)]
+  let head(side, pg, s, ps) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]] else if ps.len() == 0 [No matching page in #name(side)]
   // A side without a page shows an empty outline as large as the page next
   // to it, so that the other stays in place.
   let shot(side, w, pg, other) = if pg != none { box(stroke: 0.5pt + luma(150), image(side.pdf, page: pg)) } else {
