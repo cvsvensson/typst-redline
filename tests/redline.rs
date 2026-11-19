@@ -3,7 +3,7 @@ use std::process::{Command, Output};
 
 use typst_redline::{
     Bib, Change, ChangeKind, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Redline, Side,
-    Version, composite, pair_pages, redline,
+    Version, What, composite, pair_pages, redline,
 };
 
 const FULL: Options = Options {
@@ -975,6 +975,26 @@ fn changed_template_arguments_are_listed_with_old_and_new_or_marked() {
 }
 
 #[test]
+fn listed_template_argument_is_described_by_name_and_values() {
+    let src = |title: &str| {
+        format!(
+            "#let t(title: \"\", body) = {{ align(center, text(20pt, title)); body }}
+#show: t.with(title: \"{title}\")
+Text.
+"
+        )
+    };
+    let r = redline_of(&src("Fast Transforms"), &src("Fast Transforms on Small Devices"));
+    let what: Vec<&What> = r.changes.iter().flat_map(|c| &c.what).collect();
+    let title = What::Arg {
+        name: "title".into(),
+        old: Some("\"Fast Transforms\"".into()),
+        new: Some("\"Fast Transforms on Small Devices\"".into()),
+    };
+    assert_eq!(what, [&title], "{:?}", r.changes);
+}
+
+#[test]
 fn frame_of_a_grid_with_fractional_columns_is_as_wide_as_the_text() {
     let Some(dir) = compile("grid-frame", &run("grid-frame").files) else {
         return;
@@ -1222,7 +1242,7 @@ fn computed_paths_are_reported_when_the_files_read_are_unknown() {
 }
 
 #[test]
-fn changed_files_read_by_unchanged_calls_are_listed() {
+fn a_call_that_reads_a_changed_file_is_a_change_where_it_stands() {
     let main = "#image(\"fig.svg\")\n#let d = json(\"/data/d.json\")\n#csv(\"same.csv\")\n";
     let read = |fig: &str, d: &str| {
         let (fig, d) = (fig.to_string(), d.to_string());
@@ -1241,7 +1261,17 @@ fn changed_files_read_by_unchanged_calls_are_listed() {
         read,
     };
     let r = redline(&v(&old), &v(&new), FULL, &History::default(), Moves::Find, None);
-    assert_eq!(r.bib.files, ["data/d.json", "fig.svg"]);
+    assert!(r.bib.files.is_empty());
+    let kinds: Vec<ChangeKind> = r.changes.iter().map(|c| c.kind).collect();
+    assert_eq!(kinds, [ChangeKind::Del, ChangeKind::Ins, ChangeKind::Unmarked]);
+    // The old image is read from the old version.
+    assert!(r.changes[0].text.contains(&format!("\"/{OLD_DIR}/fig.svg\"")));
+    let data = &r.changes[2];
+    assert_eq!(data.what, [What::File("data/d.json".into())]);
+    assert_eq!(
+        (data.old.as_str(), data.text.as_str()),
+        ("#let d = json(\"/data/d.json\")", "#let d = json(\"/data/d.json\")")
+    );
 }
 
 // CLI
@@ -1578,6 +1608,33 @@ fn deleted_figure_whose_file_is_gone_is_evaluated() {
     let out = cli(&dir, &["doc/main.typ"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success() && !stderr.contains("shown by name"), "{stderr}");
+}
+
+#[test]
+fn replaced_image_shows_old_and_new_at_its_figure() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("replaced-image", &["alpha"]);
+    let svg = |w: u32| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="10"/>"#);
+    let main = "#show image: it => context [#metadata(measure(it).width)<probe>#it]\n#figure(image(\"fig.svg\"))\n";
+    std::fs::write(dir.join("doc/fig.svg"), svg(10)).unwrap();
+    std::fs::write(dir.join("doc/main.typ"), main).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "-m", "figure"]);
+    std::fs::write(dir.join("doc/fig.svg"), svg(20)).unwrap();
+    let out = cli(&dir.join("doc"), &["main.typ", "--keep-typ"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let kept = Path::new(stderr.lines().find_map(|l| l.strip_prefix("kept ")).unwrap());
+    let widths = query(kept, "<probe>");
+    std::fs::remove_dir_all(kept).unwrap();
+    // The old image, then the new one, twice as wide.
+    let pts: Vec<f64> = widths
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .filter_map(|w| w.parse().ok())
+        .collect();
+    assert!(pts.len() == 2 && pts[1] == 2.0 * pts[0], "{widths}");
 }
 
 #[test]

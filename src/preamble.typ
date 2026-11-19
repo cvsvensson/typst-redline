@@ -909,15 +909,26 @@
   })
 }
 
-// Changed code that is not marked, (old, new): the old code in the colour
-// of deletions, the new in that of insertions. Text, not raw, so that the
-// document's show rules on raw leave it alone.
+// Changed code that is not marked, (old, new, what): what changed in words,
+// then the old code in the colour of deletions and the new in that of
+// insertions, or the code once if only a file it reads changed. Text, not
+// raw, so that the document's show rules on raw leave it alone.
 #let redline-code(c) = {
   let st = redline-style
-  let rows = ((c.old, "−", st.del), (c.new, "+", st.ins)).filter(r => r.first() != "")
+  let mono = text.with(font: "DejaVu Sans Mono", hyphenate: false)
+  let value(v, fill, f) = if "text" in v {
+    ["] + v.text.map(((t, changed)) => if changed { text(fill: fill, f(t)) } else { t }).join() + ["]
+  } else { mono(size: 0.9em, fill: fill, v.code) }
+  let words = c.at("what", default: ()).map(w => if "file" in w [#mono(size: 0.9em, w.file) changed] else {
+    let name = mono(size: 0.9em, w.name)
+    if w.old == none [#name: #value(w.new, st.ins, x => x) added] else if w.new == none [#name: #value(w.old, st.del, x => x) removed] else [#name: #value(w.old, st.del, strike) → #value(w.new, st.ins, underline)]
+  })
+  if words.len() > 0 { block(above: 0.6em, below: 0.4em, words.join[; ]) }
+  let rows = if c.old == c.new { ((c.new, "", none),) } else { ((c.old, "−", st.del), (c.new, "+", st.ins)).filter(r => r.first() != "") }
+  let paint(fill, t) = if fill == none { t } else { text(fill: fill, t) }
   set text(font: "DejaVu Sans Mono", size: 0.9em, hyphenate: false)
   set par(justify: false)
-  grid(columns: (auto, 1fr), column-gutter: 0.5em, row-gutter: 0.5em, ..rows.map(((code, sign, fill)) => (text(fill: fill, sign), text(fill: fill, code))).flatten())
+  grid(columns: (auto, 1fr), column-gutter: 0.5em, row-gutter: 0.5em, ..rows.map(((code, sign, fill)) => (paint(fill, sign), paint(fill, code))).flatten())
 }
 
 #let redline-move-bracket = {

@@ -6,13 +6,16 @@ use std::hash::Hash;
 use std::ops::Range;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
+use typst_syntax::ast::AstNode;
 use typst_syntax::{RootedPath, Source, SyntaxKind as K, SyntaxNode, VirtualPath, VirtualRoot, ast, parse};
 
 use crate::align::{Step, align};
 use crate::blame::{Steps, blame};
 use crate::moves::{self, Run};
 use crate::syntax::*;
-use crate::{Bib, Change, ChangeKind, History, Move, Moves, OLD_DIR, Options, PREAMBLE_PATH, pair_files, resolve};
+use crate::{
+    Bib, Change, ChangeKind, History, Move, Moves, OLD_DIR, Options, PREAMBLE_PATH, What, pair_files, resolve,
+};
 
 /// Text that closes what comes before it.
 const CLOSING: [char; 13] = [
@@ -38,6 +41,9 @@ pub struct Ctx {
     /// The project files of the versions between the old and the new one,
     /// if each change is marked with the step that made it.
     steps: Option<Vec<Vec<(String, String)>>>,
+    /// The literal paths of the old version that read a changed file, as
+    /// (rewritten literal, original literal, root-relative path).
+    pinned: Vec<(String, String, String)>,
     /// Each new file that is to be written, by path, with its old file, in
     /// reading order.
     aligned: Vec<(String, Aligned)>,
@@ -68,6 +74,7 @@ impl Ctx {
         new_files: Vec<(String, String)>,
         steps: Option<Vec<Vec<(String, String)>>>,
         swapped: bool,
+        pinned: Vec<(String, String, String)>,
         opts: Options,
         moves: Moves,
     ) -> Self {
@@ -210,6 +217,7 @@ impl Ctx {
             old_files,
             new_files,
             steps,
+            pinned,
             aligned,
             moves,
             moved_from,
@@ -248,6 +256,22 @@ impl Ctx {
                 None
             }
         })
+    }
+
+    /// Old code as it was written, with the paths [`crate::pin_reads`]
+    /// rewrote restored, and the files these read.
+    fn unpin(&self, code: &str) -> (String, Vec<String>) {
+        let mut code = code.to_string();
+        let mut files = vec![];
+        for (pin, lit, path) in &self.pinned {
+            if code.contains(pin.as_str()) {
+                code = code.replace(pin.as_str(), lit);
+                if !files.contains(path) {
+                    files.push(path.clone());
+                }
+            }
+        }
+        (code, files)
     }
 
     fn entry(&self) -> &str {
@@ -580,15 +604,28 @@ impl<'a> Writer<'a> {
             kind,
             text,
             old: String::new(),
+            what: vec![],
         });
     }
 
     /// Record changed code that is not marked, `old` or `new` empty if it
     /// was inserted or deleted.
     fn list(&mut self, old: &str, new: &str) {
-        let (old, new) = differing_lines(old, new);
+        self.list_what(old, new, vec![]);
+    }
+
+    /// [`Self::list`] with what changed in words; a file that the old code
+    /// reads and that changed is added to it.
+    fn list_what(&mut self, old: &str, new: &str, mut what: Vec<What>) {
+        let (old, files) = self.ctx.unpin(old);
+        if !new.is_empty() {
+            what.extend(files.into_iter().map(What::File));
+        }
+        let (old, new) = differing_lines(&old, new);
         self.record(ChangeKind::Unmarked, new);
-        self.changes.last_mut().unwrap().old = old;
+        let c = self.changes.last_mut().unwrap();
+        c.old = old;
+        c.what = what;
     }
 
     /// Emit `body`, the markup for `toks`, wrapped as a change, and record
@@ -702,7 +739,14 @@ impl<'a> Writer<'a> {
     fn unmarked(&mut self, old: &str, b: &Block) {
         self.out.push_str(&b.text());
         if !b.is_import() {
-            self.list(old, &b.text());
+            let what = match (
+                outer_call(&parse(old).children().cloned().collect::<Vec<_>>()),
+                outer_call(&b.nodes),
+            ) {
+                (Some((oc, oargs)), Some((nc, nargs))) if oc == nc => self.changed_args(&nc, &oargs, &nargs),
+                _ => vec![],
+            };
+            self.list_what(old, &b.text(), what);
         }
     }
 
@@ -803,7 +847,7 @@ impl<'a> Writer<'a> {
                 .changes
                 .iter()
                 .filter(|c| here(c) && c.kind == ChangeKind::Unmarked)
-                .map(|c| format!("(old: {}, new: {}),", typst_str(&c.old), typst_str(&c.text)))
+                .map(|c| format!("({}),", c.code_fields()))
                 .collect();
             // A move is checked once, at its new place.
             let marks: String = self
@@ -816,7 +860,8 @@ impl<'a> Writer<'a> {
                         || c.kind == ChangeKind::Moved && !c.old.is_empty()
                 })
                 .map(|(id, c)| {
-                    let m = c.unmarked();
+                    let mut m = c.unmarked();
+                    m.old = self.ctx.unpin(&m.old).0;
                     let mv = match c.kind {
                         ChangeKind::Moved => format!("move: {}, ", c.text),
                         _ => String::new(),
@@ -1189,7 +1234,10 @@ impl<'a> Writer<'a> {
         self.begin_new(nb);
         if nb.kind == Kind::Setup {
             let (ot, nt) = (ob.toks(), nb.toks());
-            if !(ot.len() == 1 && nt.len() == 1 && self.diff_code(&ot[0], &nt[0], true)) {
+            // Code that only reads a changed file is listed whole, to show
+            // where the file is read.
+            let file_only = self.ctx.unpin(&ob.text()).0 == nb.text();
+            if file_only || !(ot.len() == 1 && nt.len() == 1 && self.diff_code(&ot[0], &nt[0], true)) {
                 self.unmarked(&ob.text(), nb);
             }
             self.included(nb);
@@ -1567,11 +1615,61 @@ impl<'a> Writer<'a> {
     /// the old argument `o`.
     fn listed_arg(&mut self, call: &str, o: &SyntaxNode, n: &SyntaxNode) -> bool {
         self.out.push_str(&n.full_text());
-        self.list(
+        let what = self.changed_args(call, std::slice::from_ref(o), std::slice::from_ref(n));
+        self.list_what(
             &format!("{call}({})", o.full_text()),
             &format!("{call}({})", n.full_text()),
+            what,
         );
         true
+    }
+
+    /// The arguments of a call to `call` that differ between the old
+    /// arguments `o` and the new `n`: named ones by name, others by position
+    /// with what is called as their name. A value too long to read in a line
+    /// is elided.
+    fn changed_args(&self, call: &str, o: &[SyntaxNode], n: &[SyntaxNode]) -> Vec<What> {
+        const SHOWN: usize = 60;
+        let value = |v: &str| match v.contains('\n') || v.chars().count() > SHOWN {
+            true => "…".to_string(),
+            false => v.to_string(),
+        };
+        let named = |args: &[SyntaxNode], unpin: bool| -> Vec<(String, String)> {
+            let mut pos = 0;
+            args.iter()
+                .map(|a| {
+                    let (name, v) = match a.cast::<ast::Named>() {
+                        Some(named) => (
+                            named.name().as_str().to_string(),
+                            named.expr().to_untyped().full_text().to_string(),
+                        ),
+                        None => {
+                            pos += 1;
+                            (format!("{}\0{pos}", collapse_ws(call)), a.full_text().to_string())
+                        }
+                    };
+                    (name, if unpin { self.ctx.unpin(&v).0 } else { v })
+                })
+                .collect()
+        };
+        let (old, new) = (named(o, true), named(n, false));
+        let find = |args: &[(String, String)], name: &str| args.iter().find(|(m, _)| m == name).map(|(_, v)| v.clone());
+        let mut what: Vec<What> = vec![];
+        for name in new.iter().chain(&old).map(|(m, _)| m) {
+            let (o, n) = (find(&old, name), find(&new, name));
+            if o == n {
+                continue;
+            }
+            let w = What::Arg {
+                name: name.split('\0').next().unwrap().to_string(),
+                old: o.as_deref().map(value),
+                new: n.as_deref().map(value),
+            };
+            if !what.contains(&w) {
+                what.push(w);
+            }
+        }
+        what
     }
 
     /// Write new code with the markup of its content blocks marked
@@ -1701,6 +1799,33 @@ fn placeholder(nodes: &[SyntaxNode]) -> String {
         name.unwrap_or("code".into())
     };
     format!("#emph({});", typst_str(&format!("[{name}]")))
+}
+
+/// The first call or set rule in `nodes`, outermost first: the code before
+/// its arguments, with whitespace collapsed, and the arguments.
+fn outer_call(nodes: &[SyntaxNode]) -> Option<(String, Vec<SyntaxNode>)> {
+    for n in nodes {
+        if matches!(n.kind(), K::FuncCall | K::SetRule)
+            && let Some(args) = n.children().find(|c| c.kind() == K::Args)
+        {
+            let callee: Vec<SyntaxNode> = n.children().take_while(|c| c.kind() != K::Args).cloned().collect();
+            let items = args.children().filter(|a| {
+                !matches!(
+                    a.kind(),
+                    K::LeftParen | K::RightParen | K::Comma | K::Space | K::LineComment | K::BlockComment
+                )
+            });
+            return Some((collapse_ws(&text(&callee)), items.cloned().collect()));
+        }
+        // Not into a function's body or a block, where it is one of many.
+        if matches!(n.kind(), K::Closure | K::CodeBlock | K::ContentBlock) {
+            continue;
+        }
+        if let Some(call) = outer_call(&n.children().cloned().collect::<Vec<_>>()) {
+            return Some(call);
+        }
+    }
+    None
 }
 
 /// The markup of the caption of a `#figure` call.

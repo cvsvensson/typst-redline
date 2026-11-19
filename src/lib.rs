@@ -11,6 +11,7 @@ mod syntax;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 
+use typst_syntax::ast::AstNode;
 use typst_syntax::{SyntaxKind, SyntaxNode, ast, parse};
 
 pub use side::{Anchor, Pair, Placed, Side, composite, pair_pages};
@@ -124,9 +125,87 @@ pub struct Change {
     /// For a change that is not marked, the old code, empty if it is new;
     /// for moved text at its new place, a line that names it.
     pub old: String,
+    /// For a change that is not marked, what it changes, in words.
+    pub what: Vec<What>,
+}
+
+/// A part of a change of code that is not marked, described for a reader.
+#[derive(Clone, Debug, PartialEq)]
+pub enum What {
+    /// The argument `name` changed from the code `old` to `new`, `None`
+    /// where it is not given; a value too long to read in a line is `…`.
+    Arg {
+        name: String,
+        old: Option<String>,
+        new: Option<String>,
+    },
+    /// The file the code reads at this root-relative path changed.
+    File(String),
+}
+
+impl What {
+    /// The dictionary the preamble takes: `(file: path)`, or `(name: name,
+    /// old: value, new: value)` with each value `none` where not given,
+    /// `(code: code)`, or for strings `(text: pieces)`, the pieces `(text,
+    /// changed)`.
+    fn to_typst(&self) -> String {
+        let (name, old, new) = match self {
+            What::File(p) => return format!("(file: {})", mark::typst_str(p)),
+            What::Arg { name, old, new } => (name, old, new),
+        };
+        let string = |code: &str| {
+            let root = typst_syntax::parse_code(code);
+            let mut exprs = root.children().filter_map(|c| c.cast::<ast::Expr>());
+            match (exprs.next(), exprs.next()) {
+                (Some(ast::Expr::Str(s)), None) => Some(s.get().to_string()),
+                _ => None,
+            }
+        };
+        let code = |v: &Option<String>| {
+            v.as_ref()
+                .map_or("none".into(), |c| format!("(code: {})", mark::typst_str(c)))
+        };
+        let (old, new) = match (old.as_deref().and_then(string), new.as_deref().and_then(string)) {
+            (Some(o), Some(n)) => {
+                let (ow, nw) = (syntax::split_words(&o), syntax::split_words(&n));
+                let (mut op, mut np) = (String::new(), String::new());
+                for s in mark::segments(&ow, &nw) {
+                    // Spaces at the edges of a change stay unmarked.
+                    let piece = |ws: &[&str]| {
+                        let t = ws.concat();
+                        let core = t.trim();
+                        let (lead, trail) = (&t[..t.len() - t.trim_start().len()], &t[t.trim_end().len()..]);
+                        [(lead, false), (core, !s.equal), (trail, false)]
+                            .iter()
+                            .filter(|(p, _)| !p.is_empty())
+                            .map(|(p, c)| format!("({}, {c}),", mark::typst_str(p)))
+                            .collect::<String>()
+                    };
+                    if !s.old.is_empty() {
+                        op.push_str(&piece(&ow[s.old.clone()]));
+                    }
+                    if !s.new.is_empty() {
+                        np.push_str(&piece(&nw[s.new.clone()]));
+                    }
+                }
+                (format!("(text: ({op}))"), format!("(text: ({np}))"))
+            }
+            _ => (code(old), code(new)),
+        };
+        format!("(name: {}, old: {old}, new: {new})", mark::typst_str(name))
+    }
 }
 
 impl Change {
+    /// The fields of the summary's entry for a change that is not marked.
+    pub(crate) fn code_fields(&self) -> String {
+        let what: String = self.what.iter().map(|w| w.to_typst() + ",").collect();
+        format!(
+            "old: {}, new: {}, what: ({what})",
+            mark::typst_str(&self.old),
+            mark::typst_str(&self.text)
+        )
+    }
     /// The change as one that is not marked, with its old and new text.
     pub fn unmarked(&self) -> Change {
         let (old, text) = match self.kind {
@@ -182,7 +261,7 @@ pub fn redline(
     let mut warnings = vec![];
     let modules = modules(new, reads);
     let modules = reads.map(|_| modules.as_slice());
-    let old_files = project(old, &mut warnings, modules);
+    let mut old_files = project(old, &mut warnings, modules);
     let new_files = project(new, &mut warnings, modules);
     let unknown = reads.is_none();
     let reads = reads.unwrap_or_default();
@@ -192,11 +271,18 @@ pub fn redline(
     let mut checked = literal_reads(&new_files);
     checked.extend(new_files.iter().map(|(p, _)| p.clone()));
     checked.extend(reads.iter().cloned());
-    let steps = history
-        .steps
-        .as_ref()
-        .map(|vs| vs.iter().map(|v| project(v, &mut vec![], modules)).collect());
-    let ctx = mark::Ctx::new(old_files, new_files, steps, history.swapped, opts, moves);
+    let pinned = pin_reads(&mut old_files, old, new, &new_files);
+    bib.files.retain(|p| pinned.iter().all(|(_, _, q)| q != p));
+    let steps = history.steps.as_ref().map(|vs| {
+        vs.iter()
+            .map(|v| {
+                let mut files = project(v, &mut vec![], modules);
+                pin_reads(&mut files, v, new, &new_files);
+                files
+            })
+            .collect()
+    });
+    let ctx = mark::Ctx::new(old_files, new_files, steps, history.swapped, pinned, opts, moves);
     let (files, changes) = mark::write(&ctx, &old.label, &new.label, &bib, history);
     Redline {
         files,
@@ -473,19 +559,71 @@ fn changed_reads(
     new_files: &[(String, String)],
     reads: &[String],
 ) -> Vec<String> {
-    // Git can check out text with other line endings than it stores.
-    let content = |v: &Version, p: &str| {
-        (v.read)(p).map(|b| match String::from_utf8(b) {
-            Ok(s) => normalize(&s).into_bytes(),
-            Err(e) => e.into_bytes(),
-        })
-    };
     let mut paths = &literal_reads(old_files) & &literal_reads(new_files);
     paths.extend(reads.iter().cloned());
     paths
         .into_iter()
         .filter(|p| new_files.iter().all(|(q, _)| q != p) && content(old, p) != content(new, p))
         .collect()
+}
+
+/// A file's bytes; text with line endings normalized, as git can check out
+/// text with other line endings than it stores.
+fn content(v: &Version, p: &str) -> Option<Vec<u8>> {
+    (v.read)(p).map(|b| match String::from_utf8(b) {
+        Ok(s) => normalize(&s).into_bytes(),
+        Err(e) => e.into_bytes(),
+    })
+}
+
+/// Rewrites, in the files of version `v`, each literal path that a call
+/// such as `image` reads and whose file differs from the one in `new` into
+/// a path from the root under [`OLD_DIR`]: the call then differs from the
+/// new one, so that it is compared, and marked, as changed, and evaluated
+/// it reads the old file. Returns the (rewritten literal, original literal,
+/// root-relative path) of each.
+fn pin_reads(
+    files: &mut [(String, String)],
+    v: &Version,
+    new: &Version,
+    new_files: &[(String, String)],
+) -> Vec<(String, String, String)> {
+    let mut pinned = vec![];
+    for (path, src) in files.iter_mut() {
+        let root = parse(src);
+        let mut pins: HashMap<*const SyntaxNode, String> = HashMap::new();
+        walk(&root, &mut |n| {
+            if let Some(call) = n.cast::<ast::FuncCall>()
+                && let ast::Expr::Ident(f) = call.callee()
+                && READERS.contains(&f.as_str())
+                && let Some(ast::Arg::Pos(ast::Expr::Str(lit))) = call.args().items().next()
+                && let Some(p) = resolve(path, &lit.get())
+                && new_files.iter().all(|(q, _)| *q != p)
+                && content(v, &p).is_some_and(|c| Some(c) != content(new, &p))
+            {
+                let pin = mark::typst_str(&format!("/{OLD_DIR}/{p}"));
+                let entry = (pin.clone(), lit.to_untyped().leaf_text().to_string(), p);
+                if !pinned.contains(&entry) {
+                    pinned.push(entry);
+                }
+                pins.insert(lit.to_untyped() as *const _, pin);
+            }
+        });
+        if pins.is_empty() {
+            continue;
+        }
+        fn into(n: &SyntaxNode, pins: &HashMap<*const SyntaxNode, String>, out: &mut String) {
+            match pins.get(&(n as *const _)) {
+                Some(pin) => out.push_str(pin),
+                None if n.children().len() == 0 => out.push_str(n.leaf_text()),
+                None => n.children().for_each(|c| into(c, pins, out)),
+            }
+        }
+        let mut out = String::new();
+        into(&root, &pins, &mut out);
+        *src = out;
+    }
+    pinned
 }
 
 /// A file as text with a byte-order mark and CR line endings removed.
