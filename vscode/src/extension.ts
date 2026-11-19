@@ -1,9 +1,25 @@
 import * as vscode from "vscode";
 import * as path from "path";
-import { execFile } from "child_process";
+import { ChildProcess, execFile, spawn } from "child_process";
 
 let output: vscode.OutputChannel;
 let state: vscode.Memento;
+
+const running = new Set<ChildProcess>();
+
+// The CLI starts typst as a child, so cancelling ends the whole process tree, not only the CLI.
+function killTree(child: ChildProcess) {
+  if (child.pid === undefined) {
+    return;
+  }
+  if (process.platform === "win32") {
+    execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], () => {});
+  } else {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {}
+  }
+}
 
 const exeHint = "Install typst-redline and put it on PATH, or set typstRedline.executable to its full path.";
 
@@ -15,18 +31,28 @@ function run(
   token?: vscode.CancellationToken,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = execFile(cmd, args, { cwd, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+    // Its own process group on Unix, so that the signal reaches the children too.
+    const child = spawn(cmd, args, { cwd, detached: process.platform !== "win32" });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (d) => (stdout += d));
+    child.stderr.setEncoding("utf8").on("data", (d) => (stderr += d));
+    const finish = (err?: Error, code?: number | null) => {
+      running.delete(child);
       if (token?.isCancellationRequested) {
         reject(new vscode.CancellationError());
-      } else if (!err) {
-        resolve({ stdout, stderr });
-      } else if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      } else if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
         reject(new Error(`"${cmd}" was not found. ${notFound}`));
+      } else if (err || code !== 0) {
+        reject(new Error(stderr.trim() || err?.message || `${cmd} exited with code ${code}`));
       } else {
-        reject(new Error(stderr.trim() || err.message));
+        resolve({ stdout, stderr });
       }
-    });
-    token?.onCancellationRequested(() => child.kill());
+    };
+    child.on("error", (err) => finish(err));
+    child.on("close", (code) => finish(undefined, code));
+    running.add(child);
+    token?.onCancellationRequested(() => killTree(child));
   });
 }
 
@@ -306,4 +332,6 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
-export function deactivate() {}
+export function deactivate() {
+  running.forEach(killTree);
+}

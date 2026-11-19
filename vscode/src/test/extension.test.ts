@@ -29,6 +29,7 @@ suite("Typst Redline commands", () => {
     showWarningMessage: window.showWarningMessage,
     showInformationMessage: window.showInformationMessage,
     executeCommand: commands.executeCommand,
+    withProgress: window.withProgress,
   };
   const config = vscode.workspace.getConfiguration("typstRedline");
   const settings = ["executable", "typst", "extraArgs", "openPdf"];
@@ -242,5 +243,39 @@ suite("Typst Redline commands", () => {
     assert.strictEqual(opened.length, 0);
     assert.strictEqual(errors.length, 1);
     assert.match(errors[0], /not found.*typstRedline\.executable/);
+  });
+
+  test("cancelling ends typst, which the CLI runs as a child", async () => {
+    const win = process.platform === "win32";
+    const tick = path.join(tmp, "tick");
+    const fake = path.join(tmp, win ? "fake-typst.cmd" : "fake-typst");
+    fs.writeFileSync(
+      fake,
+      win
+        ? ["@echo off", ":l", `echo x>>"${tick}"`, "ping -n 2 127.0.0.1 >nul", "goto l", ""].join("\r\n")
+        : `#!/bin/sh\nwhile true; do echo x >> "${tick}"; sleep 0.2; done\n`,
+      { mode: 0o755 },
+    );
+    await config.update("typst", fake, vscode.ConfigurationTarget.Global);
+    const cancel = new vscode.CancellationTokenSource();
+    window.withProgress = (_: unknown, task: Function) => task(undefined, cancel.token);
+    const size = () => (fs.existsSync(tick) ? fs.statSync(tick).size : 0);
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    try {
+      const run = vscode.commands.executeCommand("typstRedline.showChanges");
+      for (let i = 0; i < 100 && size() === 0; i++) {
+        await sleep(100);
+      }
+      assert.ok(size() > 0, "typst did not start");
+      cancel.cancel();
+      await run;
+      await sleep(1000);
+      const after = size();
+      await sleep(1500);
+      assert.strictEqual(size(), after);
+    } finally {
+      window.withProgress = original.withProgress;
+    }
+    assert.deepStrictEqual(errors, []);
   });
 });
