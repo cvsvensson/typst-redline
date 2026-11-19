@@ -43,7 +43,7 @@ suite("Typst Redline commands", () => {
   let tmp: string;
   let file: string;
   // The labels to pick in the lists shown, in order: "" accepts the active item, a missing
-  // one closes the list, and "[button]" or "[key]" switches the layout in the open list.
+  // one closes the list, and "[button]" switches the layout in the open list.
   let picks: string[];
   // The labels to tick in each list of commits to tick, in order.
   let ticks: string[][];
@@ -93,8 +93,9 @@ suite("Typst Redline commands", () => {
           actives.push(list.activeItems[0]);
           placeholders.push(list.placeholder);
           titles.push(list.title);
-          for (; picks[0] === "[button]" || picks[0] === "[key]"; titles.push(list.title)) {
-            await (picks.shift() === "[button]" ? list.button(list.buttons[0]) : vscode.commands.executeCommand("typstRedline.switchLayout"));
+          for (; picks[0] === "[button]"; titles.push(list.title)) {
+            picks.shift();
+            await list.button(list.buttons[0]);
           }
           if (list.canSelectMany) {
             const t = ticks.shift();
@@ -249,14 +250,7 @@ suite("Typst Redline commands", () => {
     assert.strictEqual(titles[2], titles[1]);
   });
 
-  test("the layout key switches the layout of the open list", async () => {
-    picks = ["Several commits", "[key]"];
-    await show();
-    assert.deepStrictEqual(titles.slice(1), [
-      "Typst Redline: colour the changes by step (view: Marked)",
-      "Typst Redline: colour the changes by step (view: Side by side)",
-    ]);
-  });
+
 
   test("each view passes its options", async () => {
     const expected: [string[], string[]][] = [
@@ -314,8 +308,22 @@ suite("Typst Redline commands", () => {
     ticks = [["third – ändrad “här”", "second"]];
     await show();
     assertOpenedPdf();
+    assert.strictEqual(titles[1], "Typst Redline: Several Commits (layout: Side by side)");
     assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", hash("first")]);
     assert.deepStrictEqual(runs[0].slice(5), ["--layout", "side-by-side", "--steps", hash("second")]);
+  });
+
+  test("the command for several commits opens the list to tick, and ticks pass the same arguments", async () => {
+    picks = ["Several commits"];
+    ticks = [["third – ändrad “här”", "second"]];
+    await show();
+    lists = [];
+    picks = [];
+    ticks = [["third – ändrad “här”", "second"]];
+    await vscode.commands.executeCommand("typstRedline.showSeveral");
+    assert.strictEqual(lists.length, 1);
+    assert.strictEqual(runs.length, 2);
+    assert.deepStrictEqual(runs[1], runs[0]);
   });
 
   test("too many ticks are refused and none goes back", async () => {

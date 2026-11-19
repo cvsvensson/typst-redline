@@ -186,7 +186,7 @@ Outside a git repository, or with no commits to list, the command asks for the o
 
 The list starts with *Last reviewed version*, the changes since the commit you last marked, once there is one; then *Changes since the last commit*, when the document's files have changes that are not committed, unsaved edits included, which are saved before the run; then the commits that change the document's files, newest first. **A commit stands for its own change and every change after it**, here and in every other list of commits. The first commit of the repository has no version before it and is not listed. After the commits come *Another file...*, which compares with a `.typ` file of your choice, *Several commits...* and *Between two commits...*.
 
-**The view.** The list's title names the current view, *Marked* at first. The button at the right of the title, a page for *Marked* and an open book for *Side by side*, or Alt+L switches between the two layouts and keeps the list open; colours stay as they are. *Typst Redline: Choose View* in the Command Palette chooses any of the four views. The workspace keeps the view until you change it.
+**The view.** The list's title names the current view, *Marked* at first. The button at the right of the title switches between *Marked* and *Side by side* and keeps the list open; colours stay as they are. *Typst Redline: Choose View* in the Command Palette chooses any of the four views. The workspace keeps the view until you change it.
 
 - *Marked* ([picture](docs/gallery.md#text-formulas-and-figures)): the new version with the changes marked.
 - *Side by side* ([picture](docs/gallery.md#slides-side-by-side)): changed pages of the old and the new version next to each other. Needs Typst 0.14 or later.
@@ -194,7 +194,7 @@ The list starts with *Last reviewed version*, the changes since the commit you l
 
 **More ways to compare.**
 
-- *Several commits...* lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view.
+- *Several commits...* lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view. *Typst Redline: Show Changes for Several Commits...* in the Command Palette opens this list directly.
 - *Between two commits...* asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. It uses the view, colours included.
 
 If `typst-redline` or `typst` is not found, a message says which, with a button that opens install instructions and, for `typst`, one to locate it; VS Code may need a restart after installing.
