@@ -451,7 +451,8 @@ fn edits_inside_moved_text_are_marked() {
 fn setup_code_moved_unchanged_is_listed_once_and_marks_nothing() {
     let r = run("moved-setup");
     assert!(
-        matches!(&r.changes[..], [c] if c.kind == ChangeKind::Unmarked && c.old == c.text),
+        matches!(&r.changes[..], [c] if c.kind == ChangeKind::Unmarked && c.old == c.text
+            && matches!(&c.what[..], [What::Note(n)] if n.contains("between"))),
         "{:?}",
         r.changes
     );
@@ -773,6 +774,52 @@ fn figure_whose_body_changed_shows_its_caption_once() {
     };
     let captions = query_field(&dir, "figure", "caption");
     assert_eq!(captions.matches("shape").count(), 1, "{captions}");
+}
+
+#[test]
+fn figure_whose_body_changed_is_the_new_figure() {
+    let doc = |body: &str| {
+        format!(
+            "#show figure: it => [#metadata(repr(it.kind) + repr(it.body.func()))<probe>#it]
+See @f.
+
+#figure({body}, caption: [Same.]) <f>
+"
+        )
+    };
+    let (old, new) = (doc("raw(\"x = 1\", block: true)"), doc("table(columns: 2)[a][b]"));
+    if let Some((marked, plain)) = probes("figure-kind", &old, &new) {
+        assert_eq!(marked, plain);
+    }
+}
+
+#[test]
+fn code_whose_label_changed_is_marked() {
+    let doc = |l: &str| {
+        format!(
+            "#show <hot>: set text(red)
+#let tag(l) = [#strong[Note] #label(l)]
+#tag(\"{l}\")
+"
+        )
+    };
+    if let Some(lost) = lost_marks("label-output", redline_of(&doc("hot"), &doc("cold"))) {
+        assert_eq!(lost, "[]");
+    }
+}
+
+#[test]
+fn deletions_not_laid_out_are_each_listed() {
+    let marks = r#"((id: 0, old: "a", new: ""), (id: 1, joined: true, old: "b", new: ""), (id: 2, joined: true, old: "", new: "c"))"#;
+    let main = format!(
+        "#import \"/{PREAMBLE_PATH}\": redline-joined
+#metadata(redline-joined({marks}).map(m => m.old + \"/\" + m.new))<probe>
+"
+    );
+    let files = [("main.typ".to_string(), main), (PREAMBLE_PATH.into(), PREAMBLE.into())];
+    if let Some(dir) = compile("joined-deletions", &files) {
+        assert_eq!(query(&dir, "<probe>"), r#"[["a/","b/c"]]"#);
+    }
 }
 
 #[test]
@@ -1562,7 +1609,8 @@ fn paragraphs_replaced_at_one_place_count_as_one_change() {
 #[test]
 fn move_counts_once_where_it_arrives() {
     let out = body("moved-section");
-    assert_eq!(out.matches("title: [").count(), 1, "{out}");
+    let left = out.lines().find(|l| l.contains("title: [Forest]")).unwrap();
+    assert!(left.contains("count: 0,") && !left.contains("moves:"), "{out}");
 }
 
 #[test]
