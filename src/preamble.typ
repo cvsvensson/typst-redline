@@ -1590,33 +1590,36 @@
 
 // The marks among `marks` that are laid out, grouped by the last heading of
 // level 1 or 2 before them, or none: array of (heading, count: changes other
-// than moves, moves: numbers of the moves, at: locations, marks). Deleted
-// headings, which are neither outlined nor bookmarked, do not count.
+// than moves, moves: numbers of the moves, at: locations, marks). A mark laid
+// out several times, such as in a loop, has the locations of each time and
+// is grouped by the first. Deleted headings, which are neither outlined nor
+// bookmarked, do not count.
 #let redline-under-headings(marks) = {
   let at = (:)
   for t in redline-starts() {
     let id = redline-value(t).at(6)
-    if id != none and str(id) not in at { at.insert(str(id), redline-start-at(t.location(), id)) }
+    if id != none { at.insert(str(id), at.at(str(id), default: ()) + (redline-start-at(t.location(), id),)) }
   }
   // On the new side of the side-by-side layout, a deletion has no tags.
   for c in query(<redline-change>) {
     let id = redline-value(c).at(2)
-    if id != none and str(id) not in at { at.insert(str(id), c.location()) }
+    if id != none and str(id) not in at { at.insert(str(id), (c.location(),)) }
   }
   let kept(x) = x.level <= 2 and (x.at("outlined", default: true) or x.at("bookmarked", default: auto) != false)
   let groups = ()
   for m in marks {
     let from = m.at("from", default: false)
-    let loc = if from { redline-move-find("from", m.move) } else if "move" in m { redline-move-start(m.move) } else { at.at(str(m.id), default: none) }
-    if from and loc != none { loc = loc.location() }
-    if loc == none { continue }
+    let one(l) = if l == none { () } else { (l,) }
+    let locs = if from { one(redline-move-find("from", m.move)).map(l => l.location()) } else if "move" in m { one(redline-move-start(m.move)) } else { at.at(str(m.id), default: ()) }
+    if locs.len() == 0 { continue }
+    let loc = locs.first()
     let head = query(selector(heading).before(loc)).filter(kept).at(-1, default: none)
     let i = groups.position(g => if head == none { g.heading == none } else { g.heading != none and g.heading.location() == head.location() })
     if i == none {
       groups.push((heading: head, count: 0, moves: (), out: 0, at: (), marks: ()))
       i = groups.len() - 1
     }
-    groups.at(i).at.push(loc)
+    groups.at(i).at += locs
     groups.at(i).marks.push(m)
     if from { groups.at(i).out += 1 } else if "move" in m { groups.at(i).moves.push(m.move) } else if not m.at("joined", default: false) { groups.at(i).count += 1 }
   }
