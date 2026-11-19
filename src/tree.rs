@@ -43,6 +43,19 @@ impl Tree {
         }
     }
 
+    /// The files under the root-relative folder `dir` ("" for the root).
+    pub fn sub(&self, dir: &str) -> Tree {
+        let slash = if dir.is_empty() { "" } else { "/" };
+        match self {
+            Tree::Dir(root) => Tree::Dir(root.join(dir)),
+            Tree::Git { repo, prefix, rev } => Tree::Git {
+                repo: repo.clone(),
+                prefix: format!("{prefix}{dir}{slash}"),
+                rev: rev.clone(),
+            },
+        }
+    }
+
     pub fn read(&self, path: &str) -> Option<Vec<u8>> {
         match self {
             Tree::Dir(root) => std::fs::read(root.join(path)).ok(),

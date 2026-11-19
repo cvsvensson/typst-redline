@@ -1875,6 +1875,75 @@ fn a_missing_old_file_is_an_error() {
 }
 
 #[test]
+fn errors_of_the_document_itself_name_its_own_lines() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("broken-new");
+    std::fs::write(dir.join("old.typ"), "Text.\n").unwrap();
+    std::fs::write(dir.join("new.typ"), "Text.\n\nMore #undefined() here.\n").unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(1) && stderr.contains("new.typ:3:") && stderr.contains("does not compile on its own"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn deleted_content_of_a_file_in_a_moved_folder_finds_its_files() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("moved-folder");
+    let svg =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"10\"><rect width=\"20\" height=\"10\"/></svg>";
+    for (path, text) in [
+        ("v1/m.typ", "#include \"ch/c.typ\"\n"),
+        ("v1/ch/c.typ", "= C\nSome text.\n#image(\"../img/a.svg\", width: 1cm)\n"),
+        ("v1/img/a.svg", svg),
+        ("v2/m.typ", "#include \"../shared/ch/c.typ\"\n"),
+        (
+            "shared/ch/c.typ",
+            "= C\nSome new text.\n#image(\"../img/b.svg\", width: 1cm)\n",
+        ),
+        ("shared/img/b.svg", svg),
+    ] {
+        std::fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(path), text).unwrap();
+    }
+    let out = cli(&dir, &["v1/m.typ", "v2/m.typ", "--root", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && !stderr.contains("note:"), "{stderr}");
+}
+
+#[test]
+fn a_path_split_at_a_space_gets_a_short_usage_error() {
+    let dir = temp_dir("split-path");
+    let out = cli(&dir, &["My", "Thesis/old.typ", "My", "Thesis/new.typ"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(2) && stderr.contains("quote") && stderr.lines().count() <= 3,
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_root_above_the_repository_is_named_with_it() {
+    let dir = temp_dir("root-above-repo");
+    let proj = dir.join("proj");
+    std::fs::create_dir(&proj).unwrap();
+    git(&proj, &["init", "-q"]);
+    std::fs::write(proj.join("main.typ"), "Text.\n").unwrap();
+    let out = cli(&dir, &["proj/main.typ", "--root", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(1) && stderr.contains("outside the git repository"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn typst_root_sets_the_root() {
     if !typst_available() {
         return;

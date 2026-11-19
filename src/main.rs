@@ -173,6 +173,13 @@ fn parse_args() -> Result<Parsed, String> {
             _ => a.files.push(arg),
         }
     }
+    if a.files.len() > 2 {
+        return Err(format!(
+            "{} files given ({}); give one or two, and quote a path that contains spaces",
+            a.files.len(),
+            a.files.join(", ")
+        ));
+    }
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
         return Err("--to cannot be combined with a range in --since".into());
     }
@@ -252,6 +259,21 @@ fn spec(file: &Path, rev: Option<&str>, root: Option<&Path>, label: String) -> R
     let tree = match rev {
         None => Tree::Dir(root.clone()),
         Some(rev) => {
+            // Files of the root outside the repository have no old version.
+            let here = file.parent().filter(|d| d.is_dir()).unwrap_or(&root);
+            let top = PathBuf::from(git_text(here, &["rev-parse", "--show-toplevel"])?);
+            let canonical = |p: &Path| std::fs::canonicalize(p).ok();
+            if canonical(&root)
+                .zip(canonical(&top))
+                .is_some_and(|(r, t)| !r.starts_with(t))
+            {
+                return Err(format!(
+                    "the root {} is outside the git repository {} that holds {}; give a root inside the repository with --root, or compare two files",
+                    root.display(),
+                    top.display(),
+                    file.display()
+                ));
+            }
             let out = output(git(&root).args(["rev-parse", "--show-toplevel", "--show-prefix"]))?;
             if !rev.is_empty() {
                 output(git(&root).args(["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")]))
@@ -645,7 +667,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     }
     let mut staging = Staging::new(a.keep);
     let dir = &staging.dir;
-    stage(dir, &old, &new, &result)?;
+    let staged = stage(dir, &old, &new, &result)?;
     write(dir, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
     // typst writes next to the staging directory, so that an output that
     // cannot be written is reported as such and is never left half written.
@@ -663,6 +685,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     let mut a = a;
     let typst_args = a.typst_args.clone();
     let mut back = None;
+    let mut broken = None;
     for (i, fallbacks) in LADDER.into_iter().enumerate() {
         // The side-by-side layout shows no deleted content.
         if fallbacks.contains(&"states") && a.side_by_side {
@@ -717,7 +740,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         if out.status.success() {
             if reads.is_some()
                 && let Some(read) = read_deps(dir)
-                && read.iter().any(|p| !result.checked.contains(p))
+                && read.iter().any(|p| !result.checked.contains(p) && !staged.contains(p))
             {
                 staging.keep = false;
                 drop(staging);
@@ -780,6 +803,20 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 .unwrap_or_default()
                 .into();
         }
+        // An error of the document itself is reported as the user wrote it,
+        // not in the marked copy. The old version matters where it is laid
+        // out whole.
+        if i == 0 {
+            let versions = if a.side_by_side { vec![&new, &old] } else { vec![&new] };
+            if let Some((s, errors)) = versions.into_iter().find_map(|s| Some((s, alone(&a, dir, s)?))) {
+                stderr = errors;
+                broken = Some(match &s.tree {
+                    Tree::Dir(_) => s.file.display().to_string(),
+                    Tree::Git { .. } => format!("{} at {}", s.entry, s.label),
+                });
+                break;
+            }
+        }
     }
     for w in &result.warnings {
         eprintln!("warning: {w}");
@@ -803,12 +840,52 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             None => {}
         }
     }
+    if let Some(name) = broken {
+        return Err(format!("{name} does not compile on its own, without marks"));
+    }
     let hint = if a.keep {
         ""
     } else {
         " (rerun with --keep-typ to inspect the generated source)"
     };
     Err(format!("typst compile failed{hint}"))
+}
+
+/// The errors of compiling a version as it is, if it fails: in place for a
+/// directory, else from a copy whose folder the errors name by the version's
+/// label.
+fn alone(a: &Args, staging: &Path, spec: &Spec) -> Option<String> {
+    let pdf = staging.with_extension("alone.pdf");
+    let copy = staging.with_extension("alone");
+    let root = match &spec.tree {
+        Tree::Dir(root) => root.clone(),
+        tree => {
+            let _ = std::fs::remove_dir_all(&copy);
+            let files = tree.list().ok()?;
+            let (worktree, untracked) = tree.untracked().ok()?;
+            let untracked: Vec<&str> = untracked
+                .iter()
+                .filter(|p| !files.contains(p))
+                .map(String::as_str)
+                .collect();
+            tree.copy(&files.iter().map(String::as_str).collect::<Vec<_>>(), &copy)
+                .ok()?;
+            worktree.copy(&untracked, &copy).ok()?;
+            copy.clone()
+        }
+    };
+    let out = typst(a, &root, "compile", &[&root.join(&spec.entry), &pdf]);
+    let _ = std::fs::remove_file(&pdf);
+    let _ = std::fs::remove_dir_all(&copy);
+    let out = out.ok().filter(|o| !o.status.success())?;
+    let errors = String::from_utf8_lossy(&out.stderr).replace(r"\\?\", "");
+    Some(match &spec.tree {
+        Tree::Dir(_) => errors,
+        Tree::Git { .. } => errors.replace(
+            &format!("{}{}", copy.display(), std::path::MAIN_SEPARATOR),
+            &format!("{}:", spec.label),
+        ),
+    })
 }
 
 /// The top level of the git repository that holds a version, if any.
@@ -1225,9 +1302,13 @@ impl Drop for Staging {
 /// Put in `dir` the new version's files, then old-only files so that deleted
 /// figures resolve, then files git does not track, which belong to every
 /// version; and the same with the old version first under [`OLD_DIR`], if
-/// the result uses it. Files the output writes are left out, so that writing
-/// them cannot change a source hard-linked into `dir`.
-fn stage(dir: &Path, old: &Spec, new: &Spec, result: &Redline) -> Result<(), String> {
+/// the result uses it. Deleted content is laid out in the new file, so a
+/// relative path in it resolves from the new file's folder: where that differs
+/// from the old file's, the old files are also put where such paths lead from
+/// there. Files the output writes are left out, so that writing them cannot
+/// change a source hard-linked into `dir`. Returns the paths staged only for
+/// that.
+fn stage(dir: &Path, old: &Spec, new: &Spec, result: &Redline) -> Result<Vec<String>, String> {
     let mut have: HashSet<String> = result.files.iter().map(|(p, _)| p.clone()).collect();
     have.insert(PREAMBLE_PATH.into());
     let (worktree, untracked) = new.tree.untracked()?;
@@ -1244,21 +1325,62 @@ fn stage(dir: &Path, old: &Spec, new: &Spec, result: &Redline) -> Result<(), Str
             (&new.tree, &new_files, OLD_DIR),
         ]);
     }
-    for (tree, files, sub) in layers {
-        let fresh: Vec<&str> = files
-            .iter()
-            .filter(|p| {
-                have.insert(if sub.is_empty() {
-                    p.to_string()
-                } else {
-                    format!("{sub}/{p}")
+    let mut moved: Vec<(String, String)> = result.pairs.iter().filter_map(|(o, n)| moved_folder(o, n)).collect();
+    moved.sort();
+    moved.dedup();
+    let moved: Vec<(Tree, Vec<String>, String)> = moved
+        .into_iter()
+        .map(|(from, to)| {
+            let files = old_files
+                .iter()
+                .filter_map(|p| match from.as_str() {
+                    "" => Some(p.clone()),
+                    f => p.strip_prefix(&format!("{f}/")).map(str::to_string),
                 })
-            })
-            .map(String::as_str)
-            .collect();
+                .collect();
+            (old.tree.sub(&from), files, to)
+        })
+        .collect();
+    let (mut extra, plain) = (vec![], layers.len());
+    for (i, (tree, files, sub)) in layers
+        .into_iter()
+        .chain(moved.iter().map(|(t, f, s)| (t, f, s.as_str())))
+        .enumerate()
+    {
+        let mut fresh: Vec<&str> = vec![];
+        for p in files {
+            let to = if sub.is_empty() {
+                p.clone()
+            } else {
+                format!("{sub}/{p}")
+            };
+            if have.insert(to.clone()) {
+                fresh.push(p);
+                if i >= plain {
+                    extra.push(to);
+                }
+            }
+        }
         tree.copy(&fresh, &dir.join(sub))?;
     }
-    Ok(())
+    Ok(extra)
+}
+
+/// The folders of the old and the new file without the trailing folders they
+/// share, if they differ: where a relative path from the old file leads, and
+/// where it leads from the new one.
+fn moved_folder(old: &str, new: &str) -> Option<(String, String)> {
+    fn folders(p: &str) -> Vec<&str> {
+        let mut parts: Vec<&str> = p.split('/').collect();
+        parts.pop();
+        parts
+    }
+    let (mut o, mut n) = (folders(old), folders(new));
+    while o.last().is_some() && o.last() == n.last() {
+        o.pop();
+        n.pop();
+    }
+    (o != n).then(|| (o.join("/"), n.join("/")))
 }
 
 fn write(dir: &Path, files: &[(String, String)]) -> Result<(), String> {
@@ -1500,9 +1622,12 @@ fn main() -> ExitCode {
             print!("{text}");
             return ExitCode::SUCCESS;
         }
-        Err(e) => {
-            eprintln!("error: {e}\n");
+        Err(_) if std::env::args().len() == 1 => {
             eprint!("{USAGE}");
+            return ExitCode::from(2);
+        }
+        Err(e) => {
+            eprintln!("error: {e}\nsee typst-redline --help");
             return ExitCode::from(2);
         }
     };
