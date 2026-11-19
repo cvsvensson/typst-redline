@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use typst_redline::{
-    Bib, Change, ChangeKind, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, Redline, Side,
-    Version, What, composite, pair_pages, redline,
+    Bib, Change, ChangeKind, History, Moves, OLD_DIR, Options, PREAMBLE, PREAMBLE_PATH, Pair, Placed, PlacedKind,
+    Redline, Side, Version, What, composite, pair_pages, redline,
 };
 
 const FULL: Options = Options {
@@ -555,6 +555,36 @@ fn moved_code_is_named_by_its_first_words() {
     let out = body("move-note-code");
     let line = out.lines().find(|l| l.contains(MOVED_FROM)).unwrap();
     assert!(line.contains("A boxed remark"), "{out}");
+}
+
+/// Slides as headings that each start a page, the "Cost" slide moved two
+/// slides later.
+fn reordered_slides() -> (String, String) {
+    let slide = |h: &str, body: &str| format!("= {h}\n{body}\n\n");
+    let [outline, cost, pivot, cond] = [
+        slide("Outline", "Linear systems and how to solve them."),
+        slide("Cost", "#table(columns: 2, [Gauss], [two thirds n cubed flops])"),
+        slide("Pivoting", "Without pivoting small pivots amplify rounding errors."),
+        slide("Condition", "A large condition number means the solution is sensitive."),
+    ];
+    let rule = "#set page(width: 16cm, height: 9cm)\n#show heading: it => { pagebreak(weak: true); it }\n";
+    (
+        format!("{rule}{outline}{cost}{pivot}{cond}"),
+        format!("{rule}{outline}{pivot}{cond}{cost}"),
+    )
+}
+
+#[test]
+fn moved_slide_starts_on_its_own_page() {
+    let (old, new) = reordered_slides();
+    let r = redline_of(&old, &new);
+    let mut files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    files[0].1 += "\n#import \"/.redline-preamble.typ\": redline-move-start\n#context [#metadata(redline-move-start(0).page())<probe>]\n";
+    let Some(dir) = compile("moved-slide", &files) else {
+        return;
+    };
+    // The page of the "Cost" heading, not the end of the page before it.
+    assert_eq!(query_field(&dir, "<probe>", "value"), "[4]");
 }
 
 #[test]
@@ -1716,7 +1746,11 @@ fn arguments_after_double_dash_go_to_typst() {
 
 #[test]
 fn side_by_side_pairs_pages_with_the_same_changes() {
-    let c = |ins, id, page| Placed { ins, id, page };
+    let c = |ins, id, page| Placed {
+        kind: if ins { PlacedKind::Ins } else { PlacedKind::Del },
+        id,
+        page,
+    };
     let old = [
         c(false, 1, 1),
         c(true, 2, 1),
@@ -1738,6 +1772,7 @@ fn side_by_side_pairs_pages_with_the_same_changes() {
         new: new.to_vec(),
         steps_old: steps_old.to_vec(),
         steps_new: steps_new.to_vec(),
+        moved: false,
     };
     assert_eq!(
         pairs,
@@ -1752,7 +1787,11 @@ fn side_by_side_pairs_pages_with_the_same_changes() {
 
 #[test]
 fn side_by_side_pairs_changes_written_differently() {
-    let c = |ins, id, page| Placed { ins, id, page };
+    let c = |ins, id, page| Placed {
+        kind: if ins { PlacedKind::Ins } else { PlacedKind::Del },
+        id,
+        page,
+    };
     let old = [c(true, 5, 1), c(true, 6, 2), c(true, 7, 3), c(false, 1, 4)];
     let new = [
         c(true, 8, 1),
@@ -1777,7 +1816,11 @@ fn side_by_side_pairs_changes_written_differently() {
 
 #[test]
 fn side_by_side_shows_an_inserted_or_deleted_page_without_a_counterpart() {
-    let c = |ins, id, page| Placed { ins, id, page };
+    let c = |ins, id, page| Placed {
+        kind: if ins { PlacedKind::Ins } else { PlacedKind::Del },
+        id,
+        page,
+    };
     let pages = |ins, anchors| {
         let (pairs, _) = pair_pages(&[c(ins, 7, 3)], &[c(ins, 7, 3)], anchors);
         pairs.iter().map(|p| (p.old.clone(), p.new.clone())).collect::<Vec<_>>()
@@ -1898,6 +1941,39 @@ fn side_by_side_shows_a_pure_move() {
     let pages = pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count();
     // The summary and the pages that show the move.
     assert_eq!(pages, 2);
+}
+
+#[test]
+fn side_by_side_shows_a_moved_slide_next_to_its_old_page() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-moved-slide");
+    let (old, new) = reordered_slides();
+    std::fs::write(dir.join("old.typ"), old).unwrap();
+    std::fs::write(dir.join("new.typ"), new).unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    // The summary and old page 2 next to new page 4.
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
+}
+
+#[test]
+fn side_by_side_pairs_changes_around_a_move_in_either_order() {
+    let c = |kind, id, page| Placed { kind, id, page };
+    use PlacedKind::{Ins, Move};
+    // Text moved from page 2 to page 4 with an insertion inside it, and an
+    // insertion on page 3 of the new version that the old version has after
+    // the move.
+    let old = [c(Move, 9, 2), c(Ins, 5, 2), c(Move, 9, 2), c(Ins, 1, 3)];
+    let new = [c(Ins, 2, 3), c(Move, 9, 4), c(Ins, 5, 4), c(Move, 9, 4)];
+    let (pairs, unpaired) = pair_pages(&old, &new, (&[], &[]));
+    let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone(), p.moved)).collect();
+    assert_eq!(pages, [(vec![3], vec![3], false), (vec![2], vec![4], true)]);
+    assert!(unpaired.is_empty());
 }
 
 #[test]

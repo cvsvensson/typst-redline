@@ -1065,13 +1065,11 @@ impl<'a> Writer<'a> {
         let blocks = &self.ctx.aligned[run.old.0].1.docs.0.blocks[run.old.1.clone()];
         let ob = &blocks[0];
         let (note, more) = self.move_note(ob);
-        let count = |k: Kind| blocks.iter().filter(|b| b.kind == k).count();
         let args = format!(
-            "heading: {}, down: {}, more: {more}, paragraphs: {}, items: {}",
+            "heading: {}, down: {}, more: {}",
             ob.kind == Kind::Heading,
             !self.arrived.contains_key(&r),
-            count(Kind::Para),
-            count(Kind::Item)
+            more || blocks.len() > 1
         );
         self.summary_here();
         self.out.push_str(&self.continuation(ob, list_ends));
@@ -1164,7 +1162,12 @@ impl<'a> Writer<'a> {
             let mut solid = toks.iter().filter(|t| !matches!(t.kind, TK::Space | TK::Comment));
             b.kind == Kind::Heading || if end { solid.next_back() } else { solid.next() }.is_some_and(|t| t.block)
         };
-        let start = self.move_call("ins", r, &format!("block: {}", block(&new.blocks[0], false)), "");
+        let args = format!(
+            "block: {}, heading: {}",
+            block(&new.blocks[0], false),
+            new.blocks[0].kind == Kind::Heading
+        );
+        let start = self.move_call("ins", r, &args, "");
         let end = self.move_call(
             "ins",
             r,
