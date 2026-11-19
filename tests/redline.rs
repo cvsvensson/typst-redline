@@ -2542,6 +2542,16 @@ fn to_with_a_range_is_a_usage_error() {
 }
 
 #[test]
+fn no_arguments_without_a_terminal_print_the_usage() {
+    let dir = temp_dir("no-arguments");
+    std::fs::write(dir.join("main.typ"), "Text.\n").unwrap();
+    let out = cli(&dir, &[]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Usage:"));
+}
+
+#[test]
 fn output_other_than_a_pdf_is_a_usage_error() {
     let dir = temp_dir("output-png");
     let out = cli(&dir, &["old.typ", "new.typ", "-o", "out.png"]);

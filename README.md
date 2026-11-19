@@ -49,6 +49,18 @@ typst-redline paper.typ --since v1         # changes since a tag, branch or comm
 typst-redline paper.typ --since v1..v2     # changes between two commits
 ```
 
+Run `typst-redline` without a file in a terminal and it asks which file and which version to compare with, then prints the command it runs, such as `typst-redline paper.typ --since a82c764`. Files that another file in the folder includes come last, and with one document there is no file question. The versions are the last reviewed version, if there is one, and the newest commits:
+
+```
+Show the changes to paper.typ made after:
+   1  the last reviewed version
+   2  5c09e25  2026-11-19  Revise the body
+   3  a82c764  2026-11-19  Expand the introduction
+Number [1]:
+```
+
+Enter takes the first entry and `q` quits. Other options, such as `--layout side-by-side`, apply as given.
+
 Without git, compare two copies; quote paths that contain spaces:
 
 ```
