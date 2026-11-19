@@ -58,29 +58,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/checkout@v7
+      # Only these files can change the output or the sweep; the pages are rendered only if the
+      # pull request touches one of them.
+      - id: changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE"
+          if git diff --name-only "$BASE" HEAD | grep -Eq '^(src/|Cargo\.(toml|lock)$|tests/(fixtures/|output-diff\.sh$)|docs/.*\.(typ|sh|bib|svg|png|jpg|csv|json|toml|yaml|yml)$|\.github/workflows/ci\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Output sweep skipped: the pull request changes no file that affects the output." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.changed.outputs.run == 'true'
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
-      - uses: Swatinem/rust-cache@v2
-      - uses: typst-community/setup-typst@v5
+      - if: steps.changed.outputs.run == 'true'
+        uses: Swatinem/rust-cache@v2
+      - if: steps.changed.outputs.run == 'true'
+        uses: typst-community/setup-typst@v5
         with:
           typst-version: 0.15.1
-      - run: |
+      - if: steps.changed.outputs.run == 'true'
+        run: |
           command -v pdftoppm && command -v compare || {
             sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends poppler-utils imagemagick
           }
       # Both builds share the dependencies in target/. Cargo takes the two crates for one, as they
       # have the same name and version, so the base crate is cleaned before the head build.
-      - run: |
+      - if: steps.changed.outputs.run == 'true'
+        run: |
           cargo build --release --locked --manifest-path base/Cargo.toml --target-dir target
           mv target/release/typst-redline "$RUNNER_TEMP/typst-redline-base"
           cargo clean --release --package typst-redline --manifest-path base/Cargo.toml --target-dir target
           cargo build --release --locked
-      - run: tests/output-diff.sh "$RUNNER_TEMP/typst-redline-base" target/release/typst-redline "$RUNNER_TEMP/output-diff"
-      - uses: actions/upload-artifact@v7
+      - if: steps.changed.outputs.run == 'true'
+        run: tests/output-diff.sh "$RUNNER_TEMP/typst-redline-base" target/release/typst-redline "$RUNNER_TEMP/output-diff"
+      - if: steps.changed.outputs.run == 'true' && hashFiles(format('{0}/output-diff/changes/**', runner.temp)) != ''
+        uses: actions/upload-artifact@v7
         with:
           name: output-diff
+          retention-days: 7
           path: |
             ${{ runner.temp }}/output-diff/summary.md
             ${{ runner.temp }}/output-diff/changes
