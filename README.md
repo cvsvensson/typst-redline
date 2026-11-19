@@ -10,7 +10,15 @@ The [gallery](docs/gallery.md) shows every kind of mark, each with the files it 
 
 `typst-redline` compiles with the [`typst`](https://github.com/typst/typst#installation) on your `PATH`, and uses [git](https://git-scm.com/downloads) for comparisons with commits; comparing two files needs no git.
 
-**Prebuilt binary.** Each release on the [Releases page](https://github.com/cvsvensson/typst-redline/releases) has an archive per platform:
+**From source.** No release has been published yet, so install it with [Rust](https://rustup.rs) (on Windows, Rust needs the Visual Studio C++ build tools, which the Rust installer offers to install):
+
+```
+cargo install --git https://github.com/cvsvensson/typst-redline
+```
+
+This puts `typst-redline` in `~/.cargo/bin`, which the Rust installer adds to `PATH`. Run the same command with `--force` to update, and `cargo uninstall typst-redline` to remove it.
+
+**Prebuilt binary.** The release workflow attaches an archive per platform to each release on the [Releases page](https://github.com/cvsvensson/typst-redline/releases):
 
 | Platform | Archive |
 |---|---|
@@ -27,14 +35,6 @@ curl -sSL https://github.com/cvsvensson/typst-redline/releases/latest/download/t
 ```
 
 The macOS binaries are not notarized: macOS refuses to run one downloaded with a browser until you run `xattr -d com.apple.quarantine ~/.local/bin/typst-redline`. Files downloaded with `curl` are not affected.
-
-**From source**, with [Rust](https://rustup.rs) (on Windows, Rust needs the Visual Studio C++ build tools, which the Rust installer offers to install):
-
-```
-cargo install --git https://github.com/cvsvensson/typst-redline
-```
-
-This puts `typst-redline` in `~/.cargo/bin`, which the Rust installer adds to `PATH`. Run the same command with `--force` to update, and `cargo uninstall typst-redline` to remove it.
 
 `typst-redline --version` checks that it is found. The tests run with Typst 0.15.1 on Linux, macOS and Windows, and with Typst 0.14.2 on Linux; they also pass with Typst 0.11.1 on Windows.
 
@@ -180,7 +180,7 @@ The list starts with *Last reviewed version*, the changes since the commit you l
 - *Several commits...* lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view.
 - *Between two commits...*, under *More options...*, asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. It uses the view, colours included.
 
-If `typst-redline` or `typst` is not found, a message says which and offers to install it or to locate it; VS Code may need a restart after installing.
+If `typst-redline` or `typst` is not found, a message says which, with a button that opens install instructions and, for `typst`, one to locate it; VS Code may need a restart after installing.
 
 The run saves the open files of the project first, and its progress notification can cancel it. The PDF is written next to the file as `<name>.redline.pdf`. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.
 

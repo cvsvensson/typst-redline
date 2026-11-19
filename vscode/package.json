@@ -48,7 +48,7 @@
     ],
     "menus": {
       "editor/title": [
-        { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ", "group": "navigation" }
+        { "command": "typstRedline.showChanges", "when": "resourceScheme == file && resourceExtname == .typ", "group": "navigation" }
       ],
       "explorer/context": [
         { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ && !listDoubleSelection && config.typstRedline.contextMenu", "group": "typst" },

@@ -4,7 +4,7 @@ Open a `.typ` file and click the compare button in the editor's title bar to see
 
 Shows what changed in a Typst document as a PDF of the new version with the changes marked. The extension runs the [`typst-redline`](https://github.com/cvsvensson/typst-redline) command-line tool, which needs `typst` and, for comparisons with commits, git. Install `typst-redline` first and restart VS Code so that it is on the `PATH`, or set `typstRedline.executable` to its full path.
 
-The extension is not on the Marketplace. The release workflow attaches one `.vsix` per platform (win32-x64, darwin-x64, darwin-arm64, linux-x64, linux-arm64) to the release page, with `typst-redline` inside, so no `PATH` setup is needed; install it with *Extensions: Install from VSIX...*. A `typstRedline.executable` you set takes precedence. To build a `.vsix` without the binary, run `npm ci` and `npm run package` in the [`vscode/`](https://github.com/cvsvensson/typst-redline/tree/main/vscode) folder of the repository. It is turned off in Restricted Mode, because it runs git and the programs its settings name.
+The extension is not on the Marketplace. The release workflow attaches one `.vsix` per platform (win32-x64, darwin-x64, darwin-arm64, linux-x64, linux-arm64) to each release, with `typst-redline` inside, so no `PATH` setup is needed; no release has been published yet. Install a `.vsix` with *Extensions: Install from VSIX...*. A `typstRedline.executable` you set takes precedence. To build a `.vsix` without the binary, run `npm ci` and `npm run package` in the [`vscode/`](https://github.com/cvsvensson/typst-redline/tree/main/vscode) folder of the repository. It is turned off in Restricted Mode, because it runs git and the programs its settings name.
 
 To see what changed:
 
@@ -28,7 +28,7 @@ The list starts with *Last reviewed version*, the changes since the commit you l
 - *Several commits...* lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view.
 - *Between two commits...*, under *More options...*, asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. It uses the view, colours included.
 
-If `typst-redline` or `typst` is not found, a message says which and offers to install it or to locate it; VS Code may need a restart after installing.
+If `typst-redline` or `typst` is not found, a message says which, with a button that opens install instructions and, for `typst`, one to locate it; VS Code may need a restart after installing.
 
 The PDF is written next to the file as `<name>.redline.pdf`. Messages of the tool are in the *Typst Redline* output.
 

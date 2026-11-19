@@ -499,15 +499,17 @@ function found(cmd: string, cwd: string) {
 }
 
 // Says which program is missing, with buttons that help to get it, and whether both are there.
-async function programsFound(doc: vscode.TextDocument, again: () => unknown) {
-  const config = vscode.workspace.getConfiguration("typstRedline", doc.uri);
-  const dir = path.dirname(doc.fileName);
-  const [tool, typst] = await Promise.all([found(exe(doc), dir), found(config.get<string>("typst") || "typst", dir)]);
+// `again` runs the command again once typst is located.
+async function programsFound(file: vscode.Uri, again: () => unknown) {
+  const config = vscode.workspace.getConfiguration("typstRedline", file);
+  const dir = path.dirname(file.fsPath);
+  const tool = executable(config);
+  const typstSet = config.get<string>("typst");
+  const [toolFound, typstFound] = await Promise.all([found(tool, dir), found(typstSet || "typst", dir)]);
   const restart = "VS Code may need a restart after installing.";
-  if (!tool) {
+  if (!toolFound) {
     // A bundled copy is always found, so either the setting is wrong or nothing is bundled.
-    const set = exe(doc) !== "typst-redline";
-    const choice = set
+    const choice = tool !== "typst-redline"
       ? vscode.window.showErrorMessage("Typst Redline: the typst-redline program set in the settings was not found.", "Open setting")
       : vscode.window.showErrorMessage(
           `Typst Redline: the typst-redline program was not found. Install it, or set its path in the settings. ${restart}`,
@@ -519,9 +521,11 @@ async function programsFound(doc: vscode.TextDocument, again: () => unknown) {
         ? vscode.env.openExternal(vscode.Uri.parse("https://github.com/cvsvensson/typst-redline#install"))
         : c && vscode.commands.executeCommand("workbench.action.openSettings", "typstRedline.executable"),
     );
-  } else if (!typst) {
+  } else if (!typstFound) {
     const choice = vscode.window.showErrorMessage(
-      `Typst Redline: typst was not found. Install it, or set typstRedline.typst to where it is. ${restart}`,
+      typstSet
+        ? "Typst Redline: the typst set in typstRedline.typst was not found."
+        : `Typst Redline: typst was not found. Install it, or set typstRedline.typst to where it is. ${restart}`,
       "Locate typst...",
       "How to install",
     );
@@ -531,13 +535,20 @@ async function programsFound(doc: vscode.TextDocument, again: () => unknown) {
       } else if (c) {
         const picked = await vscode.window.showOpenDialog({ title: "Locate typst" });
         if (picked) {
-          await config.update("typst", picked[0].fsPath, vscode.ConfigurationTarget.Global);
+          // Where a value is set already, or it would still take precedence.
+          const set = config.inspect<string>("typst");
+          const target = set?.workspaceFolderValue
+            ? vscode.ConfigurationTarget.WorkspaceFolder
+            : set?.workspaceValue
+              ? vscode.ConfigurationTarget.Workspace
+              : vscode.ConfigurationTarget.Global;
+          await config.update("typst", picked[0].fsPath, target);
           again();
         }
       }
     });
   }
-  return tool && typst;
+  return toolFound && typstFound;
 }
 
 async function showChanges(clicked?: vscode.Uri, chosen?: Base) {
@@ -546,7 +557,9 @@ async function showChanges(clicked?: vscode.Uri, chosen?: Base) {
   const config = vscode.workspace.getConfiguration("typstRedline", doc.uri);
   const extra = config.get<string[]>("extraArgs", []);
   checkExtraArgs(extra);
-  if (!idle(file) || !(await programsFound(doc, () => showChanges(clicked, chosen)))) {
+  // A chosen base comes from a command that checked the programs already.
+  const again = () => vscode.commands.executeCommand("typstRedline.showChanges", clicked);
+  if (!idle(file) || (!chosen && !(await programsFound(doc.uri, again)))) {
     return;
   }
   const proj = project(doc);
@@ -623,6 +636,9 @@ async function compareFiles(clicked?: vscode.Uri, selected?: vscode.Uri[]) {
   const files = selected?.length ? selected : clicked ? [clicked] : [];
   if (files.length !== 2 || !files.every((f) => f.scheme === "file" && f.fsPath.endsWith(".typ"))) {
     throw new Error("Select two .typ files in the Explorer first.");
+  }
+  if (!(await programsFound(files[0], () => vscode.commands.executeCommand("typstRedline.compareFiles", clicked, selected)))) {
+    return;
   }
   const [a, b] = files.map((f) => f.fsPath);
   const [older, newer] = (await vscode.workspace.fs.stat(files[0])).mtime > (await vscode.workspace.fs.stat(files[1])).mtime ? [b, a] : [a, b];
