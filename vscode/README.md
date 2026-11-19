@@ -7,7 +7,7 @@ The extension is not on the Marketplace. Build the `.vsix` from the [`vscode/`](
 To see what changed:
 
 1. Open the main `.typ` file of the document.
-2. Run **Typst Redline: Show changes since...** from the Command Palette.
+2. Run **Typst Redline: Show changes since...** from the Command Palette, or from the right-click menu of a `.typ` file in the Explorer, the editor or its tab.
 3. Press Enter for the changes since the newest commit, or since the last reviewed version once there is one; or pick another commit or *Another file...*. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
 4. When you have read it, run **Typst Redline: Mark as reviewed**. It marks the commit that is checked out; uncommitted changes are not part of it. Next time, *Last reviewed version* shows what changed since that commit.
 
@@ -28,5 +28,6 @@ Settings, with their defaults:
 
 - `typstRedline.executable`: `typst-redline`, and `typstRedline.typst`: empty, for `typst` on `PATH`.
 - `typstRedline.root`: empty, for the workspace folder, or the git repository if the workspace folder contains it.
+- `typstRedline.contextMenu`: `true`; `false` removes the right-click entry.
 - `typstRedline.openPdf`: `auto`; `editor` or `external` choose one place.
 - `typstRedline.extraArgs`: empty; further arguments, such as `["--no-moves"]` or `["--", "--font-path", "fonts"]`. The command sets `--since`, `--to`, `--layout`, `--each-commit` and `--steps` itself and refuses to run if this setting holds one of them.

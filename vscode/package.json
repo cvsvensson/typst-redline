@@ -35,6 +35,15 @@
       }
     ],
     "menus": {
+      "explorer/context": [
+        { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ && config.typstRedline.contextMenu", "group": "typst" }
+      ],
+      "editor/context": [
+        { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ && config.typstRedline.contextMenu", "group": "typst" }
+      ],
+      "editor/title/context": [
+        { "command": "typstRedline.showChanges", "when": "resourceExtname == .typ && config.typstRedline.contextMenu", "group": "typst" }
+      ],
       "commandPalette": [
         {
           "command": "typstRedline.showChanges",
@@ -71,6 +80,11 @@
           "default": [],
           "scope": "resource",
           "markdownDescription": "Arguments added to every `typst-redline` run, one per item. Arguments after `--` go to `typst compile`, for example `[\"--\", \"--font-path\", \"fonts\"]`."
+        },
+        "typstRedline.contextMenu": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show 'Typst Redline: Show changes since...' in the right-click menu of Typst files."
         },
         "typstRedline.openPdf": {
           "type": "string",
