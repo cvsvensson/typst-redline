@@ -26,10 +26,14 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
 
   test:
+    name: test (${{ matrix.os }}, typst ${{ matrix.typst }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        typst: ["0.15.1"]
+        include:
+          - { os: ubuntu-latest, typst: "0.14.2" }
     runs-on: ${{ matrix.os }}
     env:
       # Each typst start scans the system fonts, which is slow where many are installed;
@@ -40,8 +44,34 @@ jobs:
       # The runner's preinstalled stable Rust: updating it costs up to half a minute on Windows.
       # The lint job checks with the latest stable.
       - uses: Swatinem/rust-cache@v2
-      # The tests skip compilation silently when typst is missing; keep in step with typst-syntax in Cargo.toml.
+      # The tests skip compilation silently when typst is missing. The newest version is the one
+      # typst-syntax in Cargo.toml parses; keep the two in step.
+      - uses: typst-community/setup-typst@v5
+        with:
+          typst-version: ${{ matrix.typst }}
+      - run: cargo test --locked
+
+  vscode:
+    runs-on: ubuntu-latest
+    env:
+      TYPST_IGNORE_SYSTEM_FONTS: "true"
+    defaults:
+      run:
+        working-directory: vscode
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
       - uses: typst-community/setup-typst@v5
         with:
           typst-version: 0.15.1
-      - run: cargo test --locked
+      # The extension tests run target/release/typst-redline.
+      - run: cargo build --release --locked
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: vscode/package-lock.json
+      - run: npm ci
+      - run: npm run compile
+      # The tests start VS Code, which needs a display.
+      - run: xvfb-run -a npm test
