@@ -6,7 +6,7 @@ The two pictures are the PDF made from [docs/example/old.typ](docs/example/old.t
 
 <img src="docs/example.png" width="420" alt="A page with a changed sentence, formula and drawing and a new paragraph, each marked">
 
-The summary explains the marks and lists the sections that changed. When the two versions come from git, it also lists the commits between them. The summary has the page setup of the document's leading `#set` rules but not its template, show rules, header or footer.
+The summary explains the marks and lists the sections that changed. When the two versions come from git, it also lists the commits between them that change the document or a file it includes or reads, such as its bibliography, images or data. The summary has the page setup of the document's leading `#set` rules but not its template, show rules, header or footer.
 
 <img src="docs/example-summary.png" width="420" alt="The summary page: a legend and the list of changed sections">
 
@@ -72,7 +72,7 @@ With the deleted parts removed, the marked document has the same text, layout an
 
 ## Who changed what
 
-`--each-commit` gives each commit between the two versions that changes the document or a file it includes its own colour, for up to 6 commits. Deleted text is still struck through and new text still highlighted; the colour tells which commit made the change. The list of commits on the summary page is the legend, and each page with marks repeats it in one small line in the bottom margin when there is room.
+`--each-commit` gives each commit between the two versions that changes the document or a file it includes or reads its own colour, for up to 6 commits. Deleted text is still struck through and new text still highlighted; the colour tells which commit made the change. The list of commits on the summary page is the legend, and each page with marks repeats it in one small line in the bottom margin when there is room.
 
 ```sh
 typst-redline paper.typ --since HEAD~4 --each-commit

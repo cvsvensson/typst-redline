@@ -2054,6 +2054,24 @@ fn commits_that_only_touch_other_files_are_not_listed() {
 }
 
 #[test]
+fn commits_that_only_change_data_the_document_reads_are_listed() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("data-commit", &["alpha"]);
+    let main = format!("#let d = json(\"d.json\")\n{}Value: #d.v\n", doc("alpha"));
+    std::fs::write(dir.join("doc/main.typ"), main).unwrap();
+    std::fs::write(dir.join("doc/d.json"), "{\"v\": 1}").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-q", "-m", "data"]);
+    git(&dir, &["tag", "c-data"]);
+    std::fs::write(dir.join("doc/d.json"), "{\"v\": 2}").unwrap();
+    git(&dir, &["commit", "-q", "-am", "value"]);
+    let src = marked(&dir, &["doc/main.typ", "--since", "c-data"], "main.typ");
+    assert!(src.contains("subject: \"value\""), "{src}");
+}
+
+#[test]
 fn each_commit_needs_the_old_revision_to_be_an_ancestor() {
     let dir = repo("not-ancestor", &["alpha", "beta"]);
     git(&dir, &["checkout", "-q", "-b", "side", "c-alpha"]);

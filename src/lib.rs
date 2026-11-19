@@ -205,14 +205,20 @@ pub fn redline(
     }
 }
 
-/// The root-relative paths of the entry and the files it includes or
-/// imports, directly or not, as for [`redline`] with `reads`.
+/// The root-relative paths of the files the document reads: the entry, the
+/// files it includes or imports, directly or not, as for [`redline`] with
+/// `reads`, then the files it reads by a literal path, its bibliography
+/// files and `reads`.
 pub fn project_files(v: &Version, reads: Option<&[String]>) -> Vec<String> {
     let modules = modules(v, reads);
-    project(v, &mut vec![], reads.map(|_| modules.as_slice()))
-        .into_iter()
-        .map(|(p, _)| p)
-        .collect()
+    let files = project(v, &mut vec![], reads.map(|_| modules.as_slice()));
+    let mut other = literal_reads(&files);
+    other.extend(bib_paths(&files));
+    other.extend(reads.unwrap_or_default().iter().cloned());
+    let mut paths: Vec<String> = files.into_iter().map(|(p, _)| p).collect();
+    other.retain(|p| !paths.contains(p));
+    paths.extend(other);
+    paths
 }
 
 /// The Typst files among `reads` that no call reads by a literal path: those
@@ -329,38 +335,48 @@ impl Bib {
     }
 }
 
+/// The bibliography files that `bibliography` calls name by literal paths.
+fn bib_paths(files: &[(String, String)]) -> Vec<String> {
+    let mut paths = vec![];
+    for (path, src) in files {
+        walk(&parse(src), &mut |n| {
+            if n.kind() == SyntaxKind::FuncCall
+                && n.children()
+                    .next()
+                    .is_some_and(|f| f.leaf_text().as_str() == "bibliography")
+            {
+                let args = n.children().filter(|c| c.kind() == SyntaxKind::Args);
+                for a in args
+                    .flat_map(|a| a.children())
+                    .filter(|a| a.kind() != SyntaxKind::Named)
+                {
+                    walk(a, &mut |s| {
+                        if let Some(s) = s.cast::<ast::Str>() {
+                            paths.extend(resolve(path, &s.get()));
+                        }
+                    });
+                }
+            }
+        });
+    }
+    paths
+}
+
 fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, new_files: &[(String, String)]) -> Bib {
     // The bibliography files a version names, and the references in it that
     // are not to one of its labels. Keys found in no entry are left out,
     // such as labels that code makes.
     let scan = |files: &[(String, String)]| {
-        let (mut paths, mut refs, mut labels) = (vec![], BTreeSet::new(), HashSet::new());
-        for (path, src) in files {
+        let (mut refs, mut labels) = (BTreeSet::new(), HashSet::new());
+        for (_, src) in files {
             walk(&parse(src), &mut |n| match n.kind() {
                 SyntaxKind::Ref => drop(refs.insert(ref_name(n))),
                 SyntaxKind::Label => drop(labels.insert(label_name(n))),
-                SyntaxKind::FuncCall
-                    if n.children()
-                        .next()
-                        .is_some_and(|f| f.leaf_text().as_str() == "bibliography") =>
-                {
-                    let args = n.children().filter(|c| c.kind() == SyntaxKind::Args);
-                    for a in args
-                        .flat_map(|a| a.children())
-                        .filter(|a| a.kind() != SyntaxKind::Named)
-                    {
-                        walk(a, &mut |s| {
-                            if let Some(s) = s.cast::<ast::Str>() {
-                                paths.extend(resolve(path, &s.get()));
-                            }
-                        });
-                    }
-                }
                 _ => {}
             });
         }
         refs.retain(|r| !labels.contains(r));
-        (paths, refs)
+        (bib_paths(files), refs)
     };
     let ((old_paths, old_keys), (new_paths, new_keys)) = (scan(old_files), scan(new_files));
     if new_paths.is_empty() {
