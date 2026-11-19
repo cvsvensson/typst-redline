@@ -922,7 +922,7 @@ const PLAIN: &str = "#let redline-ins(body, ..args) = body
 /// Every fixture: each change found is marked and on the summary's list of
 /// marks, from which the summary lists those not laid out; the proof with
 /// the deletions removed is the new document; and the binary makes a PDF in
-/// both layouts.
+/// both layouts, whose layout converges.
 #[test]
 fn every_fixture_keeps_the_contract() {
     let names: Vec<String> = fixtures().collect();
@@ -991,10 +991,10 @@ fn keeps_the_contract(name: &str) {
             .args(args)
             .output()
             .unwrap();
+        let stderr = String::from_utf8_lossy(&run.stderr);
         assert!(
-            run.status.success() && pdf_pages(&pdf) > 0,
-            "{name}, {layout}: {}",
-            String::from_utf8_lossy(&run.stderr)
+            run.status.success() && pdf_pages(&pdf) > 0 && !stderr.contains("did not converge"),
+            "{name}, {layout}: {stderr}"
         );
     }
 }

@@ -340,20 +340,29 @@
 // rebuilt; styles on the way to such an element are lost. Counter updates
 // stay, so that the content is numbered as in the old version;
 // `redline-restore` undoes them.
-// Whether a deleted citation of `key` can be laid out here without changing
-// the new document's bibliography or numbering: the new document cites the
-// key, and cites no other key for the first time between here and its first
-// citation of the key, other than keys cited before here, also by deleted
-// citations laid out.
-#let redline-cite-safe(key) = {
-  let new(cites) = cites.filter(x => not (x.has("label") and x.label == <redline-deleted-cite>))
-  let all = new(query(cite))
-  let first = all.position(x => x.key == key)
-  if first == none { return false }
-  let before = query(selector(cite).before(here()))
-  let i = new(before).len()
-  let seen = before.map(x => x.key)
-  all.slice(calc.min(i, first), first).all(x => x.key in seen)
+// Whether the `n`-th deleted reference, of `key`, can be laid out as a
+// citation without changing the new document's bibliography or numbering:
+// the new document cites the key, and cites no other key for the first time
+// between here and its first citation of the key, other than keys cited
+// before here, by the new document or by deleted citations laid out. Each
+// deleted reference leaves a marker whatever it shows, so that this is
+// decided from the order of markers and new citations alone and does not
+// depend on what earlier deleted references showed.
+#let redline-cite-safe(key, n) = {
+  let items = query(selector(cite).or(<redline-deleted-ref>)).filter(x => not (x.has("label") and x.label == <redline-deleted-cite>))
+  let seen = ()
+  let m = 0
+  for (j, x) in items.enumerate() {
+    if x.func() == cite { seen.push(str(x.key)); continue }
+    let k = redline-value(x)
+    let rest = items.slice(j + 1).filter(y => y.func() == cite)
+    let first = rest.position(y => str(y.key) == k)
+    let safe = first != none and rest.slice(0, first).all(y => str(y.key) in seen)
+    if m == n { return safe }
+    if safe { seen.push(k) }
+    m += 1
+  }
+  false
 }
 
 #let redline-neutral(c) = {
@@ -364,10 +373,14 @@
   if f == ref {
     let sup = c.at("supplement", default: none)
     // Citations cannot be queried before Typst 0.14.
-    return context if query(c.target).len() > 0 { c } else if sys.version >= version(0, 14, 0) and redline-cite-safe(c.target) {
-      [#cite(c.target, supplement: if sup == auto { none } else { sup })<redline-deleted-cite>]
-    } else {
-      emph(str(c.target))
+    return context {
+      let n = query(selector(<redline-deleted-ref>).before(here())).len()
+      redline-meta(str(c.target), <redline-deleted-ref>)
+      if query(c.target).len() > 0 { c } else if sys.version >= version(0, 14, 0) and redline-cite-safe(str(c.target), n) {
+        [#cite(c.target, supplement: if sup == auto { none } else { sup })<redline-deleted-cite>]
+      } else {
+        emph(str(c.target))
+      }
     }
   }
   let fs = c.fields()
