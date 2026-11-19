@@ -466,35 +466,102 @@ pub fn targets(root: &SyntaxNode) -> HashSet<String> {
     set
 }
 
-/// Names bound by top-level `#let` and `#import` items.
+/// Names bound at the top level of a file.
 pub fn definitions(root: &SyntaxNode) -> HashSet<String> {
-    let mut set = HashSet::new();
-    for n in root.children() {
-        match n.kind() {
-            K::LetBinding => {
-                let name = n.children().find_map(|c| match c.kind() {
-                    K::Ident => Some(c.leaf_text().to_string()),
-                    K::Closure => c
-                        .children()
-                        .find(|d| d.kind() == K::Ident)
-                        .map(|d| d.leaf_text().to_string()),
-                    _ => None,
-                });
-                set.extend(name);
-            }
-            K::ModuleImport => {
-                for c in n.children().filter(|c| c.kind() == K::ImportItems) {
-                    walk(c, &mut |d| {
-                        if d.kind() == K::Ident {
-                            set.insert(d.leaf_text().to_string());
-                        }
-                    });
-                }
-            }
-            _ => {}
+    top_bindings(root).into_iter().filter_map(|(_, b)| b).collect()
+}
+
+/// The names that node `n` itself binds, `None` for a wildcard import, which
+/// can bind any name.
+pub fn binds(n: &SyntaxNode) -> Vec<Option<String>> {
+    let names = |ids: Vec<ast::Ident>| ids.into_iter().map(|i| Some(i.get().to_string())).collect();
+    if let Some(b) = n.cast::<ast::LetBinding>() {
+        names(b.kind().bindings())
+    } else if let Some(f) = n.cast::<ast::ForLoop>() {
+        names(f.pattern().bindings())
+    } else if let Some(p) = n.cast::<ast::Params>() {
+        names(
+            p.children()
+                .flat_map(|p| match p {
+                    ast::Param::Pos(p) => p.bindings(),
+                    ast::Param::Named(n) => vec![n.name()],
+                    ast::Param::Spread(s) => s.sink_ident().into_iter().collect(),
+                })
+                .collect(),
+        )
+    } else if let Some(i) = n.cast::<ast::ModuleImport>() {
+        let mut out: Vec<Option<String>> = match i.imports() {
+            Some(ast::Imports::Wildcard) => vec![None],
+            Some(ast::Imports::Items(items)) => names(items.iter().map(|i| i.bound_name()).collect()),
+            None => vec![],
+        };
+        match i.new_name() {
+            Some(name) => out.push(Some(name.get().to_string())),
+            None if i.imports().is_none() => out.extend(i.bare_name().ok().map(|n| Some(n.to_string()))),
+            None => {}
+        }
+        out
+    } else {
+        vec![]
+    }
+}
+
+/// Whether names bound inside a node of this kind are local to it.
+pub fn is_scope(kind: K) -> bool {
+    matches!(kind, K::CodeBlock | K::ContentBlock | K::Closure | K::ForLoop)
+}
+
+/// The names bound at the top level of a file, outside any block, function
+/// or loop, each with the offset of what binds it.
+pub fn top_bindings(root: &SyntaxNode) -> Vec<(usize, Option<String>)> {
+    fn into(n: &SyntaxNode, at: usize, out: &mut Vec<(usize, Option<String>)>) {
+        if is_scope(n.kind()) {
+            return;
+        }
+        out.extend(binds(n).into_iter().map(|b| (at, b)));
+        let mut at = at;
+        for c in n.children() {
+            into(c, at, out);
+            at += c.len();
         }
     }
-    set
+    let mut out = vec![];
+    into(root, 0, &mut out);
+    out
+}
+
+/// The names bound anywhere in `n` but in the nodes with a span in `skip`.
+pub fn all_bindings(n: &SyntaxNode, skip: &HashSet<Span>) -> Vec<Option<String>> {
+    let mut out = vec![];
+    let mut stack = vec![n];
+    while let Some(n) = stack.pop() {
+        if !skip.contains(&n.span()) {
+            out.extend(binds(n));
+            stack.extend(n.children());
+        }
+    }
+    out
+}
+
+/// The names that code uses as variables and does not bind itself.
+pub fn free_names(nodes: &[SyntaxNode]) -> HashSet<String> {
+    fn into(n: &SyntaxNode, used: &mut HashSet<String>, bound: &mut HashSet<String>) {
+        bound.extend(binds(n).into_iter().flatten());
+        // A field and the name of a named argument are not variables.
+        let (skip, take) = match n.kind() {
+            K::Ident | K::MathIdent => {
+                used.insert(n.leaf_text().to_string());
+                return;
+            }
+            K::FieldAccess => (0, 1),
+            K::Named => (1, usize::MAX),
+            _ => (0, usize::MAX),
+        };
+        n.children().skip(skip).take(take).for_each(|c| into(c, used, bound));
+    }
+    let (mut used, mut bound) = (HashSet::new(), HashSet::new());
+    nodes.iter().for_each(|n| into(n, &mut used, &mut bound));
+    &used - &bound
 }
 
 /// The strings that show rules match in text, as `"new version"` in
