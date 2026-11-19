@@ -1250,7 +1250,12 @@
   // Numbers stand outside the bars and brackets, ending there in the left
   // margin and starting there in the right one. Where they do not fit, they
   // stand in the other margin if they fit there, or else as large as fits,
-  // down to two thirds of their size, at the edge of the page.
+  // down to two thirds of their size, at the edge of the page, or inside
+  // the bars where these are at the edge, as on a page without margins.
+  let edge(r) = {
+    let m = if r { right } else { left }
+    if m - gap(m) <= st.bar-width / 2 { st.bar-width + 1pt } else { 1pt }
+  }
   let anchor(r) = if r { calc.min(left + body + gap(right) + 3 * st.lane, w - st.bar-width / 2) + 3pt } else { calc.max(left - gap(left) - 3 * st.lane, st.bar-width / 2) - 3pt }
   let room(r) = if r { w - 1pt - anchor(r) } else { anchor(r) - 1pt }
   let width(ns) = measure(label(ns, number-size)).width
@@ -1263,7 +1268,7 @@
     let size = number-size * calc.max(2 / 3, calc.min(1, room(r) / tw))
     let t = label(ns, size)
     let tw = measure(t).width
-    place(redline-top-left, dx: if r { calc.min(anchor(r), w - tw - 1pt) } else { calc.max(anchor(r) - tw, 1pt) }, dy: calc.max(y, 1pt), t)
+    place(redline-top-left, dx: if r { calc.min(anchor(r), w - tw - edge(r)) } else { calc.max(anchor(r) - tw, edge(r)) }, dy: calc.max(y, 1pt), t)
   }
   // The legend goes at the bottom edge of the page, as the pointer line goes
   // at the top edge, if it stays clear of the footer. The side-by-side
