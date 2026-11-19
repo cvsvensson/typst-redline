@@ -309,6 +309,22 @@
 
 #let redline-styled = [#set text(red); a].func()
 
+// Content `c` with `tag` before the page break that it ends with, where the
+// tag would start a page of its own; none if it ends otherwise.
+#let redline-before-break(c, tag) = if type(c) == content {
+  if c.func() == pagebreak { return tag + c }
+  if c.func() == redline-styled {
+    let inner = redline-before-break(c.child, tag)
+    return if inner != none { redline-styled(inner, c.styles) }
+  }
+  if c.func() != [].func() { return none }
+  let ch = c.children
+  let i = ch.len() - 1
+  while i >= 0 and ch.at(i).func() in ([ ].func(), parbreak) { i -= 1 }
+  let last = if i >= 0 { redline-before-break(ch.at(i), tag) }
+  if last != none { (..ch.slice(0, i), last, ..ch.slice(i + 1)).join() }
+}
+
 // The parts of a mark with its tags and frames: `style` applied to each run
 // of parts that are not framed, `frame-style` to each framed part that shows
 // text. A drawing, an image, or content with colours of its own is drawn as
@@ -352,7 +368,8 @@
   let n = ch.len()
   let framed = ch.map(c => redline-framed(c, block and n == 1))
   let roomless = block and ch.all(redline-roomless)
-  let styled = n > 0 and not roomless and not framed.last() and repr(ch.last().func()) == "styled"
+  let broken = if n > 0 and not framed.last() { redline-before-break(ch.last(), place(layout(size => redline-tag("end", -0.2em, width: size.width)))) }
+  let styled = broken == none and n > 0 and not roomless and not framed.last() and repr(ch.last().func()) == "styled"
   // A tag between blocks is at the top of the next block, and the bar starts
   // a little above it: a gap can be as narrow as the leading of a tight list.
   let start-dy = if roomless { -1em } else { -0.3em }
@@ -397,7 +414,7 @@
           if kind == "del" { context { let s = measure(c); redline-cross(stroke, s.width, s.height) } }
         })
       } else { c }
-      run.push(if i == n - 1 and styled { redline-end-in(c, end-tag) } else { c })
+      run.push(if i == n - 1 and broken != none { broken } else if i == n - 1 and styled { redline-end-in(c, end-tag) } else { c })
       if i == 0 and between and n > 1 and not roomless and id != none { run.push(redline-first(c, id)) }
     }
   }
@@ -412,7 +429,7 @@
     } else if roomless or block and ch.last().func() in (list.item, enum.item, terms.item) {
       // After a list, a tag in the text would start a line of its own.
       place(layout(size => redline-tag("end", -0.2em, width: size.width)))
-    } else if n == 0 or not (framed.last() or styled) { end-tag }
+    } else if n == 0 or not (framed.last() or styled or broken != none) { end-tag }
   }
   lead
   // Tags alone at the end of a paragraph are laid out after it, unless an
@@ -1232,12 +1249,13 @@
     place(redline-top-left, dx: if r { calc.min(anchor(r), w - tw - 1pt) } else { calc.max(anchor(r) - tw, 1pt) }, dy: calc.max(y, 1pt), t)
   }
   // The legend goes at the bottom edge of the page, as the pointer line goes
-  // at the top edge, if it stays clear of the footer. The footer lies in the
+  // at the top edge, if it stays clear of the footer. The side-by-side
+  // layout has one under each pair of pages instead. The footer lies in the
   // bottom margin below its descent, aligned in what is left; a page number
   // is in it unless it is at the top, and is taken to be one line high. In
   // Typst 0.11 an unset footer reads as none.
   let hist = query(<redline-history>)
-  let legend = if merged.len() > 0 and hist.len() > 0 { redline-legend(redline-value(hist.first()), body) }
+  let legend = if merged.len() > 0 and hist.len() > 0 and redline-side == none { redline-legend(redline-value(hist.first()), body) }
   if legend != none {
     let margin = side(("bottom",), h)
     let foot = if page.footer not in (none, auto) { page.footer } else if page.numbering != none and page.number-align.y != redline-top-left.y [0]
