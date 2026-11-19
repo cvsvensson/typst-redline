@@ -89,23 +89,11 @@ typst-redline talk.typ --since HEAD~1 --layout side-by-side
 
 ## Recipes with git
 
-**Send a co-author what changed since the version they read.** Tag the commit you sent, `git tag sent-to-anna`, and later run `typst-redline paper.typ --since sent-to-anna`. The summary lists the commits in between.
+- **Send a co-author what changed since the version they read**: tag the commit you sent, `git tag sent-to-anna`, and later run `typst-redline paper.typ --since sent-to-anna`.
+- **What changed since you last read it**: run `typst-redline paper.typ --mark-reviewed` when you have read it, and later `typst-redline paper.typ --since reviewed`.
+- **Who changed what**: `typst-redline paper.typ --since sent-to-anna --each-commit` gives each of up to six commits its own colour ([picture](docs/gallery.md#who-changed-what)).
 
-**What changed since you last read it.** When you have read the document, run `typst-redline paper.typ --mark-reviewed`; later, `typst-redline paper.typ --since reviewed` shows what changed since. The mark is the last commit, kept in a local git ref per document, printed when you set it; `git push` does not send it, and `git update-ref -d <that ref>` removes it. If the repository has a branch or tag named `reviewed`, `--since reviewed` means that instead and says so on stderr. `typst-redline paper.typ --show-reviewed` prints the hash of the commit `--since reviewed` uses, or nothing if there is none.
-
-**What changed since a date.** Find the last commit before it and compare with that: `typst-redline paper.typ --since $(git rev-list -1 --before="2026-11-16 00:00" HEAD)`. If no commit is that old, `typst-redline` stops with *--since needs a value*.
-
-**What a branch changed**: `typst-redline paper.typ --since main...feature` compares the point where `feature` left `main` with `feature`.
-
-**Who changed what.** `--each-commit` gives each commit between the two versions its own colour, for up to 6 commits that change the document or a file it reads. The commits are listed in their colours on the summary page and in one small line in the bottom margin of each marked page ([picture](docs/gallery.md#who-changed-what)).
-
-```
-typst-redline paper.typ --since sent-to-anna --each-commit
-```
-
-For more commits, `--steps` groups them into up to 6 steps, each in its own colour: `--steps 3` splits them into three steps that change about the same amount, and `--steps a1b2c3,submitted` ends steps at those revisions, the last step at the new version, uncommitted changes included. The summary lists each step with its range, date and commit subjects.
-
-Only the first and the last version are compared, so text that one commit added and a later one removed does not appear, and a passage that several commits changed takes the colour of the commit that changed most of it. Both options need the old revision to be an ancestor of the new one, and do not work with two plain files.
+[docs/git.md](docs/git.md) has the details of these, and recipes for a date, a branch and more than six commits.
 
 ## Known problems
 
@@ -120,13 +108,11 @@ The ones you are most likely to meet; [docs/known-problems.md](docs/known-proble
 
 ## Styling
 
-Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`; the six colours of `--each-commit` and `--steps` are in `redline-style.steps`. The tool passes data to the functions in the preamble, and that data changes between versions, so copy the preamble again from the version you run after each update.
+Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`; the six colours of `--each-commit` and `--steps` are in `redline-style.steps`. The data the tool passes to the preamble changes between versions, so copy it again after each update.
 
 ## VS Code
 
-Open a `.typ` file and click the compare button in the editor's title bar to see what changed, as a PDF with the changes marked.
-
-The extension in [`vscode/`](vscode) runs `typst-redline` on the open `.typ` file. It needs `typst-redline` installed as above and is not on the Marketplace; build it with Node.js and install it by hand:
+The extension in [`vscode/`](vscode) runs `typst-redline` from VS Code: open a `.typ` file, click the compare button in the editor's title bar or right-click the file in the Explorer, pick what to compare with, and the PDF with the changes marked opens. It needs `typst-redline` installed as above and is not on the Marketplace; build it with Node.js and install it by hand:
 
 ```
 cd vscode
@@ -135,41 +121,7 @@ npm run package     # makes typst-redline-0.1.0.vsix
 code --install-extension typst-redline-0.1.0.vsix
 ```
 
-or use *Extensions: Install from VSIX...* in VS Code. VS Code finds `typst-redline` on the `PATH` it started with, so restart it after installing the tool. The extension is turned off in Restricted Mode, because it runs git and the programs its settings name.
-
-To see what changed:
-
-1. Open the main `.typ` file of the document.
-2. Run *Typst Redline: Show Changes...* with the compare button in the editor's title bar, from the Command Palette, or from the right-click menu of a `.typ` file in the Explorer.
-3. Pick what to show, or press Enter for the first entry of the list. The PDF opens beside the document if a PDF viewer extension is installed, otherwise in the system viewer.
-4. When you have read it, run *Typst Redline: Mark as Reviewed*. It marks the commit that is checked out; uncommitted changes are not part of it.
-
-Outside a git repository, or with no commits to list, the command asks for the older version's file at once; *Typst Redline: Choose View* in the Command Palette changes the view there. To compare two files, select both in the Explorer, right-click and pick *Typst Redline: Show Changes Between These Files*; a short list asks which one is the newer version, offering the one changed last first.
-
-The list starts with *Last reviewed version*, the changes since the commit you last marked, once there is one; then *Changes since the last commit*, when the document's files have changes that are not committed, unsaved edits included, which are saved before the run; then the commits that change the document's files, newest first. **A commit stands for its own change and every change after it**, here and in every other list of commits. The first commit of the repository has no version before it and is not listed. After the commits come *Another file...*, which compares with a `.typ` file of your choice, *Several commits...* and *Between two commits...*.
-
-**The view.** The list's title names the current view, *Marked* at first. The button at the right of the title switches between *Marked* and *Side by side* and keeps the list open; colours stay as they are. *Typst Redline: Choose View* in the Command Palette chooses any of the four views. The workspace keeps the view until you change it.
-
-- *Marked* ([picture](docs/gallery.md#text-formulas-and-figures)): the new version with the changes marked.
-- *Side by side* ([picture](docs/gallery.md#slides-side-by-side)): changed pages of the old and the new version next to each other. Needs Typst 0.14 or later.
-- *Marked, coloured by commit* ([picture](docs/gallery.md#who-changed-what)) and *Side by side, coloured by commit*: each change in the colour of the commit that made it. A second list chooses *One colour per commit* or *2 steps* to *6 steps*, which split the commits into groups of about equal change. One colour per commit with more than six commits gives six steps. Where there is nothing to colour, as with another file, the changes are shown in the same layout without colours, and a notification says so.
-
-**More ways to compare.**
-
-- *Several commits...* lets you tick up to six commits: every change from the oldest ticked commit on is shown, and each ticked commit starts a new colour, which the commits after it share up to the next tick. It uses the layout of the view. *Typst Redline: Show Changes for Several Commits...* in the Command Palette opens this list directly.
-- *Between two commits...* asks for the oldest and the newest commit to show; the new version is then that commit, not the file as it is now. It uses the view, colours included.
-
-If `typst-redline` or `typst` is not found, a message says which, with a button that opens install instructions and, for `typst`, one to locate it; VS Code may need a restart after installing.
-
-The run saves the open files of the project first, and its progress notification can cancel it. The PDF is written next to the file as `<name>.redline.pdf`. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.
-
-Settings, with their defaults:
-
-- `typstRedline.executable`: `typst-redline`, and `typstRedline.typst`: empty, for `typst` on `PATH`.
-- `typstRedline.root`: empty, for the workspace folder, or the git repository if the workspace folder contains it.
-- `typstRedline.contextMenu`: `true`; `false` removes the right-click entries in the Explorer.
-- `typstRedline.openPdf`: `auto`; `editor` or `external` choose one place.
-- `typstRedline.extraArgs`: empty; further arguments, such as `["--no-moves"]` or `["--", "--font-path", "fonts"]`. The command sets `--since`, `--to`, `--layout`, `--each-commit` and `--steps` itself and refuses to run if this setting holds one of them.
+or use *Extensions: Install from VSIX...* in VS Code. [vscode/README.md](vscode/README.md) describes the lists, views, commands and settings.
 
 ## Claude Code
 
