@@ -1392,7 +1392,8 @@
 
 // For the summary and the binary: the pages with changes but without bars,
 // whichever pages they are. For the side-by-side layout also the number of
-// pages, the ids of the marks that were not laid out, each change's kind (0
+// pages before the summary and of the summary's pages, the ids of the marks
+// that were not laid out, each change's kind (0
 // deleted, 1 inserted, 3 the start or end of a move's place), identity, mark
 // (its id plus one, or 0) and page, and the same for each heading (kind 2),
 // whose identity is its text,
@@ -1423,7 +1424,9 @@
     })
     let triples = (..changes, ..headings).flatten()
     let lost = query(<redline-lost>).map(redline-value).flatten()
-    redline-ints((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, lost.len(), ..lost, triples.len(), ..triples, ..titles.flatten()), <redline-layout>)
+    let (start, end) = (query(<redline-summary>), query(<redline-summary-end>)).map(q => q.map(m => m.location().page()))
+    let (pages, summary) = if start.len() > 0 and end.len() > 0 { (start.first() - 1, end.first() - start.first() + 1) } else { (drawn.len() + unbarred.len(), 0) }
+    redline-ints((pages, summary, unbarred.len(), ..unbarred, lost.len(), ..lost, triples.len(), ..triples, ..titles.flatten()), <redline-layout>)
   }
 }
 
@@ -1488,7 +1491,9 @@
   }
 }
 
-#let redline-summary(info) = if redline-side == none {
+// The new side of the side-by-side layout ends with the summary too, which
+// the layout shows after the pages.
+#let redline-summary(info) = if redline-side != "old" {
   let st = redline-style
   pagebreak(weak: true)
   redline-summary-page(context {
@@ -1613,10 +1618,12 @@
     }
 
     redline-commits(info.at("history", default: none), info.old, info.new)
-    if total > 0 {
+    // The side-by-side layout says how it marks changes on its first page.
+    if total > 0 and redline-side == none {
       redline-head[How changes are marked]
       redline-marks-legend(info)
     }
+    redline-meta(none, <redline-summary-end>)
   })
 } else {
   context {
@@ -1628,15 +1635,15 @@
 }
 
 // The side-by-side layout. `info` is (old, new: (label, pdf: the version
-// compiled with `redline-side`, pages, unbarred: pages with changes but no
+// compiled with `redline-side`, pages: before the summary, summary: its
+// pages after them, unbarred: pages with changes but no
 // bars), pairs: array of (old, new: pages
 // shown next to each other, steps-old, steps-new: pages of earlier steps of
 // the same slide, not shown, titles: the heading of each row of pages,
 // moved: whether they hold both places of moved text), unpaired: array of
 // (side, ins, page): changes
 // found in one version only, unmarked: array of (file, old, new): changes
-// that are not marked, bib: as for `redline-summary`, moved: whether text
-// moved).
+// that are not marked and not in the summary, moved: whether text moved).
 #let redline-side-by-side(info) = context {
   let st = redline-style
   let (o, n) = (info.old, info.new)
@@ -1660,9 +1667,12 @@
   block(width: width + gap, align(center, block(width: calc.min(width + gap, 36 * size), align(left, {
     block(text(size: 1.4em, weight: "bold")[Changes from #o.label to #n.label])
     let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
-    if info.pairs.len() == 0 { if redline-bib(info.bib).len() == 0 and info.unmarked.len() == 0 [No changes found between the two versions.] } else [
+    let shown = info.pairs.map(p => calc.max(p.old.len(), p.new.len())).sum(default: 0)
+    let summary = if n.summary > 0 [#link((page: 2 + shown, x: 0pt, y: 0pt), underline[page #(2 + shown)])]
+    if info.pairs.len() == 0 [No page differs between the two versions#if summary != none [; the summary of the changes is on #summary].] else [
       Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the #if "groups" in hist [step] else [commit] that made the change]. Bars in the margin mark the changed lines.#if info.at("moved", default: false) [ Moved text has a grey bracket #redline-move-bracket and a #text(size: 0.8em)[moved] note in the margin on both sides, and its old page is shown next to its new one; edits made while moving are marked as usual.]
       #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
+      #if summary != none [The summary of the changes follows on #summary.]
     ]
     // One row per shown page, with its heading and whether text moved there.
     let titled = info.pairs.any(p => p.moved or p.titles.any(t => t != ""))
@@ -1701,15 +1711,10 @@
         [#what on page #u.page of #info.at(u.side).label]
       }))
     }
+    // The summary says the rest, of the new version.
     let files = info.unmarked.map(u => u.file).dedup()
-    redline-not-marked(files.map(f => ([In #redline-mono(f)], info.unmarked.filter(u => u.file == f))), info.bib)
-    let notes = if redline-fallback-note != none { (redline-fallback-note,) } else { () }
-    for side in (o, n) {
-      if side.unbarred.len() > 0 { notes.push[Changes on pages #pages(side.unbarred) of #name(side) have no bars in the margin, because the document sets its own page foreground and background there.] }
-    }
-    if info.bib.at("unchecked", default: false) { notes.push[Files that the document reads through a computed path were not checked for changes; that needs Typst 0.14 or later.] }
-    redline-notes(notes)
-    redline-commits(hist, o.label, n.label)
+    redline-not-marked(files.map(f => ([In #redline-mono(f)], info.unmarked.filter(u => u.file == f))), (added: (), removed: (), changed: ()))
+    if o.unbarred.len() > 0 { redline-notes(([Changes on pages #pages(o.unbarred) of #name(o) have no bars in the margin, because the document sets its own page foreground and background there.],)) }
   }))))
   let head(side, pg, s, ps) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]] else if ps.len() == 0 [Not in #name(side)]
   // A side without a page shows an empty outline as large as the page next
@@ -1725,5 +1730,14 @@
       let (po, pn) = (row-page(p.old, r), row-page(p.new, r))
       grid(columns: 2, column-gutter: gap, row-gutter: 0.5em, head(o, po, p.steps-old, p.old), head(n, pn, p.steps-new, p.new), shot(o, wo, po, (n, pn)), shot(n, wn, pn, (o, po)), ..if legend != none { (grid.cell(colspan: 2, align(center, legend)),) })
     }
+  }
+  // The summary's pages, as many next to each other as the width of the
+  // pages above holds.
+  let across = calc.max(1, calc.floor((width + gap) / (wn + gap)))
+  for k in range(0, n.summary, step: across) {
+    pagebreak()
+    let ks = range(k, calc.min(k + across, n.summary))
+    let label(k) = if n.summary == 1 [Summary] else [Summary, page #(k + 1) of #n.summary]
+    grid(columns: across, column-gutter: gap, row-gutter: 0.5em, ..ks.map(label), ..ks.map(k => box(stroke: 0.5pt + luma(150), image(n.pdf, page: n.pages + k + 1))))
   }
 }

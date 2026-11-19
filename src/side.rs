@@ -5,7 +5,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::mark::{segments, typst_str};
-use crate::{Bib, Change, ChangeKind, History, PREAMBLE_PATH};
+use crate::{Change, ChangeKind, History, PREAMBLE_PATH};
 
 /// A change as laid out in one version: its kind, an identity that is the
 /// same in both versions, the mark in this version's source that draws it,
@@ -40,13 +40,15 @@ pub struct Pair {
 }
 
 /// One version as laid out for the side-by-side layout: `pdf` is its
-/// root-relative path, `pages` its number of pages, `unbarred` the pages
-/// with changes but no change bars, `looks` for each page a value that is
-/// the same for pages drawn the same, or nothing.
+/// root-relative path, `pages` its number of pages before the summary,
+/// `summary` the number of pages of the summary, `unbarred` the pages with
+/// changes but no change bars, `looks` for each page a value that is the
+/// same for pages drawn the same, or nothing.
 pub struct Side<'a> {
     pub label: &'a str,
     pub pdf: &'a str,
     pub pages: usize,
+    pub summary: usize,
     pub unbarred: &'a [usize],
     pub changes: &'a [Placed],
     pub headings: &'a [Heading],
@@ -272,10 +274,11 @@ fn join(groups: &mut Vec<(BTreeSet<usize>, BTreeSet<usize>)>, o: Option<usize>, 
 
 /// The source of the composite document: a call to the preamble's
 /// `redline-side-by-side` with the paired pages, the changes found in one
-/// version only, the changes that are not marked and the bibliography
-/// changes, and the commits if there are any. Each shown page is titled by
-/// its first heading, or else the last heading before it.
-pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history: &History) -> String {
+/// version only, whether text moved, the changes that are not marked other
+/// than those the summary of the new version lists, and the commits if
+/// there are any. Each shown page is titled by its first heading, or else
+/// the last heading before it.
+pub fn composite(old: &Side, new: &Side, moved: bool, unmarked: &[Change], history: &History) -> String {
     let anchors = |s: &Side| s.headings.iter().map(|h| (h.id, h.page)).collect::<Vec<_>>();
     let (pairs, unpaired) = pair_pages(
         old.changes,
@@ -294,10 +297,11 @@ pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history:
     let list = |v: &[usize]| format!("({})", v.iter().map(|p| format!("{p},")).collect::<String>());
     let side = |s: &Side| {
         format!(
-            "(label: {}, pdf: {}, pages: {}, unbarred: {})",
+            "(label: {}, pdf: {}, pages: {}, summary: {}, unbarred: {})",
             typst_str(s.label),
             typst_str(s.pdf),
             s.pages,
+            s.summary,
             list(s.unbarred)
         )
     };
@@ -329,11 +333,11 @@ pub fn composite(old: &Side, new: &Side, changes: &[Change], bib: &Bib, history:
         out.push_str(&format!("    (side: \"{side}\", ins: {ins}, page: {}),\n", c.page));
     }
     out.push_str("  ),\n  unmarked: (\n");
-    for c in changes.iter().filter(|c| c.kind == ChangeKind::Unmarked) {
+    for c in unmarked.iter().filter(|c| c.kind == ChangeKind::Unmarked) {
         out.push_str(&format!("    (file: {}, {}),\n", typst_str(&c.file), c.code_fields()));
     }
-    out.push_str(&format!("  ),\n  bib: {},\n", bib.to_typst()));
-    if changes.iter().any(|c| c.kind == ChangeKind::Moved) {
+    out.push_str("  ),\n");
+    if moved {
         out.push_str("  moved: true,\n");
     }
     if let Some(h) = history.to_typst(old.label, new.label) {
