@@ -1533,7 +1533,14 @@
       rows += row(e.level, text(fill: st.del, strike(e.title)), what(0, 0, k, [deleted section]), ns, groups.map(g => g.at).flatten())
       continue
     }
-    let found = groups.filter(g => not own(g))
+    // What is laid out before the section's own heading, such as its entry
+    // in an outline and the outline's title, is not part of it.
+    let el = if e.target != none { query(e.target).at(0, default: none) }
+    let after(loc) = el == none or {
+      let (a, b) = (loc.position(), el.location().position())
+      (a.page, a.y.pt()) >= (b.page, b.y.pt())
+    }
+    let found = groups.filter(g => not own(g) and after(g.heading.location()))
     let placed = found.map(g => g.count).sum(default: 0)
     let left = calc.max(0, moves - found.map(g => g.moves).flatten().dedup().len())
     let elsewhere = found.map(g => numbers(g.marks)).flatten()
@@ -1541,10 +1548,9 @@
     let label = if e.new { ([new section],) } else if e.at("moved", default: false) { ([moved section],) } else { () }
     if found.len() == 0 or e.count > placed or left > 0 or away > 0 or k > 0 or label.len() > 0 {
       let what = what(e.count - placed, left, k, out: away, ..label)
-      let (ns, at) = (ns.filter(n => n not in elsewhere), groups.filter(own).map(g => g.at).flatten())
+      let (ns, at) = (ns.filter(n => n not in elsewhere), groups.filter(g => g not in found).map(g => g.at).flatten().filter(after))
       // A heading that the document does not lay out, such as one in a
       // body that a template drops, is listed by its title alone.
-      let el = if e.target != none { query(e.target).at(0, default: none) }
       rows += if el == none { row(e.level, e.title, what, ns, at) } else { heading-row(e.level, el, e.title, what, ns, at) }
     }
     for g in found {
