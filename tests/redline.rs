@@ -2838,6 +2838,26 @@ fn side_by_side_shows_pages_changed_by_a_listed_change() {
 }
 
 #[test]
+fn side_by_side_shows_pages_changed_by_a_listed_change_next_to_a_marked_edit() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-listed-and-marked");
+    let doc = |to: &str, word: &str| {
+        format!("#show \"colour\": \"{to}\"
+The {word} word.
+#pagebreak()
+A colour.
+#pagebreak()
+The end.
+")
+    };
+    std::fs::write(dir.join("old.typ"), doc("color", "old")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc("hue", "new")).unwrap();
+    assert_eq!(shown_pairs(&dir), ["(1,), new: (1,)", "(2,), new: (2,)"]);
+}
+
+#[test]
 fn side_by_side_shows_a_pure_move() {
     if !typst_available() || typst_before_0_14() {
         return;
