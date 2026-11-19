@@ -1420,6 +1420,17 @@ fn mark_reviewed_needs_the_file_in_the_last_commit() {
 }
 
 #[test]
+fn mark_reviewed_with_steps_is_a_usage_error() {
+    let dir = temp_dir("mark-reviewed-steps");
+    let out = cli(&dir, &["main.typ", "--mark-reviewed", "--each-commit"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(2) && stderr.contains("--each-commit"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn reviewed_mark_ignores_the_case_of_the_name_given() {
     let dir = repo("reviewed-case", &["alpha"]);
     // Only a case-insensitive filesystem finds the file under another case.

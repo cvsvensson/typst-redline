@@ -178,6 +178,11 @@ fn parse_args() -> Result<Parsed, String> {
     if a.mark_reviewed && (a.files.len() != 1 || a.since.is_some() || a.to.is_some()) {
         return Err("--mark-reviewed takes one file and no --since or --to".into());
     }
+    if let Some(s) = &a.steps
+        && a.mark_reviewed
+    {
+        return Err(format!("--mark-reviewed makes no PDF, so it takes no {}", s.option()));
+    }
     if a.root.is_none() {
         a.root = std::env::var_os("TYPST_ROOT")
             .filter(|r| !r.is_empty())
