@@ -4,7 +4,7 @@ Open a `.typ` file and click the compare button in the editor's title bar to see
 
 Shows what changed in a Typst document as a PDF of the new version with the changes marked. The extension runs the [`typst-redline`](https://github.com/cvsvensson/typst-redline) command-line tool, which needs `typst` and, for comparisons with commits, git. Install `typst-redline` first and restart VS Code so that it is on the `PATH`, or set `typstRedline.executable` to its full path.
 
-The extension is not on the Marketplace. The release workflow attaches one `.vsix` per platform (win32-x64, darwin-x64, darwin-arm64, linux-x64, linux-arm64) to each release, with `typst-redline` inside, so no `PATH` setup is needed; no release has been published yet. Install a `.vsix` with *Extensions: Install from VSIX...*. A `typstRedline.executable` you set takes precedence. To build a `.vsix` without the binary, run `npm ci` and `npm run package` in the [`vscode/`](https://github.com/cvsvensson/typst-redline/tree/main/vscode) folder of the repository. It is turned off in Restricted Mode, because it runs git and the programs its settings name.
+The extension is not on the Marketplace. The release workflow attaches one `.vsix` per platform (win32-x64, darwin-x64, darwin-arm64, linux-x64, linux-arm64) to each release, with `typst-redline` inside, so no `PATH` setup is needed; no release has been published yet. Install a `.vsix` with *Extensions: Install from VSIX...*. A `typstRedline.executable` you set takes precedence. To build a `.vsix` without the binary, run `npm ci` and `npm run package` with Node.js in the [`vscode/`](https://github.com/cvsvensson/typst-redline/tree/main/vscode) folder of the repository; this makes `typst-redline-0.1.0.vsix`, which `code --install-extension typst-redline-0.1.0.vsix` installs. It is turned off in Restricted Mode, because it runs git and the programs its settings name.
 
 To see what changed:
 
@@ -30,7 +30,7 @@ The list starts with *Last reviewed version*, the changes since the commit you l
 
 If `typst-redline` or `typst` is not found, a message says which, with a button that opens install instructions and, for `typst`, one to locate it; VS Code may need a restart after installing.
 
-The PDF is written next to the file as `<name>.redline.pdf`. Messages of the tool are in the *Typst Redline* output.
+The run saves the open files of the project first, and its progress notification can cancel it. The PDF is written next to the file as `<name>.redline.pdf`. Warnings of the tool show as a notification, and everything it prints is in the *Typst Redline* output.
 
 Settings, with their defaults:
 
