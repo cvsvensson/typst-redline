@@ -805,14 +805,6 @@ fn changed_raw_block_is_marked_as_a_block() {
 }
 
 #[test]
-fn output_compiles() {
-    // Evaluated, the deleted code of `deleted-code` fails, as it should.
-    for name in fixtures().filter(|n| n != "deleted-code") {
-        compile(&name, &run(&name).files);
-    }
-}
-
-#[test]
 fn template_applied_by_a_show_rule_sees_the_content() {
     compile("template-body", &run("template-body").files);
 }
@@ -829,16 +821,83 @@ const PLAIN: &str = "#let redline-ins(body, ..args) = body
 #let redline-bars(body) = body
 ";
 
+/// Every fixture: each change found is marked and on the summary's list of
+/// marks, from which the summary lists those not laid out; the proof with
+/// the deletions removed is the new document; and the binary makes a PDF in
+/// both layouts.
 #[test]
-fn proof_without_deletions_is_the_new_document() {
-    for name in fixtures() {
-        let r = generate(&name, PLAIN, BY_NAME);
-        assert!(name == "crlf" || !r.changes.is_empty(), "{name}: no change found");
-        let Some(proof) = render(&format!("{name}-proof"), &r.files) else {
-            return;
-        };
-        let new = render(&format!("{name}-new"), &tree(&name, "new")).unwrap();
-        assert!(!new.is_empty() && proof == new, "{name}:\n{}", r.body);
+fn every_fixture_keeps_the_contract() {
+    let names: Vec<String> = fixtures().collect();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let failed: Vec<&String> = std::thread::scope(|s| {
+        let chunks: Vec<_> = names
+            .chunks(names.len().div_ceil(threads))
+            .map(|chunk| {
+                s.spawn(move || {
+                    let fails = |name: &&String| std::panic::catch_unwind(|| keeps_the_contract(name)).is_err();
+                    chunk.iter().filter(fails).collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        chunks.into_iter().flat_map(|c| c.join().unwrap()).collect()
+    });
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+fn keeps_the_contract(name: &str) {
+    let r = generate(name, PLAIN, BY_NAME);
+    assert!(name == "crlf" || !r.changes.is_empty(), "{name}: no change found");
+    let marked = |i| r.files.iter().any(|(_, src)| src.contains(&format!("id: {i})[")));
+    let entry = &r.files.iter().find(|(p, _)| p == "main.typ").unwrap().1;
+    for (i, c) in r.changes.iter().enumerate() {
+        if matches!(c.kind, ChangeKind::Ins | ChangeKind::Del) {
+            assert!(
+                marked(i) && entry.contains(&format!("(id: {i}, ")),
+                "{name}: change {i} {c:?}"
+            );
+        }
+    }
+    let Some(proof) = render(&format!("{name}-proof"), &r.files) else {
+        return;
+    };
+    let new = render(&format!("{name}-new"), &tree(name, "new")).unwrap();
+    assert!(!new.is_empty() && proof == new, "{name}:\n{}", r.body);
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
+    let side = |s: &str| match dir.join(s).is_dir() {
+        true => dir.join(s).join("main.typ"),
+        false => dir.join(format!("{s}.typ")),
+    };
+    let (old, new) = (side("old"), side("new"));
+    let out = temp_dir(&format!("{name}-cli"));
+    // The side-by-side layout shows the old document, which here does not
+    // compile on its own: it reads files that are gone, or refers to an
+    // equation without numbering.
+    let old_fails = ["deleted-code", "include-deleted"].contains(&name);
+    let layouts: &[&str] = if typst_before_0_14() || old_fails {
+        &["inline"]
+    } else {
+        &["inline", "side-by-side"]
+    };
+    for layout in layouts {
+        let pdf = out.join(format!("{layout}.pdf"));
+        let args = [
+            old.as_os_str(),
+            new.as_os_str(),
+            "-o".as_ref(),
+            pdf.as_os_str(),
+            "--layout".as_ref(),
+            layout.as_ref(),
+        ];
+        let run = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+            .current_dir(&*out)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            run.status.success() && pdf_pages(&pdf) > 0,
+            "{name}, {layout}: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
     }
 }
 
