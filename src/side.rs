@@ -90,8 +90,9 @@ fn moves_of(side: &[Placed]) -> (HashMap<u64, Vec<usize>>, Vec<Option<u64>>) {
 /// place in the other, with the changes inside it. Any other change is on a
 /// page of the version that has its content, and on the other at the place
 /// the content would be. That place's page is not a counterpart if its
-/// headings are on other pages in the version with the content: the content
-/// fills pages of its own. Consecutive pairs with the same changes are steps
+/// headings, or the place of a passage moved from or to it, are on other
+/// pages in the version with the content: the content fills pages of its
+/// own. Consecutive pairs with the same changes are steps
 /// of one slide; only the last is kept.
 pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor])) -> (Vec<Pair>, Vec<(bool, Placed)>) {
     let unique = |a: &[Anchor]| {
@@ -102,8 +103,11 @@ pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor]
         m
     };
     let (ua, ub) = (unique(anchors.0), unique(anchors.1));
-    // Old and new pages that show the same headings.
-    let same: Vec<(usize, usize)> = ua.iter().filter_map(|(id, o)| Some(((*o)?, (*ub.get(id)?)?))).collect();
+    let ((om, oin), (nm, nin)) = (moves_of(old), moves_of(new));
+    // Old and new pages that show the same headings, or the two places of a
+    // moved passage.
+    let mut same: Vec<(usize, usize)> = ua.iter().filter_map(|(id, o)| Some(((*o)?, (*ub.get(id)?)?))).collect();
+    same.extend(om.iter().filter_map(|(key, o)| Some((o[0], nm.get(key)?[0]))));
     let elsewhere = |in_old: bool, page: usize, other: usize| {
         let there = same
             .iter()
@@ -112,7 +116,6 @@ pub fn pair_pages(old: &[Placed], new: &[Placed], anchors: (&[Anchor], &[Anchor]
         there.peek().is_some() && !there.any(|p| p == other)
     };
     let mut groups: Vec<(BTreeSet<usize>, BTreeSet<usize>)> = vec![];
-    let ((om, oin), (nm, nin)) = (moves_of(old), moves_of(new));
     let mut moved = BTreeSet::new();
     for (key, o) in &om {
         match nm.get(key) {
