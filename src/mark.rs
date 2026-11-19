@@ -1582,22 +1582,35 @@ impl<'a> Writer<'a> {
     /// live: deleted code is not evaluated (and then neither is math using
     /// removed definitions), or it uses deleted labels.
     fn sanitize(&self, nodes: &[SyntaxNode]) -> Option<String> {
+        fn attached(n: &SyntaxNode, parent: K, names: &mut HashSet<String>) {
+            if n.kind() == K::Label && matches!(parent, K::Named | K::Math) {
+                names.insert(label_name(n));
+            }
+            for c in n.children() {
+                attached(c, n.kind(), names);
+            }
+        }
+        let mut renamed = HashSet::new();
+        for n in nodes {
+            attached(n, K::Markup, &mut renamed);
+        }
         let mut out = String::new();
         for n in nodes {
-            self.sanitize_into(n, K::Markup, &mut out)?;
+            self.sanitize_into(n, K::Markup, &renamed, &mut out)?;
         }
         Some(out)
     }
 
-    fn sanitize_into(&self, n: &SyntaxNode, parent: K, out: &mut String) -> Option<()> {
+    fn sanitize_into(&self, n: &SyntaxNode, parent: K, renamed: &HashSet<String>, out: &mut String) -> Option<()> {
         let eval = self.ctx.opts.eval_deleted;
         match n.kind() {
             K::Label if parent == K::Markup => {}
             // A label passed as a named argument or written in math is one
             // that code attaches, possibly at layout where the preamble cannot
             // remove it; under another name it does not define the label a
-            // second time. A positional label is taken for a reference.
-            K::Label if matches!(parent, K::Named | K::Math) => {
+            // second time. A positional label is taken for a reference, to
+            // the renamed label when the same content attaches it.
+            K::Label if matches!(parent, K::Named | K::Math) || renamed.contains(&label_name(n)) => {
                 out.push_str(&format!("<{}-del-label-{}>", self.ctx.prefix, label_name(n)));
             }
             K::Label => {
@@ -1620,7 +1633,7 @@ impl<'a> Writer<'a> {
             _ if n.children().len() == 0 => out.push_str(&old_leaf(n)),
             _ => {
                 for c in n.children() {
-                    self.sanitize_into(c, n.kind(), out)?;
+                    self.sanitize_into(c, n.kind(), renamed, out)?;
                 }
             }
         }
