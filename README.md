@@ -119,7 +119,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 - In deleted code, a label passed as a named argument or written in math is taken to be attached by the code and is renamed; a label passed positionally is taken to be a reference. Code that uses labels the other way makes the tool show deleted code by name.
 - Deleted content is laid out under the new version's show and set rules, so where such a rule changed, deleted content does not look as it did in the old version. The side-by-side layout shows the old pages as they were.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks.
-- With Typst 0.11, right-to-left text gets no change bars, and a deletion in it fails to compile, because that version orders the tags in such text by position.
+- With Typst 0.11, right-to-left text gets no change bars, and its changes can also be listed on the summary page as not reaching the page although they are marked, because that version orders the tags in such text by position.
 - A text show rule with a `regex` selector stops matching where a mark cuts its match. For a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
 - Deleted figures, equations and citations are still figures, equations and citations, so the document's own queries for them, such as a list of figures built with `query(figure)`, also find the deleted ones. `outline` leaves them out.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
@@ -127,7 +127,7 @@ This is the layout to use for slides. In the default layout the deleted content 
 - Entries that appear in, disappear from or change in the bibliography are not marked there. The summary page names them.
 - When a figure's call and its image file both change, the old figure is drawn with the new image file.
 - A changed element that sets the page from inside a function, such as a slide, cannot be framed. The document is then compiled again with no frames around content computed at layout (calls of functions built on `context` or `layout`, which includes many drawings), and the summary page says so. With Typst 0.11, a changed drawing that needs a finite width has the same effect.
-- Pages where your document or its template sets both its own page foreground and background get no margin bars. The summary page lists those pages, unless the first page is one of them; the first page then also has no line pointing to the summary.
+- Pages where your document or its template sets both its own page foreground and background get no margin bars. The summary page lists those pages. If the first page is one of them, it has no line pointing to the summary.
 - In side-by-side, an inserted or deleted page is shown next to an empty one only when the pages have headings; otherwise it can be paired with a neighbouring page.
 
 ## Styling

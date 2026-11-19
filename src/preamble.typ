@@ -397,7 +397,11 @@
 // pages. The summary lists those that the content updates, such as states
 // that a show rule updates.
 #let redline-restore(start) = context {
-  let start = query(selector(start).before(here())).last().location()
+  // Typst 0.11 orders the elements of right-to-left text by position, so
+  // that the start can come after the end; nothing is restored then.
+  let starts = query(selector(start).before(here()))
+  if starts.len() == 0 { return }
+  let start = starts.last().location()
   let inside(s) = query(selector(s).after(start).before(here()))
   // By the change inside the content rather than to the value before it:
   // that value depends on the updates of every earlier deletion, so that
@@ -636,22 +640,6 @@
   let pg = here().page()
   redline-meta(from, <redline-page>)
   let m = page.margin
-  if pg == 1 {
-    // For the summary and the binary: the pages with changes but without
-    // bars. For the side-by-side layout also the number of pages, the ids of
-    // the marks that were not laid out, each change's kind (0 deleted, 1
-    // inserted), identity and page, and the same for each heading (kind 2),
-    // whose identity is its text, all as one flat array of integers.
-    let drawn = query(<redline-page>).map(m => m.location().page())
-    let unbarred = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location().page()).dedup().filter(p => p not in drawn)
-    redline-ints(unbarred, <redline-unbarred>)
-    if redline-side != none {
-      let changes = query(<redline-change>).map(m => (int(redline-value(m).at(0) == "ins"), redline-value(m).at(1), m.location().page()))
-      let headings = query(heading).map(h => (2, redline-hash(3, h.body), h.location().page()))
-      let lost = query(<redline-lost>).map(redline-value).flatten()
-      redline-ints((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, lost.len(), ..lost, ..changes.flatten(), ..headings.flatten()), <redline-layout>)
-    }
-  }
   let tags = query(<redline-tag>)
   let n = calc.quo(tags.len(), 2)
   let (w, h) = (page.width, page.height)
@@ -1031,6 +1019,23 @@
   groups
 }
 
+// For the summary and the binary: the pages with changes but without bars,
+// whichever pages they are. For the side-by-side layout also the number of
+// pages, the ids of the marks that were not laid out, each change's kind (0
+// deleted, 1 inserted), identity and page, and the same for each heading
+// (kind 2), whose identity is its text, all as one flat array of integers.
+#let redline-layout() = {
+  let drawn = query(<redline-page>).map(m => m.location().page())
+  let unbarred = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location().page()).dedup().filter(p => p not in drawn)
+  redline-ints(unbarred, <redline-unbarred>)
+  if redline-side != none {
+    let changes = query(<redline-change>).map(m => (int(redline-value(m).at(0) == "ins"), redline-value(m).at(1), m.location().page()))
+    let headings = query(heading).map(h => (2, redline-hash(3, h.body), h.location().page()))
+    let lost = query(<redline-lost>).map(redline-value).flatten()
+    redline-ints((drawn.len() + unbarred.len(), unbarred.len(), ..unbarred, lost.len(), ..lost, ..changes.flatten(), ..headings.flatten()), <redline-layout>)
+  }
+}
+
 #let redline-summary(info) = if redline-side == none {
   let st = redline-style
   // Pages of its own, without the document's header, footer and numbers.
@@ -1038,6 +1043,7 @@
   set page(header: none, footer: none, numbering: none)
   context {
     let shown = redline-laid-out()
+    redline-layout()
     let bib = info.at("bib", default: (:))
     let listed = ("added", "removed", "changed", "files").map(k => bib.at(k, default: ()).len()).sum()
     let unmarked = listed + info.entries.map(e => e.code.len()).sum(default: 0)
@@ -1113,7 +1119,7 @@
       }
     })
   }
-} else { context redline-lost(info.entries.map(e => e.marks).flatten(), redline-laid-out()) }
+} else { context { redline-layout(); redline-lost(info.entries.map(e => e.marks).flatten(), redline-laid-out()) } }
 
 // The side-by-side layout. `info` is (old, new: (label, pdf: the version
 // compiled with `redline-side`, pages, unbarred: pages with changes but no

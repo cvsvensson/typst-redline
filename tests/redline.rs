@@ -769,6 +769,16 @@ fn bars_of_right_to_left_text_are_on_the_page() {
 }
 
 #[test]
+fn deletion_in_right_to_left_text_compiles() {
+    let doc = |w: &str| format!("#set text(dir: rtl, lang: \"ar\")\nمرحبا {w}بالعالم\n");
+    let r = redline_of(&doc("جديد "), &doc(""));
+    compile(
+        "rtl-deletion",
+        &[r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat(),
+    );
+}
+
+#[test]
 fn change_in_hidden_content_is_listed() {
     let doc = |w: &str| format!("First line.\n\n#hide[Second line with {w}.]\n");
     let r = redline_of(&doc("gamma"), &doc("delta"));
@@ -1177,6 +1187,17 @@ fn page_foregrounds_of_the_document_are_kept_with_the_bars() {
     };
     assert!(query(&dir, "<probe>").contains("\"draft\""));
     assert_eq!(query_field(&dir, "<redline-unbarred>", "key"), r#"[""]"#);
+}
+
+#[test]
+fn first_page_with_its_own_foreground_and_background_is_listed_without_bars() {
+    let doc = |w: &str| format!("#page(foreground: [F], background: [B])[The {w} title.]\nThe body.\n");
+    let r = redline_of(&doc("old"), &doc("new"));
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let Some(dir) = compile("unbarred-first", &files) else {
+        return;
+    };
+    assert_eq!(query_field(&dir, "<redline-unbarred>", "key"), r#"["1"]"#);
 }
 
 #[test]
