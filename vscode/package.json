@@ -1,7 +1,7 @@
 {
   "name": "typst-redline",
   "displayName": "Typst Redline",
-  "description": "Show the changes in a Typst document since a git commit, as a marked-up PDF. Needs the typst-redline and typst command-line tools.",
+  "description": "Show what changed in a Typst document since a git commit, a review mark or another file, as a PDF with the changes marked. Needs the typst-redline and typst command-line tools.",
   "version": "0.1.0",
   "publisher": "cvsvensson",
   "license": "MIT",
@@ -17,11 +17,27 @@
   "activationEvents": [],
   "contributes": {
     "commands": [
-      { "command": "typstRedline.showChanges", "title": "Typst Redline: Show changes since…" }
+      {
+        "command": "typstRedline.showChanges",
+        "title": "Show changes sinceâ€¦",
+        "category": "Typst Redline"
+      },
+      {
+        "command": "typstRedline.markReviewed",
+        "title": "Mark as reviewed",
+        "category": "Typst Redline"
+      }
     ],
     "menus": {
       "commandPalette": [
-        { "command": "typstRedline.showChanges", "when": "editorLangId == typst || resourceExtname == .typ" }
+        {
+          "command": "typstRedline.showChanges",
+          "when": "editorLangId == typst || resourceExtname == .typ"
+        },
+        {
+          "command": "typstRedline.markReviewed",
+          "when": "editorLangId == typst || resourceExtname == .typ"
+        }
       ]
     },
     "configuration": {
@@ -43,10 +59,23 @@
           "scope": "resource",
           "description": "Project root passed as --root, absolute or relative to the workspace folder of the file. Empty: that workspace folder, or the file's directory if it is in none."
         },
-        "typstRedline.openInEditor": {
-          "type": "boolean",
-          "default": false,
-          "description": "Open the PDF in VS Code (needs a PDF viewer extension) instead of the system viewer."
+        "typstRedline.extraArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Arguments added to every `typst-redline` run, one per item. Arguments after `--` go to `typst compile`, for example `[\"--\", \"--font-path\", \"fonts\"]`."
+        },
+        "typstRedline.openPdf": {
+          "type": "string",
+          "enum": ["auto", "editor", "external"],
+          "default": "auto",
+          "enumDescriptions": [
+            "In VS Code if a PDF viewer extension is installed, otherwise in the system viewer",
+            "In VS Code, beside the document (needs a PDF viewer extension)",
+            "In the system PDF viewer"
+          ],
+          "description": "Where to open the PDF."
         }
       }
     }
@@ -56,7 +85,7 @@
     "vscode:prepublish": "npm run compile",
     "pretest": "npm run compile",
     "test": "vscode-test",
-    "package": "vsce package"
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.0",
@@ -66,5 +95,9 @@
     "@vscode/test-electron": "^2.5.0",
     "@vscode/vsce": "^3.0.0",
     "typescript": "^5.4.0"
+  },
+  "homepage": "https://github.com/cvsvensson/typst-redline#vs-code",
+  "bugs": {
+    "url": "https://github.com/cvsvensson/typst-redline/issues"
   }
 }

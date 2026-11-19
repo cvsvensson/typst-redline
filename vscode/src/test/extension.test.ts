@@ -5,81 +5,188 @@ import * as path from "path";
 import { execFileSync } from "child_process";
 import * as vscode from "vscode";
 
-const binary = path.resolve(
+// A release build of this repository if there is one, otherwise typst-redline on PATH.
+const release = path.resolve(
   __dirname,
   "../../../target/release",
   process.platform === "win32" ? "typst-redline.exe" : "typst-redline",
 );
+const binary = fs.existsSync(release) ? release : "typst-redline";
 
 function git(cwd: string, ...args: string[]) {
   execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd });
 }
 
-suite("Show changes since…", () => {
+type Item = vscode.QuickPickItem;
+
+suite("Typst Redline commands", () => {
+  const window = vscode.window as any;
+  const commands = vscode.commands as any;
   const original = {
-    showQuickPick: vscode.window.showQuickPick,
-    showErrorMessage: vscode.window.showErrorMessage,
-    executeCommand: vscode.commands.executeCommand,
+    showQuickPick: window.showQuickPick,
+    showInputBox: window.showInputBox,
+    showOpenDialog: window.showOpenDialog,
+    showErrorMessage: window.showErrorMessage,
+    showWarningMessage: window.showWarningMessage,
+    showInformationMessage: window.showInformationMessage,
+    executeCommand: commands.executeCommand,
   };
   const config = vscode.workspace.getConfiguration("typstRedline");
-  let repo: string;
-  let opened: vscode.Uri[];
+  const settings = ["executable", "typst", "extraArgs", "openPdf"];
+  let tmp: string;
+  let file: string;
+  let base: string;
+  let options: string[];
+  let steps: string;
+  let otherFile: string;
+  let opened: { uri: vscode.Uri; options: any }[];
   let errors: string[];
+  let warnings: string[];
+  let infos: string[];
+
+  async function open(path: string) {
+    file = path;
+    await vscode.window.showTextDocument(vscode.Uri.file(file));
+  }
 
   setup(async () => {
-    repo = fs.mkdtempSync(path.join(os.tmpdir(), "typst-redline-"));
-    const dir = path.join(repo, "my notes");
-    const file = path.join(dir, "nöte.typ");
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "typst-redline-"));
+    const dir = path.join(tmp, "my notes");
     fs.mkdirSync(dir);
-    git(repo, "init", "-q");
-    fs.writeFileSync(file, "= Title\n\nThe old sentence.\n");
-    git(repo, "add", ".");
-    git(repo, "commit", "-q", "-m", "first");
-    fs.writeFileSync(file, "= Title\n\nThe new sentence.\n");
-    git(repo, "commit", "-q", "-am", "second");
-    await vscode.window.showTextDocument(vscode.Uri.file(file));
+    git(dir, "init", "-q");
+    const doc = path.join(dir, "nöte.typ");
+    fs.writeFileSync(doc, "= Title\n\nThe old sentence.\n");
+    git(dir, "add", ".");
+    git(dir, "commit", "-q", "-m", "first");
+    fs.writeFileSync(doc, "= Title\n\nThe new sentence.\n");
+    git(dir, "commit", "-q", "-am", "second");
+    await open(doc);
 
+    base = "first";
+    options = [];
+    steps = "";
+    otherFile = "";
     opened = [];
     errors = [];
-    const window = vscode.window as any;
-    const commands = vscode.commands as any;
-    window.showQuickPick = async (items: vscode.QuickPickItem[]) => items[items.length - 1];
+    warnings = [];
+    infos = [];
+    window.showQuickPick = async (items: Item[], opts: vscode.QuickPickOptions) =>
+      opts.canPickMany ? items.filter((i) => options.includes(i.label)) : items.find((i) => i.label.includes(base));
+    window.showInputBox = async () => steps;
+    window.showOpenDialog = async () => [vscode.Uri.file(otherFile)];
     window.showErrorMessage = async (message: string) => void errors.push(message);
+    window.showWarningMessage = async (message: string) => void warnings.push(message);
+    window.showInformationMessage = async (message: string) => void infos.push(message);
     commands.executeCommand = (command: string, ...args: any[]) =>
-      command === "vscode.open" ? void opened.push(args[0]) : original.executeCommand(command, ...args);
-    await config.update("openInEditor", true, vscode.ConfigurationTarget.Global);
+      command === "vscode.open"
+        ? void opened.push({ uri: args[0], options: args[1] })
+        : original.executeCommand(command, ...args);
+    await config.update("executable", binary, vscode.ConfigurationTarget.Global);
+    await config.update("openPdf", "editor", vscode.ConfigurationTarget.Global);
   });
 
   teardown(async () => {
-    Object.assign(vscode.window, {
-      showQuickPick: original.showQuickPick,
-      showErrorMessage: original.showErrorMessage,
-    });
-    Object.assign(vscode.commands, { executeCommand: original.executeCommand });
+    Object.assign(window, original);
+    commands.executeCommand = original.executeCommand;
+    for (const s of settings) {
+      await config.update(s, undefined, vscode.ConfigurationTarget.Global);
+    }
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
     // On Windows the test instance holds the folder open, so removing it throws EPERM
     // although the folder does disappear once the instance exits.
     try {
-      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true });
     } catch {}
   });
 
-  test("produces and opens a PDF of the changes since the picked commit", async () => {
-    await config.update("executable", binary, vscode.ConfigurationTarget.Global);
-    await vscode.commands.executeCommand("typstRedline.showChanges");
+  function assertOpenedPdf() {
     assert.deepStrictEqual(errors, []);
     assert.strictEqual(opened.length, 1);
-    assert.strictEqual(fs.readFileSync(opened[0].fsPath).subarray(0, 5).toString(), "%PDF-");
+    assert.strictEqual(fs.readFileSync(opened[0].uri.fsPath).subarray(0, 5).toString(), "%PDF-");
+  }
+
+  test("opens a PDF of the changes since the picked commit beside the editor", async () => {
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assertOpenedPdf();
+    assert.strictEqual(opened[0].options.viewColumn, vscode.ViewColumn.Beside);
+  });
+
+  test("unsaved changes are saved and compared", async () => {
+    const editor = vscode.window.activeTextEditor!;
+    await editor.edit((e) => e.insert(new vscode.Position(0, 0), "Unsaved.\n\n"));
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assertOpenedPdf();
+    assert.match(fs.readFileSync(file, "utf8"), /^Unsaved\./);
+  });
+
+  test("the options side by side, steps and no moves run", async () => {
+    options = ["Side by side", "Colour by step…", "No moves"];
+    steps = "2";
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assertOpenedPdf();
+  });
+
+  test("a usage error shows the CLI's message", async () => {
+    options = ["Colour by commit", "Colour by step…"];
+    steps = "2";
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assert.strictEqual(opened.length, 0);
+    assert.deepStrictEqual(errors, ["Typst Redline: give one of --each-commit and --steps"]);
+  });
+
+  test("a compile error shows typst's message", async () => {
+    fs.writeFileSync(file, "= Title\n\nThe #nosuchvariable sentence.\n");
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assert.strictEqual(opened.length, 0);
+    assert.strictEqual(errors.length, 1);
+    assert.match(errors[0], /unknown variable: nosuchvariable/);
+  });
+
+  test("extra arguments reach the CLI and typst", async () => {
+    const out = path.join(tmp, "out.pdf");
+    fs.writeFileSync(file, "= Title\n\nThe new sentence by #sys.inputs.who.\n");
+    await config.update("extraArgs", ["-o", out, "--", "--input", "who=me"], vscode.ConfigurationTarget.Global);
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assertOpenedPdf();
+    assert.strictEqual(opened[0].uri.fsPath, vscode.Uri.file(out).fsPath);
+  });
+
+  test("since last reviewed needs a mark, which mark as reviewed sets", async () => {
+    base = "Last reviewed";
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assert.strictEqual(errors.length, 1);
+    assert.match(errors[0], /no commit is marked as reviewed/);
+    errors = [];
+    await vscode.commands.executeCommand("typstRedline.markReviewed");
+    assert.match(infos[0], /marked \w+ as reviewed/);
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assertOpenedPdf();
+  });
+
+  test("diagnostics of a successful run are shown", async () => {
+    fs.writeFileSync(file, "= Title\n\nUncommitted.\n");
+    await vscode.commands.executeCommand("typstRedline.markReviewed");
+    assert.deepStrictEqual(errors, []);
+    assert.strictEqual(warnings.length, 1);
+    assert.match(warnings[0], /uncommitted changes/);
+  });
+
+  test("compares with another file outside git, without the git-only options", async () => {
+    const dir = path.join(tmp, "no git");
+    fs.mkdirSync(dir);
+    otherFile = path.join(dir, "old.typ");
+    fs.writeFileSync(otherFile, "Old text.\n");
+    fs.writeFileSync(path.join(dir, "new.typ"), "New text.\n");
+    await open(path.join(dir, "new.typ"));
+    base = "Another file";
+    options = ["Colour by commit"];
+    await vscode.commands.executeCommand("typstRedline.showChanges");
+    assertOpenedPdf();
   });
 
   test("the typst setting is passed to the CLI", async () => {
-    await config.update("executable", binary, vscode.ConfigurationTarget.Global);
     await config.update("typst", "no-such-typst", vscode.ConfigurationTarget.Global);
-    try {
-      await vscode.commands.executeCommand("typstRedline.showChanges");
-    } finally {
-      await config.update("typst", undefined, vscode.ConfigurationTarget.Global);
-    }
+    await vscode.commands.executeCommand("typstRedline.showChanges");
     assert.strictEqual(opened.length, 0);
     assert.strictEqual(errors.length, 1);
     assert.match(errors[0], /no-such-typst/);
