@@ -2048,6 +2048,7 @@ fn side_by_side_pairs_pages_with_the_same_changes() {
     let c = |ins, id, page| Placed {
         kind: if ins { PlacedKind::Ins } else { PlacedKind::Del },
         id,
+        mark: id as usize,
         page,
     };
     let old = [
@@ -2089,6 +2090,7 @@ fn side_by_side_pairs_changes_written_differently() {
     let c = |ins, id, page| Placed {
         kind: if ins { PlacedKind::Ins } else { PlacedKind::Del },
         id,
+        mark: id as usize,
         page,
     };
     let old = [c(true, 5, 1), c(true, 6, 2), c(true, 7, 3), c(false, 1, 4)];
@@ -2118,6 +2120,7 @@ fn side_by_side_shows_an_inserted_or_deleted_page_without_a_counterpart() {
     let c = |ins, id, page| Placed {
         kind: if ins { PlacedKind::Ins } else { PlacedKind::Del },
         id,
+        mark: id as usize,
         page,
     };
     let pages = |ins, anchors| {
@@ -2133,7 +2136,12 @@ fn side_by_side_shows_an_inserted_or_deleted_page_without_a_counterpart() {
 
 #[test]
 fn side_by_side_shows_a_page_inserted_after_a_moved_one_without_a_counterpart() {
-    let c = |kind, id, page| Placed { kind, id, page };
+    let c = |kind, id, page| Placed {
+        kind,
+        id,
+        mark: id as usize,
+        page,
+    };
     let (mv, ins) = (PlacedKind::Move, PlacedKind::Ins);
     // The old version marks the place of new page 4 on page 3, whose moved
     // passage is on page 2 of the new version.
@@ -2234,6 +2242,24 @@ fn side_by_side_shows_changed_pages() {
 }
 
 #[test]
+fn side_by_side_shows_two_pages_with_the_same_edit() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-same-edit");
+    let doc = |word: &str| format!("#set page(height: 6cm)\nThe {word} one.\n#pagebreak()\nThe {word} two.\n");
+    std::fs::write(dir.join("old.typ"), doc("old")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc("new")).unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    // The summary and both changed pairs.
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 3);
+}
+
+#[test]
 fn side_by_side_shows_a_pure_move() {
     if !typst_available() || typst_before_0_14() {
         return;
@@ -2275,7 +2301,12 @@ fn side_by_side_shows_a_moved_slide_next_to_its_old_page() {
 
 #[test]
 fn side_by_side_pairs_changes_around_a_move_in_either_order() {
-    let c = |kind, id, page| Placed { kind, id, page };
+    let c = |kind, id, page| Placed {
+        kind,
+        id,
+        mark: id as usize,
+        page,
+    };
     use PlacedKind::{Ins, Move};
     // Text moved from page 2 to page 4 with an insertion inside it, and an
     // insertion on page 3 of the new version that the old version has after

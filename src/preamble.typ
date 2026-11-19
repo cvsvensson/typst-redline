@@ -1393,8 +1393,9 @@
 // For the summary and the binary: the pages with changes but without bars,
 // whichever pages they are. For the side-by-side layout also the number of
 // pages, the ids of the marks that were not laid out, each change's kind (0
-// deleted, 1 inserted, 3 the start or end of a move's place), identity and
-// page, and the same for each heading (kind 2), whose identity is its text,
+// deleted, 1 inserted, 3 the start or end of a move's place), identity, mark
+// (its id plus one, or 0) and page, and the same for each heading (kind 2),
+// whose identity is its text,
 // then each heading's text as its length and code points, all as one flat
 // array of integers.
 #let redline-layout() = {
@@ -1405,10 +1406,10 @@
     let changes = query(<redline-change>).map(m => {
       let (kind, identity, id, ..) = redline-value(m)
       let start = if kind == "move" and id != none { redline-move-start(id) }
-      ((del: 0, ins: 1, move: 3).at(kind), identity, if start != none { start.page() } else { m.location().page() })
+      ((del: 0, ins: 1, move: 3).at(kind), identity, if id == none { 0 } else { id + 1 }, if start != none { start.page() } else { m.location().page() })
     })
     let hs = query(heading)
-    let headings = hs.map(h => (2, redline-hash(3, h.body), h.location().page()))
+    let headings = hs.map(h => (2, redline-hash(3, h.body), 0, h.location().page()))
     let titles = hs.map(h => {
       let t = redline-plain(h.body).trim()
       // The text of an inserted heading is inside its mark, the first
