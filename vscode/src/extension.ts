@@ -122,13 +122,9 @@ async function project(doc: vscode.TextDocument): Promise<Project> {
 
 // `what` completes "changes ..." in titles and messages. A commit base runs from `rev` to
 // `to`, or to the file as it is now; `ends` are the revisions where ticked colour steps end.
-// `most` bounds the number of steps one colour per commit takes: the commits the CLI can
-// colour, and the uncommitted changes.
-type Base =
-  | { rev: string; to?: string; ends?: string[]; most: number; what: string }
-  | { file: string; what: string };
+type Base = { rev: string; to?: string; ends?: string[]; what: string } | { file: string; what: string };
 type Commit = { hash: string; date: string; subject: string; root: boolean };
-type BaseItem = vscode.QuickPickItem & { base?: Base | "other" | "several" | "between" };
+type BaseItem = vscode.QuickPickItem & { base?: Base | "view" | "other" | "several" | "between" };
 
 function unsaved(doc: vscode.TextDocument, root: string) {
   return vscode.workspace.textDocuments.filter(
@@ -144,6 +140,39 @@ function exe(doc: vscode.TextDocument) {
   return vscode.workspace.getConfiguration("typstRedline", doc.uri).get<string>("executable") || "typst-redline";
 }
 
+// One list; resolves to the accepted items, or undefined when the list is closed.
+function pick<T extends vscode.QuickPickItem>(
+  items: readonly T[],
+  o: { title: string; placeholder: string; active?: T; many?: boolean },
+): Promise<readonly T[] | undefined> {
+  return new Promise((resolve) => {
+    const list = vscode.window.createQuickPick<T>();
+    list.title = o.title;
+    list.placeholder = o.placeholder;
+    list.matchOnDescription = true;
+    list.canSelectMany = !!o.many;
+    list.items = items;
+    if (o.many) {
+      list.selectedItems = items.filter((i) => i.picked);
+    } else if (o.active) {
+      list.activeItems = [o.active];
+    }
+    let accepted = false;
+    list.onDidAccept(() => {
+      accepted = true;
+      resolve(o.many ? list.selectedItems : list.activeItems.slice(0, 1));
+      list.hide();
+    });
+    list.onDidHide(() => {
+      if (!accepted) {
+        resolve(undefined);
+      }
+      list.dispose();
+    });
+    list.show();
+  });
+}
+
 // The commit that the CLI compares with for --since reviewed, if there is one.
 async function reviewedCommit(doc: vscode.TextDocument) {
   try {
@@ -155,8 +184,8 @@ async function reviewedCommit(doc: vscode.TextDocument) {
   }
 }
 
-// The CLI follows the first parent, so every commit listed is one it accepts as a base, as
-// the end of a step or of a range, and colours at most the commits listed after a base.
+// The CLI follows the first parent, so every commit listed is one it accepts as a base or
+// as the end of a step or of a range.
 async function commits(dir: string, root: string): Promise<{ list: Commit[]; why: string }> {
   try {
     const log = await git(dir, "log", "--first-parent", "-n", "40", "--date=short", "--format=%h%x09%p%x09%ad%x09%s", "--", root);
@@ -184,65 +213,65 @@ const commitItem = (c: Commit) => ({ label: c.subject, description: `${c.date}  
 async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promise<Base | undefined> {
   const dir = path.dirname(doc.fileName);
   const [{ root, repo, why: noRepo }, reviewed] = await Promise.all([proj, reviewedCommit(doc)]);
-  const items: BaseItem[] = [];
+  const targets: BaseItem[] = [];
   let list: Commit[] = [];
   let why = noRepo;
   if (repo) {
-    const [log, date, after] = await Promise.all([
+    const [log, date] = await Promise.all([
       commits(dir, root),
       reviewed ? git(dir, "log", "-1", "--date=short", "--format=%ad", reviewed).catch(() => "") : "",
-      reviewed
-        ? git(dir, "rev-list", "--first-parent", "--count", `${reviewed}..HEAD`, "--", root).catch(() => "")
-        : "",
     ]);
     ({ list, why } = log);
     if (reviewed) {
-      items.push({
+      targets.push({
         label: "$(eye) Last reviewed version",
         description: `${date.trim()} \u00b7 marked with Mark as reviewed`,
-        base: { rev: reviewed, most: (after ? Number(after) : Infinity) + 1, what: "since the last reviewed version" },
+        base: { rev: reviewed, what: "since the last reviewed version" },
       });
     }
-    items.push(
-      ...list.map((c, i) => ({
-        ...commitItem(c),
-        base: { rev: c.hash, most: i + 1, what: `since ${quote(c)}` },
-      })),
+    targets.push(
+      ...list.map((c) => ({ ...commitItem(c), base: { rev: c.hash, what: `since ${quote(c)}` } })),
       { label: "", kind: vscode.QuickPickItemKind.Separator },
     );
     const tickable = list.filter((c) => !c.root).length;
     if (tickable > 1) {
-      items.push({
+      targets.push({
         label: "$(list-selection) Several commits...",
-        description: "tick commits to colour the changes in steps",
+        description: "a new colour at each ticked commit, in the view's layout",
         base: "several",
       });
     }
     if (tickable > 0) {
-      items.push({
+      targets.push({
         label: "$(git-compare) Between two commits...",
         description: "from one commit to another, not to the file as it is now",
         base: "between",
       });
     }
   }
-  items.push({ label: "$(file) Another file...", description: "compare with a .typ file of your choice", base: "other" });
+  targets.push({ label: "$(file) Another file...", description: "compare with a .typ file of your choice", base: "other" });
   for (;;) {
-    const pick = await vscode.window.showQuickPick<BaseItem>(items, {
+    const viewItem: BaseItem = { label: `$(settings) View: ${viewName(currentView())}`, description: "change...", base: "view" };
+    const items = [viewItem, { label: "", kind: vscode.QuickPickItemKind.Separator }, ...targets];
+    const [choice] = (await pick(items, {
       title: "Typst Redline: Show changes since...",
-      placeHolder: `${why ? `${why} ` : ""}Compare the file as it is now with...`,
-      matchOnDescription: true,
-    });
-    const choice = pick?.base;
-    if (choice === "several" || choice === "between") {
-      const base = await (choice === "several" ? pickSeveral(list) : pickBetween(list));
-      if (base === "back") {
+      placeholder: `${why ? `${why} ` : ""}Compare the file as it is now with...`,
+      active: targets[0],
+    })) ?? [undefined];
+    const base = choice?.base;
+    if (base === "view") {
+      await pickView();
+      continue;
+    }
+    if (base === "several" || base === "between") {
+      const picked = await (base === "several" ? pickSeveral(list) : pickBetween(list));
+      if (picked === "back") {
         continue;
       }
-      return base;
+      return picked;
     }
-    if (choice !== "other") {
-      return choice;
+    if (base !== "other") {
+      return base;
     }
     const other = await vscode.window.showOpenDialog({
       title: "Old version to compare with",
@@ -262,11 +291,10 @@ const maxColours = 6;
 async function pickSeveral(list: Commit[]): Promise<Base | "back" | undefined> {
   let items = list.filter((c) => !c.root).map(commitItem);
   for (;;) {
-    const ticked = await vscode.window.showQuickPick(items, {
+    const ticked = await pick(items, {
       title: "Typst Redline: colour the changes by step",
-      placeHolder: `Tick up to ${maxColours} commits; each one starts a new colour`,
-      canPickMany: true,
-      matchOnDescription: true,
+      placeholder: `Tick up to ${maxColours} commits; each one starts a new colour`,
+      many: true,
     });
     if (!ticked) {
       return undefined;
@@ -283,136 +311,94 @@ async function pickSeveral(list: Commit[]): Promise<Base | "back" | undefined> {
     return {
       rev: `${oldest.hash}^`,
       what: `from ${quote(oldest)} on`,
-      most: list.indexOf(oldest) + 2,
       ends: later.length ? later.map((c) => `${c.hash}^`) : undefined,
     };
   }
 }
 
-async function pickBetween(list: Commit[]): Promise<Base | "back" | undefined> {
-  const from = await vscode.window.showQuickPick(list.filter((c) => !c.root).map(commitItem), {
+async function pickBetween(list: Commit[]): Promise<Base | undefined> {
+  const [from] = (await pick(list.filter((c) => !c.root).map(commitItem), {
     title: "Typst Redline: changes from...",
-    placeHolder: "Pick the oldest commit to show; its own change is included",
-    matchOnDescription: true,
-  });
+    placeholder: "Pick the oldest commit to show; its own change is included",
+  })) ?? [undefined];
   if (!from) {
     return undefined;
   }
-  const start = list.indexOf(from.c);
-  const to = await vscode.window.showQuickPick(list.slice(0, start + 1).map(commitItem), {
+  const [to] = (await pick(list.slice(0, list.indexOf(from.c) + 1).map(commitItem), {
     title: `Typst Redline: changes from ${quote(from.c)} to...`,
-    placeHolder: "Pick the newest commit to show; its own change is included",
-    matchOnDescription: true,
-  });
-  if (!to) {
-    return undefined;
+    placeholder: "Pick the newest commit to show; its own change is included",
+  })) ?? [undefined];
+  return to && { rev: `${from.c.hash}^`, to: to.c.hash, what: `from ${quote(from.c)} to ${quote(to.c)}` };
+}
+
+type View = { layout: "marked" | "side-by-side"; colours: "none" | "each" | number };
+
+const layouts = [
+  { layout: "marked", label: "Marked", detail: "The new version with the changes marked" },
+  { layout: "side-by-side", label: "Side by side", detail: "Old and new pages next to each other (Typst 0.14 or later)" },
+] as const;
+
+function currentView(): View {
+  return state.get<View>("view") ?? { layout: "marked", colours: "none" };
+}
+
+function viewName(v: View) {
+  const layout = layouts.find((l) => l.layout === v.layout)!.label;
+  return v.colours === "none"
+    ? layout
+    : `${layout}, coloured by commit${typeof v.colours === "number" ? `, ${v.colours} steps` : ""}`;
+}
+
+// Chooses and stores the view; a coloured view also chooses how the commits are coloured.
+async function pickView() {
+  const now = currentView();
+  const items = layouts.flatMap((l) => [
+    { label: l.label, detail: l.detail, layout: l.layout, coloured: false },
+    { label: `${l.label}, coloured by commit`, detail: `${l.detail}, in colours by commit`, layout: l.layout, coloured: true },
+  ]);
+  const [view] = (await pick(items, {
+    title: "Typst Redline: view",
+    placeholder: "Show the changes as...",
+    active: items.find((i) => i.layout === now.layout && i.coloured === (now.colours !== "none")),
+  })) ?? [undefined];
+  if (!view) {
+    return;
   }
-  return {
-    rev: `${from.c.hash}^`,
-    to: to.c.hash,
-    most: start - list.indexOf(to.c) + 1,
-    what: `from ${quote(from.c)} to ${quote(to.c)}`,
-  };
-}
-
-type View = { id: string; label: string; sideBySide: boolean; byCommit: boolean };
-
-const views: View[] = [
-  { id: "marked", label: "Marked", sideBySide: false, byCommit: false },
-  { id: "side-by-side", label: "Side by side", sideBySide: true, byCommit: false },
-  { id: "by-commit", label: "Marked, coloured by commit", sideBySide: false, byCommit: true },
-  { id: "side-by-side-by-commit", label: "Side by side, coloured by commit", sideBySide: true, byCommit: true },
-];
-
-function viewDetail(view: View, base: Base) {
-  const layout = view.sideBySide ? "Old and new pages next to each other" : "The new version with the changes marked";
-  if (!view.byCommit) {
-    return view.sideBySide ? `${layout} (Typst 0.14 or later)` : layout;
-  }
-  return "ends" in base && base.ends
-    ? `${layout}, a new colour at each ticked commit`
-    : `${layout}, each change in the colour of its commit`;
-}
-
-// Only a git comparison can be coloured by commit; ticked commits ask for colours.
-function availableViews(base: Base) {
-  const ticked = "rev" in base && !!base.ends;
-  return views.filter((v) => (v.byCommit ? "rev" in base : !ticked));
-}
-
-// The view with this id, or else the one with the same layout.
-function closest(available: View[], id: string | undefined) {
-  const want = views.find((v) => v.id === id);
-  return available.find((v) => v === want) ?? available.find((v) => v.sideBySide === want?.sideBySide);
-}
-
-// The colour options of a coloured view: one colour per commit while the CLI has enough
-// colours, or a number of steps.
-function stepChoices(base: { most: number }) {
-  const choices: { label: string; detail: string; args: string[] }[] = [];
-  if (base.most <= maxColours) {
-    choices.push({
-      label: "One colour per commit",
-      detail: "each change in the colour of the commit that made it",
-      args: ["--each-commit"],
-    });
-  }
-  for (let n = 2; n <= Math.min(maxColours, base.most - 1); n++) {
-    choices.push({
-      label: `${n} steps`,
-      detail: `the commits split into ${n} groups of about equal change`,
-      args: ["--steps", String(n)],
-    });
-  }
-  return choices;
-}
-
-// Returns the CLI's arguments for the view, or undefined if the user cancelled.
-async function pickView(base: Base, config: vscode.WorkspaceConfiguration): Promise<string[] | undefined> {
-  const available = availableViews(base);
-  const setting = config.get<string>("view", "ask");
-  let view: View | undefined;
-  if (setting !== "ask") {
-    view = closest(available, setting) ?? available[0];
-  } else {
-    const last = closest(available, state.get<string>("view"));
-    const ordered = last ? [last, ...available.filter((v) => v !== last)] : available;
-    const pick = await vscode.window.showQuickPick(
-      ordered.map((view) => ({ label: view.label, detail: viewDetail(view, base), view })),
-      { title: `Typst Redline: changes ${base.what}`, placeHolder: "Show the changes as..." },
-    );
-    if (!pick) {
-      return undefined;
+  let colours: View["colours"] = "none";
+  if (view.coloured) {
+    const choices = [
+      { label: "One colour per commit", detail: "each change in the colour of the commit that made it", colours: "each" as const },
+      ...[2, 3, 4, 5, 6].map((n) => ({
+        label: `${n} steps`,
+        detail: `the commits split into ${n} groups of about equal change`,
+        colours: n,
+      })),
+    ];
+    const [choice] = (await pick(choices, {
+      title: "Typst Redline: colours",
+      placeholder: "Colour each commit, or split the commits into steps",
+      active: choices.find((c) => c.colours === now.colours),
+    })) ?? [undefined];
+    if (!choice) {
+      return;
     }
-    view = pick.view;
-    await state.update("view", view.id);
+    colours = choice.colours;
   }
-  const layout = view.sideBySide ? ["--layout", "side-by-side"] : [];
-  if (!view.byCommit || !("rev" in base)) {
+  await state.update("view", { layout: view.layout, colours });
+}
+
+function viewArgs(view: View, base: Base, colours: boolean) {
+  const layout = view.layout === "side-by-side" ? ["--layout", "side-by-side"] : [];
+  if (!("rev" in base) || !(base.ends || (colours && view.colours !== "none"))) {
     return layout;
   }
   if (base.ends) {
     return [...layout, "--steps", base.ends.join(",")];
   }
-  const choices = stepChoices(base);
-  // The first choice is one colour per commit, or else the most steps.
-  const fallback = choices[0].args[0] === "--each-commit" ? choices[0] : choices[choices.length - 1];
-  if (setting !== "ask" || base.most <= 2) {
-    return [...layout, ...fallback.args];
-  }
-  const last = choices.find((c) => c.label === state.get<string>("steps")) ?? fallback;
-  const pick = await vscode.window.showQuickPick([last, ...choices.filter((c) => c !== last)], {
-    title: `Typst Redline: colours for the changes ${base.what}`,
-    placeHolder: "Colour each commit, or split the commits into steps",
-  });
-  if (!pick) {
-    return undefined;
-  }
-  await state.update("steps", pick.label);
-  return [...layout, ...pick.args];
+  return [...layout, ...(view.colours === "each" ? ["--each-commit"] : ["--steps", String(view.colours)])];
 }
 
-// The command chooses these itself, from the list or typstRedline.view.
+// The command chooses these itself, from its lists.
 const flowOptions = ["--since", "--to", "--layout", "--each-commit", "--steps"];
 
 function checkExtraArgs(extra: string[]) {
@@ -421,18 +407,19 @@ function checkExtraArgs(extra: string[]) {
   if (owned.length) {
     throw new Error(
       `typstRedline.extraArgs holds ${owned.join(" and ")}, which this command sets itself. ` +
-        "Remove it from that setting; choose the view in the list or with typstRedline.view.",
+        "Remove it from that setting; choose the view with the View entry of the list.",
     );
   }
 }
 
-// What the CLI says about options the user did not type, in the terms of the commands.
-function plain(message: string, base: Base) {
+// Why the CLI cannot colour these changes by commit, in the terms of the command, or
+// undefined for other errors.
+function noColours(message: string, base: Base) {
   if (/has nothing to colour/.test(message)) {
-    return `Nothing to colour: no commit ${base.what} changes this document.`;
+    return `no commit ${base.what} changes this document`;
   }
   if (/to be an ancestor of/.test(message)) {
-    return `The changes ${base.what} cannot be coloured by commit: that commit is not an earlier commit of this branch.`;
+    return `the commit is not an earlier commit of this branch`;
   }
 }
 
@@ -464,13 +451,10 @@ async function showChanges() {
   }
   const proj = project(doc);
   const base = await pickBase(doc, proj);
-  if (!base) {
+  if (!base || !idle(file)) {
     return;
   }
-  const viewArgs = await pickView(base, config);
-  if (!viewArgs || !idle(file)) {
-    return;
-  }
+  const view = currentView();
   const { root } = await proj;
   // Save what the run reads: open documents of the project.
   for (const d of unsaved(doc, root)) {
@@ -479,27 +463,45 @@ async function showChanges() {
   // An old file outside the default root gets the CLI's default, the directory of each file.
   const rootArgs = "file" in base && !inside(base.file, root) && !config.get<string>("root") ? [] : ["--root", root];
   const typst = config.get<string>("typst");
-  const args = [
+  const args = (viewArgs: string[]) => [
     ...("rev" in base ? [file, "--since", base.rev, ...(base.to ? ["--to", base.to] : [])] : [base.file, file]),
     ...rootArgs,
     ...(typst ? ["--typst", typst] : []),
     ...viewArgs,
     ...extra,
   ];
+  const coloured = view.colours !== "none" && !("rev" in base && base.ends);
+  if (coloured && "file" in base) {
+    vscode.window.showInformationMessage("Typst Redline: another file has no commits, so the changes are not coloured.");
+  }
   busy.add(file);
   let pdf: string;
   try {
     pdf = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Typst Redline: changes ${base.what}`, cancellable: true },
-      (_, token) => runCli(doc, args, token),
+      async (_, token) => {
+        try {
+          return await runCli(doc, args(viewArgs(view, base, true)), token);
+        } catch (e) {
+          const message = (e as Error).message;
+          const why = coloured && noColours(message, base);
+          const more = coloured && /colours at most \d+ steps/.test(message);
+          if (!why && !more) {
+            throw e;
+          }
+          output.appendLine(message);
+          if (more) {
+            const layout = viewArgs(view, base, false);
+            vscode.window.showInformationMessage(
+              `Typst Redline: more than ${maxColours} commits, so they are coloured in ${maxColours} steps.`,
+            );
+            return await runCli(doc, args([...layout, "--steps", String(maxColours)]), token);
+          }
+          vscode.window.showInformationMessage(`Typst Redline: ${why}, so the changes are not coloured.`);
+          return await runCli(doc, args(viewArgs(view, base, false)), token);
+        }
+      },
     );
-  } catch (e) {
-    const message = e instanceof Error && plain(e.message, base);
-    if (message) {
-      output.appendLine(e.message);
-      throw new Error(message);
-    }
-    throw e;
   } finally {
     busy.delete(file);
   }
@@ -540,7 +542,7 @@ function command(name: string, body: () => Promise<void>) {
 
 export function activate(context: vscode.ExtensionContext) {
   output = vscode.window.createOutputChannel("Typst Redline");
-  state = context.globalState;
+  state = context.workspaceState;
   context.subscriptions.push(
     output,
     command("typstRedline.showChanges", showChanges),

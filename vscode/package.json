@@ -72,19 +72,6 @@
           "scope": "resource",
           "markdownDescription": "Arguments added to every `typst-redline` run, one per item. Arguments after `--` go to `typst compile`, for example `[\"--\", \"--font-path\", \"fonts\"]`."
         },
-        "typstRedline.view": {
-          "type": "string",
-          "enum": ["ask", "marked", "side-by-side", "by-commit", "side-by-side-by-commit"],
-          "default": "ask",
-          "enumDescriptions": [
-            "Ask each time, with the last used view first",
-            "Marked: the new version with the changes marked",
-            "Side by side: old and new pages next to each other",
-            "Marked, coloured by commit",
-            "Side by side, coloured by commit"
-          ],
-          "description": "How to show the changes. A view set here is not asked for. A view coloured by commit set here takes one colour per commit, or six steps when there can be more than six commits, and gives the same layout without colours where there is nothing to colour, as for another file."
-        },
         "typstRedline.openPdf": {
           "type": "string",
           "enum": ["auto", "editor", "external"],
