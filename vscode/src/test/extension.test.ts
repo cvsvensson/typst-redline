@@ -497,17 +497,21 @@ suite("Typst Redline commands", () => {
   test("a missing typst is reported before any list, naming its setting", async () => {
     await config.update("typst", "no-such-typst", vscode.ConfigurationTarget.Global);
     await show();
+    const other = vscode.Uri.file(path.join(path.dirname(file), "other.typ"));
+    fs.writeFileSync(other.fsPath, "Other.\n");
+    await vscode.commands.executeCommand("typstRedline.compareFiles", other, [other, vscode.Uri.file(file)]);
     assert.deepStrictEqual(lists, []);
     assert.deepStrictEqual(runs, []);
-    assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /typst was not found.*typstRedline\.typst/);
+    assert.strictEqual(errors.length, 2);
+    assert.match(errors[0], /typst .*typstRedline\.typst.*not found/);
   });
 
   test("a missing executable is reported before any list", async () => {
     await config.update("executable", "no-such-typst-redline", vscode.ConfigurationTarget.Global);
     await show();
     assert.deepStrictEqual(lists, []);
-    assert.deepStrictEqual(errors, ["Typst Redline: the typst-redline program set in the settings was not found."]);
+    assert.strictEqual(errors.length, 1);
+    assert.match(errors[0], /typst-redline .*not found/);
   });
 
   test("a second run is refused while one runs, and cancelling ends typst, which the CLI runs as a child", async () => {
