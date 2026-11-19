@@ -1870,7 +1870,7 @@
     // document does, for a footer that shows the number of pages.
     context {
       let (s, e) = (query(<redline-summary>), query(<redline-summary-end>))
-      if s.len() > 0 and e.len() > 0 { counter(page).update(n => n - (e.first().location().page() - s.first().location().page() + 1)) }
+      if s.len() > 0 and e.len() > 0 { counter(page).update(n => calc.max(0, n - (e.first().location().page() - s.first().location().page() + 1))) }
     }
   })
 } else {
