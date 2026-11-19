@@ -893,6 +893,22 @@ impl<'a> Writer<'a> {
                 .filter(|c| here(c) && c.kind == ChangeKind::Unmarked)
                 .map(|c| format!("({}),", c.code_fields()))
                 .collect();
+            // Marks that show only a bar, with what they mark in words.
+            let bars: String = self
+                .changes
+                .iter()
+                .filter(|c| here(c) && c.kind == ChangeKind::Ins && !c.what.is_empty())
+                .map(|c| {
+                    format!(
+                        "({}),",
+                        Change {
+                            old: c.text.clone(),
+                            ..c.clone()
+                        }
+                        .code_fields()
+                    )
+                })
+                .collect();
             // A move is checked once, at its new place.
             let marks: String = self
                 .changes
@@ -930,7 +946,7 @@ impl<'a> Writer<'a> {
             };
             let before = if std::ptr::eq(s, &first) { "before: true, " } else { "" };
             entries.push_str(&format!(
-                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, {moved}{before}deleted: {}, new: {}, code: ({code}), marks: ({marks})),\n",
+                "  (file: {}, level: {}, target: {target}, title: {}, count: {n}, {moved}{before}deleted: {}, new: {}, code: ({code}), bars: ({bars}), marks: ({marks})),\n",
                 typst_str(&s.file),
                 s.level,
                 s.title,
@@ -1088,8 +1104,8 @@ impl<'a> Writer<'a> {
 
     /// For a kept or changed item whose separation from the paragraph or item
     /// before it changed, from a blank line to none or back, which spaces the
-    /// items differently: the change listed, and an empty mark for the start
-    /// of the item, which draws a bar there.
+    /// items differently: an empty mark for the start of the item, which
+    /// draws a bar there, recorded with the item's first line and a note.
     fn spacing(&mut self, old: &Doc, new: &Doc, s: Step, old_of: &HashMap<usize, usize>, head: bool) -> String {
         let (Step::Keep(Some(o), n) | Step::Pair(o, n)) = s else {
             return String::new();
@@ -1107,12 +1123,10 @@ impl<'a> Writer<'a> {
             "Blank line before this item removed: it is spaced close to the text before it."
         };
         let line = nb.text().trim().lines().next().unwrap_or_default().to_string();
-        self.list_what(&line, &line, vec![What::Note(note.into())]);
-        let start = self.changes.len() - 1;
         let step = self.step(&[]).map_or(String::new(), |s| format!("step: {s}, "));
         let call = format!("#{}-ins({step}id: {})[];", self.ctx.prefix, self.changes.len());
-        self.record(ChangeKind::Ins, String::new());
-        self.join_from(start);
+        self.record(ChangeKind::Ins, line);
+        self.changes.last_mut().unwrap().what = vec![What::Note(note.into())];
         call
     }
 

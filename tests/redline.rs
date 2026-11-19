@@ -857,12 +857,12 @@ fn blank_line_that_spaces_items_apart_is_marked_and_listed() {
         ),
     );
     let r = redline_of(&old, &new);
-    let notes = r
+    let kinds: Vec<_> = r
         .changes
         .iter()
-        .filter(|c| matches!(c.what.as_slice(), [What::Note(_)]))
-        .count();
-    assert_eq!(notes, 1, "{:?}", r.changes);
+        .map(|c| (c.kind, matches!(c.what.as_slice(), [What::Note(_)])))
+        .collect();
+    assert_eq!(kinds, [(ChangeKind::Ins, true)]);
     assert!(
         without_ids(&r.files[0].1).contains("- #redline-ins()[];two"),
         "{}",
