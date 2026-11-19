@@ -2300,22 +2300,17 @@ fn list_files_prints_the_files_the_document_is_made_of() {
     std::fs::write(dir.join("main.typ"), "#include \"ch/one.typ\"\n#image(\"fig.png\")\n").unwrap();
     std::fs::write(dir.join("ch/one.typ"), "One.\n").unwrap();
     std::fs::write(dir.join("notes.typ"), "Not used.\n").unwrap();
+    std::fs::write(dir.join("fig.png"), "").unwrap();
     let out = cli(&dir, &["main.typ", "--list-files"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let listed: Vec<PathBuf> = String::from_utf8(out.stdout)
         .unwrap()
         .lines()
-        .map(PathBuf::from)
+        .map(|p| std::fs::canonicalize(p).unwrap())
         .collect();
-    let root = std::path::absolute(&*dir).unwrap();
-    assert_eq!(
-        listed,
-        [
-            root.join("main.typ"),
-            root.join("ch").join("one.typ"),
-            root.join("fig.png")
-        ]
-    );
+    // On macOS the temporary folder is reached through a symbolic link.
+    let expected = ["main.typ", "ch/one.typ", "fig.png"].map(|p| std::fs::canonicalize(dir.join(p)).unwrap());
+    assert_eq!(listed, expected);
     assert_eq!(
         cli(&dir, &["main.typ", "--list-files", "--since", "HEAD"])
             .status
