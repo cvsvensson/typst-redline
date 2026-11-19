@@ -1336,7 +1336,7 @@ fn two_sided_document_keeps_its_parity_and_page_numbers() {
 }
 
 #[test]
-fn summary_takes_one_page_after_small_pages() {
+fn summary_takes_one_page_after_small_pages_and_more_when_long() {
     // Typst 0.11 lays the summary out on the document's pages.
     let version = Command::new("typst").arg("--version").output().map(|o| o.stdout);
     if version.is_ok_and(|v| String::from_utf8_lossy(&v).contains(" 0.11.")) {
@@ -1346,6 +1346,19 @@ fn summary_takes_one_page_after_small_pages() {
         return;
     };
     assert_eq!(pdf_pages(&dir.join("main.pdf")), 3);
+    let doc = |w: &str| {
+        let body: String = (1..=80).map(|i| format!("= Part {i}\nThe {w} text.\n")).collect();
+        format!("#set page(width: 8cm, height: 6cm)\n{body}")
+    };
+    let r = redline_of(&doc("old"), &doc("new"));
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let marked = pdf_pages(&compile("long-summary", &files).unwrap().join("main.pdf"));
+    let new = pdf_pages(
+        &compile_to("long-summary-new", &[("main.typ".into(), doc("new"))], "main.pdf")
+            .unwrap()
+            .join("main.pdf"),
+    );
+    assert!(marked > new + 1, "{marked} pages, {new} without the summary");
 }
 
 #[test]

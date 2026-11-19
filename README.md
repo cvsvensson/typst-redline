@@ -93,7 +93,7 @@ From the top:
 - **Commits**: for a comparison with git, the commits between the two versions that change the document or a file it reads.
 - **How changes are marked**: the legend, a sample of each kind of mark.
 
-The summary is one page in the document's font, without its template, header, footer, foreground or background. The page is as wide as the document's, or wider where that leaves less than about 25 em for text, as high as the document's or higher where the summary needs it, with margins in Typst's default proportion.
+The summary is set in the document's font, without its template, header, footer, foreground or background, on pages as wide as the document's, or wider where that leaves less than about 25 em for text. A page is as high as the document's or as a portrait sheet of that width, whichever is higher; a summary up to half as long again takes one taller page, a longer one continues on further pages.
 
 ## Slides and side by side
 
