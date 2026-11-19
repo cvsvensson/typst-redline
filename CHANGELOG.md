@@ -8,6 +8,7 @@ First release. `typst-redline` makes a PDF of the new version of a Typst documen
 - Deleted words are struck through, new words highlighted; changed formulas, figures, code blocks and drawings are framed whole; bars in the margin point to changed lines.
 - Follows files the document includes or imports. A replaced image is marked at its figure; changed data files and bibliography entries are listed on the summary page.
 - Shows moved paragraphs, list items and sections once, with a note at both places (`--no-moves` turns this off).
+- Numbers each change in the margin, in reading order; the summary page refers to changes by these numbers.
 - Lists every change it cannot mark in place, such as a changed title string, `#set` rule or text a function reads as text, on a summary page at the end, with the changed sections and, for git comparisons, the commits. The summary says so when the versions do not differ.
 - With the deletions removed, the marked document has the new version's text, layout and numbering.
 - `--layout side-by-side` shows each changed page of the old version next to the new one, for slides in particular.

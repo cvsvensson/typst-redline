@@ -22,9 +22,9 @@
 //   and the insertion that replaces it counting as one,
 //   moves: moves into or out of the section other than its own, before:
 //   the changes before the first heading at the top level, deleted,
-//   new, moved, code: array of (old, new): changed code that is not
-//   marked, either empty if inserted or deleted, bars: array of (old, new,
-//   what): marks that show only a bar, said in `what`, marks: array of (id,
+//   new, moved, code: array of (id, old, new): changed code that is not
+//   marked, either empty if inserted or deleted, bars: array of (id, old,
+//   new, what): marks that show only a bar, said in `what`, marks: array of (id,
 //   move: number of the move if it is one, joined: true if it continues
 //   the mark before it, old, new): its marks), bib: (added, removed,
 //   changed: arrays of citation keys whose bibliography entry is new, gone
@@ -44,7 +44,7 @@
 // changes after the last.
 // redline-step-style(n) gives the style of its marks. Every mark other
 // than a move's takes `id: n`, which the summary uses to find marks that
-// were not laid out.
+// were not laid out and to number the changes.
 // With `redline-ins(body, ..args) = body` and `redline-del(..args) = none`
 // the document is the new version unchanged; marks must keep that so.
 // For the side-by-side layout the binary compiles the marked files with
@@ -76,6 +76,8 @@
     // Brackets and lines of moved text.
     move: luma(110),
     move-stroke: 0.8pt,
+    // The numbers of changes, in the margin and on the summary.
+    number: luma(110),
     // With --each-commit, the colour of each commit: Okabe–Ito hues, darkened
     // where needed to read as text on white.
     steps: (rgb("#0072b2"), rgb("#d55e00"), rgb("#007a5a"), rgb("#a8508a"), rgb("#9a6800"), rgb("#2f8fce")),
@@ -563,6 +565,20 @@
   }).join[, ]
 }
 
+// Page numbers, or numbers of changes, in increasing order as runs, such as
+// "2–4, 7".
+#let redline-pages(ps) = {
+  let runs = ()
+  for p in ps {
+    if runs.len() > 0 and runs.last().last() + 1 == p { runs.last().push(p) } else { runs.push((p,)) }
+  }
+  // `join` takes no default before Typst 0.12.
+  if runs.len() == 0 { "–" } else { runs.map(r => str(r.first()) + if r.len() > 1 { "–" + str(r.last()) } else { "" }).join(", ") }
+}
+
+// Numbers of changes as the margin and the summary show them.
+#let redline-number(ns) = text(fill: redline-style.number, number-type: "lining", redline-pages(ns.sorted().dedup()))
+
 // Content as pieces that can be cut between: words of text, other elements
 // whole.
 #let redline-pieces(c) = if type(c) != content { (c,) } else if c.func() == [].func() {
@@ -776,6 +792,23 @@
       (calc.max(left - calc.min(st.bar-gap, left / 2) - lane * st.lane, st.bar-width / 2), false, 0pt)
     }
   }
+  // Where the number of a change goes: (x, whether it is in the right
+  // margin), outside the bars and brackets, the number ending at x in the
+  // left margin and starting there in the right one; none in a column
+  // between others, whose gutter has no room.
+  let number-at(s, e, cw, g, n) = {
+    let (k, cols, ..) = column(s, e, cw, g, n)
+    if cols > 1 and k == cols - 1 {
+      (left + body + calc.min(st.bar-gap, right / 2) + 3 * st.lane, true)
+    } else if cols == 1 or k == 0 {
+      let (x, r, _) = bar-x(s, e, cw, g, n, 2.5)
+      (if r { x + 3pt } else { x - 3pt }, r)
+    }
+  }
+  let nums = query(<redline-numbers>)
+  let nums = if nums.len() > 0 and redline-side != "old" { redline-value(nums.first()) }
+  let number-size = calc.max(6pt, w / 100)
+  let numbers = ()
   // Tags come in document order, so the first pair ending on this page is
   // found by bisection.
   let (lo, hi) = (0, n)
@@ -799,6 +832,13 @@
       let (x, ..) = bar-x(s, e, b.at(2, default: none), b.at(3, default: none), b.at(5, default: none), if ins { 0 } else { 1 })
       let sst = redline-step-style(a.at(4, default: none))
       bars.push((x, y0 + 1pt, y1 - 1pt, ins, if ins { sst.ins } else { sst.del }))
+      let id = a.at(6, default: none)
+      let num = if nums != none and s.page == pg and id != none { nums.at(str(id), default: none) }
+      let at = if num != none { number-at(s, e, b.at(2, default: none), b.at(3, default: none), b.at(5, default: none)) }
+      // A number stands on the baseline of the line a mark starts on, or at
+      // the top of its bar for a block.
+      let y = if a.at(1) == -0.8em { s.y - 0.7 * number-size } else { y0 + 1pt }
+      if at != none { numbers.push((..at, y, num)) }
     }
     i += 1
   }
@@ -869,6 +909,11 @@
       place(redline-top-left, dx: x0, dy: y0, link(other.location(), box(width: calc.max(x1 - x0, 0pt), height: calc.max(y1 - y0, 1pt))))
     }
     if s.page != pg { continue }
+    // The move's number stands at the top of its bracket, the note below it.
+    let num = if nums != none { nums.at("m" + str(v.id), default: none) }
+    let at = if num != none { number-at(s, e-in, v.width, v.gutter, v.at("columns", default: none)) }
+    if at != none { numbers.push((..at, if redline-value(a).block { y0 } else { s.y - 0.7 * number-size }, num)) }
+    let y0 = if at != none { y0 + 1.3 * number-size } else { y0 }
     // Notes that run up along the bracket have no arrow, which would turn.
     let (notes, along) = if other != none and other.location().page() != pg {
       let n = redline-page-names((other.location(),))
@@ -894,6 +939,41 @@
     } else if note != none {
       place(redline-top-left, dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0, box(width: free, align(if right-side { start } else { end }, link-to(note))))
     }
+  }
+  // The old place of a move has its number too.
+  let moves = if nums != none { nums.pairs().filter(((k, _)) => k.starts-with("m")) } else { () }
+  for (k, num) in moves {
+    let from = redline-move-find("from", k.slice(1))
+    if from == none or from.location().page() != pg { continue }
+    let p = from.location().position()
+    let at = number-at(p, p, none, none, none)
+    if at != none { numbers.push((..at, p.y - 0.7 * number-size, num)) }
+  }
+  // On the new side of the side-by-side layout, a deletion has its number
+  // where it was.
+  if nums != none and redline-side == "new" {
+    for c in query(<redline-change>).filter(c => c.location().page() == pg) {
+      let (kind, _, id, ..) = redline-value(c)
+      let num = if kind == "del" { nums.at(str(id), default: none) }
+      let p = c.location().position()
+      let at = if num != none { number-at(p, p, none, none, none) }
+      if at != none { numbers.push((..at, p.y - 0.7 * number-size, num)) }
+    }
+  }
+  // A number is shown once on a page, where its change starts, but at both
+  // places of a move; numbers on about one line are shown together.
+  let lines = ()
+  let seen = ()
+  for (x, r, y, num) in numbers.sorted(key: n => n.at(2).pt()) {
+    if num in seen { continue }
+    if moves.all(((_, n)) => n != num) { seen.push(num) }
+    let i = lines.position(l => l.at(1) == r and y - l.at(2) < 1.3 * number-size)
+    if i == none { lines.push((x, r, y, (num,))) } else { lines.at(i).at(3).push(num) }
+  }
+  for (x, r, y, ns) in lines {
+    let t = text(size: number-size, top-edge: "cap-height", bottom-edge: "baseline", redline-number(ns))
+    let tw = measure(t).width
+    place(redline-top-left, dx: if r { calc.min(x, w - tw - 1pt) } else { calc.max(x - tw, 1pt) }, dy: y, t)
   }
   // The legend goes at the bottom edge of the page, as the pointer line goes
   // at the top edge, if it stays clear of the footer. The footer lies in the
@@ -946,11 +1026,20 @@
   body
 }
 
+// `body` with the number `n` of its change, if not none, in the indent
+// before it.
+#let redline-numbered(n, body) = if n == none { body } else {
+  block({
+    place(dx: -4em, box(width: 3.4em, align(right, redline-number((n,)))))
+    body
+  })
+}
+
 // Changed code that is not marked, (old, new, what): what changed in words,
 // then the old code in the colour of deletions and the new in that of
 // insertions, or the code once in grey if the words say all of it. Text, not raw, so that the document's show rules on
-// raw leave it alone.
-#let redline-code(c) = {
+// raw leave it alone. With `n`, its number stands in the indent before it.
+#let redline-code(c, n: none) = redline-numbered(n, {
   let st = redline-style
   let mono = text.with(font: "DejaVu Sans Mono", hyphenate: false)
   let value(v, fill, f) = if "text" in v {
@@ -976,7 +1065,7 @@
   if rows.len() == 1 and rows.first().at(1) == "" { block(above: 0.4em, paint(rows.first().at(2), rows.first().first())) } else {
     grid(columns: (auto, 1fr), column-gutter: 0.5em, row-gutter: 0.5em, ..rows.map(((code, sign, fill)) => (paint(fill, sign), paint(fill, code))).flatten())
   }
-}
+})
 
 // A bibliography entry: as the document prints it if `printed` and the
 // document cites it and has a bibliography, else by its authors and year
@@ -990,33 +1079,39 @@
 }
 
 // The bibliography entries and other files that changed, as (title, lines)
-// pairs.
-#let redline-bib(bib) = {
+// pairs, numbered from `first` if it is not none.
+#let redline-bib(bib, first: none) = {
   let names = bib.at("names", default: (:))
   let entries = (([New], bib.added, true), ([No longer cited], bib.removed, false), ([Changed], bib.changed, true))
   let lines = entries.map(((what, keys, printed)) => keys.map(k => [#what: #redline-bib-entry(k, names, printed)])).flatten()
   let files = bib.at("files", default: ())
+  let number(i) = if first != none { first + i }
+  let lines = lines.enumerate().map(((i, l)) => redline-numbered(number(i), l))
+  let files = if first == none { (files.map(redline-mono).join[, ],) } else {
+    files.enumerate().map(((i, f)) => redline-numbered(number(lines.len() + i), redline-mono(f)))
+  }
   let out = ()
   if lines.len() > 0 { out.push(([Bibliography entries, not marked in the bibliography], lines)) }
-  if files.len() > 0 { out.push(([Images and data files that changed], (files.map(redline-mono).join[, ],))) }
+  if files.len() > 0 { out.push(([Images and data files that changed], files)) }
   out
 }
 
 #let redline-head(body) = block(above: 1.5em, below: 0.75em, text(weight: "bold", body))
 
 // The changes that are not marked: `groups` is an array of (title, code:
-// array of (old, new)), `bib` as for `redline-summary`.
-#let redline-not-marked(groups, bib) = {
-  let bib = redline-bib(bib)
+// array of (old, new, id)), `bib` as for `redline-summary`, `nums` the
+// numbers of changes from `redline-numbering`, or none to show none.
+#let redline-not-marked(groups, bib, nums: none) = {
+  let bib = redline-bib(bib, first: if nums != none { calc.max(0, ..nums.values()) + 1 })
   if groups.len() + bib.len() == 0 { return }
   let st = redline-style
   let group(title, body) = block(below: 0.9em, { block(below: 0.55em, emph(title)); pad(left: 1.2em, body) })
   redline-head[Not marked in place]
   if groups.len() > 0 {
     block(below: 0.9em)[These changes are in the source but have no mark on the pages, such as a changed setting or a title that a template prints. Each says what changed, old in red and new in blue, above its source text in grey; where words cannot say it all, the old source follows after #text(fill: st.del)[−] and the new after #text(fill: st.ins)[+].]
-    for (title, code) in groups { group(title, code.map(redline-code).join(v(0.3em))) }
+    for (title, code) in groups { group(title, code.map(c => redline-code(c, n: if nums != none { nums.at(str(c.id), default: none) })).join(v(0.3em))) }
   }
-  for (title, lines) in bib { group(title, lines.join(linebreak())) }
+  for (title, lines) in bib { group(title, lines.join(if nums == none { linebreak() })) }
 }
 
 // Notes on what this PDF shows differently from the new version, or
@@ -1109,14 +1204,41 @@
   query(label("redline-move-to-" + str(m.move))).len() == 0
 } else { str(m.id) not in shown })
 
-// Page numbers in increasing order as runs, such as "2–4, 7".
-#let redline-pages(ps) = {
-  let runs = ()
-  for p in ps {
-    if runs.len() > 0 and runs.last().last() + 1 == p { runs.last().push(p) } else { runs.push((p,)) }
+// The number of each change of `entries` (as for `redline-summary`), by the
+// id of each of its marks and changes of code, and by "m" and the number of
+// each move: changes are numbered in the order they are laid out in, a mark
+// that continues the one before it shares its number, and a change that is
+// not laid out comes after the change before it in the source.
+#let redline-numbering(entries) = {
+  let items = entries.map(e => e.marks + e.code).flatten().sorted(key: m => m.id)
+  let key = (:)
+  for m in items {
+    let k = if "move" in m { "m" + str(m.move) } else if m.at("joined", default: false) and key.len() > 0 { key.values().last() } else { str(m.id) }
+    key.insert(str(m.id), k)
   }
-  // `join` takes no default before Typst 0.12.
-  if runs.len() == 0 { "–" } else { runs.map(r => str(r.first()) + if r.len() > 1 { "–" + str(r.last()) } else { "" }).join(", ") }
+  let moves = items.filter(m => "move" in m).map(m => label("redline-move-to-" + str(m.move)))
+  let rank = (:)
+  for t in query(if moves.len() > 0 { selector(<redline-tag>).or(..moves) } else { selector(<redline-tag>) }) {
+    let v = redline-value(t)
+    let k = if type(v) == dictionary { "m" + str(v.id) } else if v.at(6) != none { key.at(str(v.at(6)), default: none) }
+    if k != none and k not in rank { rank.insert(k, rank.len()) }
+  }
+  // The items are in source order, and sorting keeps the order of equals.
+  let last = -1
+  let order = ()
+  for m in items {
+    let k = key.at(str(m.id))
+    if k in rank { last = rank.at(k) }
+    order.push((2 * last + if k in rank { 0 } else { 1 }, k))
+  }
+  let number = (:)
+  for (_, k) in order.sorted(key: o => o.first()) {
+    if k not in number { number.insert(k, number.len() + 1) }
+  }
+  let nums = (:)
+  for (id, k) in key { nums.insert(id, number.at(k)) }
+  for (k, n) in number { if k.starts-with("m") { nums.insert(k, n) } }
+  nums
 }
 
 // The number and title of the heading `el`, as the summary lists it.
@@ -1134,8 +1256,8 @@
 
 // The marks among `marks` that are laid out, grouped by the last heading of
 // level 1 or 2 before them, or none: array of (heading, count: changes other
-// than moves, moves: numbers of the moves, at: locations). Deleted headings,
-// which are neither outlined nor bookmarked, do not count.
+// than moves, moves: numbers of the moves, at: locations, marks). Deleted
+// headings, which are neither outlined nor bookmarked, do not count.
 #let redline-under-headings(marks) = {
   let at = (:)
   for t in redline-starts() {
@@ -1150,10 +1272,11 @@
     let head = query(selector(heading).before(loc)).filter(kept).at(-1, default: none)
     let i = groups.position(g => if head == none { g.heading == none } else { g.heading != none and g.heading.location() == head.location() })
     if i == none {
-      groups.push((heading: head, count: 0, moves: (), at: ()))
+      groups.push((heading: head, count: 0, moves: (), at: (), marks: ()))
       i = groups.len() - 1
     }
     groups.at(i).at.push(loc)
+    groups.at(i).marks.push(m)
     if "move" in m { groups.at(i).moves.push(m.move) } else if not m.at("joined", default: false) { groups.at(i).count += 1 }
   }
   groups
@@ -1200,7 +1323,7 @@
   let st = redline-style
   let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
   let moved = if info.at("moved", default: 0) > 0 [ #redline-move-legend(st)]
-  let rest = [New equations, figures, code blocks and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through; code blocks and filled boxes keep their colours. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones.#moved]
+  let rest = [New equations, figures, code blocks and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through; code blocks and filled boxes keep their colours. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. Next to them, each change has a #text(fill: st.number)[number], in reading order, by which this summary lists it.#moved]
   if info.at("history", default: (steps: false)).steps {
     let st = st + redline-colours(luma(70))
     [#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the #if "groups" in info.history [step] else [commit] that made the change. #rest]
@@ -1215,6 +1338,9 @@
   context {
     let shown = redline-laid-out()
     redline-layout()
+    let nums = redline-numbering(info.entries)
+    redline-meta(nums, <redline-numbers>)
+    let numbers(ms) = ms.map(m => nums.at(str(m.id), default: none)).filter(n => n != none)
     let bib = info.at("bib", default: (added: (), removed: (), changed: ()))
     let listed = ("added", "removed", "changed", "files").map(k => bib.at(k, default: ()).len()).sum()
     let lost = info.entries.map(e => redline-lost(e.marks, shown))
@@ -1238,20 +1364,21 @@
       if moves > 0 { parts.push[#moves~#if moves == 1 [passage] else [passages] moved] }
       [#parts.join[, ]#if unmarked > 0 [ (#unmarked~not marked)]]
     }
-    let row(level, name, what, at) = (pad(left: (level - min-level) * 1.2em, name), what, if at.len() > 0 { redline-page-names(at, prefix: false) })
-    let heading-row(level, el, title, what) = {
+    let row(level, name, what, ns, at) = (pad(left: (level - min-level) * 1.2em, name), if ns.len() > 0 { redline-number(ns) }, what, if at.len() > 0 { redline-page-names(at, prefix: false) })
+    let heading-row(level, el, title, what, ns) = {
       let loc = el.location()
-      row(level, link(loc, redline-heading-name(el, title)), what, (loc,)).enumerate().map(((i, c)) => if i == 2 { link(loc, c) } else { c })
+      row(level, link(loc, redline-heading-name(el, title)), what, ns, (loc,)).enumerate().map(((i, c)) => if i == 3 { link(loc, c) } else { c })
     }
     let rows = ()
     for (e, l) in info.entries.zip(lost) {
       let moves = e.at("moves", default: 0)
       let k = e.code.len() + l.len()
+      let ns = numbers(e.marks + e.code)
       if e.deleted {
-        rows += row(e.level, text(fill: st.del, strike(e.title)), what(0, 0, k, [deleted section]), ())
+        rows += row(e.level, text(fill: st.del, strike(e.title)), what(0, 0, k, [deleted section]), ns, ())
       } else if e.target != none {
         let label = if e.new { ([new section],) } else if e.at("moved", default: false) { ([moved section],) } else { () }
-        rows += heading-row(e.level, query(e.target).first(), e.title, what(e.count, moves, k, ..label))
+        rows += heading-row(e.level, query(e.target).first(), e.title, what(e.count, moves, k, ..label), ns)
       } else {
         // Headings that the source does not have at its top level, such as
         // those inside calls, are found where they are laid out.
@@ -1259,32 +1386,33 @@
         let found = if e.at("before", default: false) { groups.filter(g => g.heading != none) } else { () }
         let placed = found.map(g => g.count).sum(default: 0)
         let left = calc.max(0, moves - found.map(g => g.moves).flatten().dedup().len())
+        let elsewhere = found.map(g => numbers(g.marks)).flatten()
         if found.len() == 0 or e.count > placed or left > 0 {
           let at = groups.filter(g => found.len() == 0 or g.heading == none).map(g => g.at).flatten()
-          rows += row(e.level, e.title, what(e.count - placed, left, k), at)
+          rows += row(e.level, e.title, what(e.count - placed, left, k), ns.filter(n => n not in elsewhere), at)
         }
         let top = calc.min(..found.map(g => g.heading.level), 9)
         for g in found {
-          rows += heading-row(e.level + g.heading.level - top, g.heading, redline-plain(g.heading.body).trim(), what(g.count, g.moves.dedup().len(), 0))
+          rows += heading-row(e.level + g.heading.level - top, g.heading, redline-plain(g.heading.body).trim(), what(g.count, g.moves.dedup().len(), 0), numbers(g.marks))
         }
       }
     }
     if rows.len() > 0 {
       redline-head[Changes by section]
       let grey = text.with(size: 0.85em, fill: luma(110))
-      let head = (grey[Section], grey[Changes], grey[Page])
+      let head = (grey[Section], grey[No.], grey[Changes], grey[Page])
       // Section names get their width first, as long as the changes keep a
-      // third of what the pages leave; neither gets less than its longest
-      // unbreakable part, such as a number and its word (Typst 0.11 cannot
-      // measure that). The changes wrap.
+      // third of what the numbers and pages leave; neither gets less than
+      // its longest unbreakable part, such as a number and its word (Typst
+      // 0.11 cannot measure that). The changes wrap.
       layout(size => {
         let gutter = 1.2em.to-absolute()
-        let widest(k, ..room) = calc.max(..(head + rows).enumerate().filter(((i, _)) => calc.rem(i, 3) == k).map(((_, c)) => measure([#c], ..room).width))
-        let room = size.width - widest(2) - 2 * gutter
+        let widest(k, ..room) = calc.max(..(head + rows).enumerate().filter(((i, _)) => calc.rem(i, 4) == k).map(((_, c)) => measure([#c], ..room).width))
+        let room = size.width - widest(1) - widest(3) - 3 * gutter
         let least(k) = if sys.version >= version(0, 12, 0) { widest(k, width: 1pt) } else { 0pt }
-        let changes = calc.min(widest(1), calc.max(room / 3, least(1)))
+        let changes = calc.min(widest(2), calc.max(room / 3, least(2)))
         grid(
-          columns: (calc.max(least(0), calc.min(widest(0), room - changes)), 1fr, auto),
+          columns: (calc.max(least(0), calc.min(widest(0), room - changes)), auto, 1fr, auto),
           column-gutter: gutter,
           row-gutter: 0.6em,
           ..head,
@@ -1299,12 +1427,12 @@
     if bars.len() > 0 {
       redline-head[Marked with a bar only]
       for e in bars {
-        block(below: 0.9em, { block(below: 0.55em, emph(e.title)); pad(left: 1.2em, e.bars.map(redline-code).join(v(0.3em))) })
+        block(below: 0.9em, { block(below: 0.55em, emph(e.title)); pad(left: 1.2em, e.bars.map(c => redline-code(c, n: nums.at(str(c.id), default: none))).join(v(0.3em))) })
       }
     }
 
     let groups = info.entries.zip(lost).filter(((e, l)) => e.code.len() + l.len() > 0)
-    redline-not-marked(groups.map(((e, l)) => (if e.deleted { strike(e.title) } else { e.title }, e.code + l)), bib)
+    redline-not-marked(groups.map(((e, l)) => (if e.deleted { strike(e.title) } else { e.title }, e.code + l)), bib, nums: nums)
 
     context {
       let notes = ()
@@ -1334,6 +1462,7 @@
 } else {
   context {
     redline-layout()
+    redline-meta(redline-numbering(info.entries), <redline-numbers>)
     let lost = redline-lost(info.entries.map(e => e.marks).flatten(), redline-laid-out())
     if lost.len() > 0 { redline-ints(lost.map(m => m.id), <redline-lost>) }
   }

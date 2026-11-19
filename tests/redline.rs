@@ -1176,6 +1176,40 @@ fn summary_finds_sections_under_headings_inside_calls() {
 }
 
 #[test]
+fn changes_are_numbered_once_each_in_reading_order() {
+    let moved = "The moved paragraph has quite a few words in it so that it is found to move.";
+    let old = format!("#set text(size: 11pt)\n= A\nAlpha beta gamma.\n\n{moved}\n\nDelta epsilon.\n= B\nZeta eta.\n");
+    let new =
+        format!("#set text(size: 10pt)\n= A\nAlpha BETA gamma.\n\nDelta epsilon new.\n= B\nZeta eta.\n\n{moved}\n");
+    let r = redline_of(&old, &new);
+    let changes = r
+        .changes
+        .iter()
+        .filter(|c| c.kind != ChangeKind::Moved && !c.joined)
+        .count()
+        + r.moves.len();
+    let mut files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    files[0].1 += "\n#import \"/.redline-preamble.typ\": redline-value\n#context [#metadata(redline-value(query(<redline-numbers>).first()))<probe>]\n";
+    let Some(dir) = compile("numbered", &files) else {
+        return;
+    };
+    let nums = query(&dir, "<probe>");
+    let mut values: Vec<u32> = nums
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse().unwrap())
+        .collect::<Vec<_>>()
+        .chunks(2)
+        .map(|kv| kv[1])
+        .collect();
+    values.sort();
+    values.dedup();
+    assert_eq!(values, (1..=changes as u32).collect::<Vec<_>>(), "{nums}");
+    // The move comes last in the new document.
+    assert!(nums.contains(&format!("\"m0\":{changes}")), "{nums}");
+}
+
+#[test]
 fn summary_says_which_fallbacks_were_applied() {
     if !typst_available() {
         return;
