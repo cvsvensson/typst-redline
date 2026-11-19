@@ -6,7 +6,8 @@
 //   deleted content; `heading` is the level of a deleted heading, `gap` says
 //   that an insertion follows. A deleted list or enum item is a block with
 //   `item`: (depth: its nesting level, number: its number in the old
-//   enumeration or none in a list, inside: whether it is written in the body
+//   enumeration or none in a list, counted: whether that number counts from
+//   the enumeration's start, inside: whether it is written in the body
 //   of the item before it, tight: whether its list is tight). A deleted
 //   block is written as a continuation of the block before it, so a block
 //   deletion must start its own paragraph.
@@ -255,6 +256,15 @@
     or repr(c.func()) in ("counter-update", "state-update")
     or c.func() == [].func() and c.children.all(redline-roomless)
     or repr(c.func()) == "styled" and redline-roomless(c.child)
+)
+
+// Whether content draws nothing but does something, such as a counter
+// update or metadata, between spaces.
+#let redline-unseen(c) = type(c) == content and (
+  c.func() == metadata
+    or repr(c.func()) in ("counter-update", "state-update")
+    or c.func() == [].func() and c.children.any(redline-unseen) and c.children.all(x => redline-unseen(x) or x.func() in ([ ].func(), parbreak))
+    or repr(c.func()) == "styled" and redline-unseen(c.child)
 )
 
 // Whether content shows colours of its own that a mark's colour or strike
@@ -750,7 +760,8 @@
 // spaces items and with its marker in `fill` where the list puts markers.
 #let redline-item(item, fill, body) = context {
   let numbered = item.number != none
-  let marker = if numbered { numbering(enum.numbering, item.number) } else {
+  let start = if item.at("counted", default: false) and enum.start != auto { enum.start - 1 } else { 0 }
+  let marker = if numbered { numbering(enum.numbering, start + item.number) } else {
     let m = list.marker
     if type(m) == array { m.at(calc.rem(item.depth - 1, m.len())) } else if type(m) == function { m(item.depth - 1) } else { m }
   }
@@ -776,13 +787,17 @@
   if redline-side != none { return redline-side-mark("del", body, id: id, block: block or heading != none or item != none) }
   if move != none { return redline-move-line(move, body, step) }
   let block = block or heading != none or item != none
+  // Content that draws nothing stays in the paragraph it was in, and the
+  // summary lists its code.
+  let unseen = redline-unseen(body)
+  let apart = block and not unseen
   let body = redline-neutral(body)
   // Deleted white space alone, such as a non-breaking space, is shown by a
   // space sign: struck, it would read as a hyphen.
   if type(body) == content and body.func() != raw and body.has("text") and body.text.trim() == "" {
     body = box(width: 0.45em, height: 0.25em, stroke: (x: 0.07em + st.del, bottom: 0.07em + st.del))
   }
-  if block { parbreak() }
+  if apart { parbreak() }
   let rules = redline-del-rules.with(st: st)
   // A deleted line break inside a paragraph is shown by a sign, as breaking
   // the line would move the text after it. The sign can come from a font
@@ -795,10 +810,15 @@
   // A label of its own, which is found faster than the last of many.
   let start = label("redline-del-start-" + repr(id))
   redline-meta(none, start)
-  let mark = redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, whole: true, step: step, id: id)
+  if unseen { redline-ints((id,), <redline-unseen>) }
+  // Its tags take no room either: a box or a placed element in a paragraph
+  // would add a space or break it.
+  let mark = if unseen [#redline-tag("del", -0.8em, step: step, id: id)#body#context redline-tag("end", 0.3em, width: 0pt)] else {
+    redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, whole: true, step: step, id: id)
+  }
   if item == none { mark } else { redline-item(item, st.del, mark) }
   redline-restore(start)
-  if block { parbreak() } else if gap { h(0.25em) }
+  if apart { parbreak() } else if gap and not unseen { h(0.25em) }
 }
 
 // The bars code shadows `top`, `bottom` and `left`. Bars are placed from the
@@ -1711,8 +1731,9 @@
     }
 
     // Changes marked only by a bar, such as a blank line that spaces items
-    // apart, said in words.
-    let bars = info.entries.filter(e => e.at("bars", default: ()).len() > 0)
+    // apart, said in words, and deleted code that draws nothing.
+    let unseen = query(<redline-unseen>).map(redline-value).flatten()
+    let bars = info.entries.map(e => (title: e.title, bars: e.at("bars", default: ()) + e.marks.filter(m => m.at("id", default: none) in unseen))).filter(e => e.bars.len() > 0)
     if bars.len() > 0 {
       redline-head[Marked with a bar only]
       for e in bars {

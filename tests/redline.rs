@@ -1105,6 +1105,62 @@ fn deleted_update_takes_no_room() {
 }
 
 #[test]
+fn deleted_code_that_draws_nothing_is_listed_with_its_code() {
+    let r = run("deleted-code-in-text");
+    let Some(dir) = compile("unseen-deletions", &r.files) else {
+        return;
+    };
+    let ids = query_field(&dir, "<redline-unseen>", "key");
+    let texts: Vec<&str> = ids
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|i| Some(r.changes.get(i.parse::<usize>().ok()?)?.text.trim()))
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "#total.update(x => x + 5)",
+            "#counter(\"c\").step()",
+            "#metadata(\"x\")"
+        ],
+        "{ids}"
+    );
+}
+
+#[test]
+fn old_code_whose_names_meant_something_else_there_is_marked() {
+    let cases = [
+        (
+            "#let unit = [cm]\n#{ let unit = [in]; [Width: 3 #unit] }\n",
+            "#unit",
+            "#[cm]",
+        ),
+        (
+            "#let f = [Apple]\nFirst #f.\n\n#let f = [Pear]\nLast #f.\n",
+            "First #f",
+            "First #[Pear]",
+        ),
+    ];
+    for (i, (old, from, to)) in cases.into_iter().enumerate() {
+        let r = redline_of(old, &old.replacen(from, to, 1));
+        if let Some(lost) = lost_marks(&format!("old-scope-{i}"), r) {
+            assert_eq!(lost, "[]", "{old}");
+        }
+    }
+}
+
+#[test]
+fn deleted_item_is_numbered_from_the_enumerations_start() {
+    let doc = |items: &str| {
+        format!(
+            "#set enum(numbering: \"(a)\", start: 3)\n#show regex(\"\\(\\w\\)\"): it => [#metadata(it.text)<probe>#it]\n{items}"
+        )
+    };
+    if let Some((marked, _)) = probes("enum-start", &doc("+ One\n+ Two\n+ Three\n"), &doc("+ One\n+ Three\n")) {
+        assert_eq!(marked, r#"["(c)","(d)","(d)"]"#);
+    }
+}
+
+#[test]
 fn deleted_items_take_the_room_of_items() {
     let (old, new) = (
         format!("- one\n- two\n- three{PROBE_Y}\n\n+ one\n+ two\n+ three{PROBE_Y}\n"),
@@ -1228,13 +1284,14 @@ fn deleted_code_that_would_fail_compiles_when_shown_by_name() {
 /// insertions, moves and bars as the proof shows them, and each deletion
 /// with what the tool puts around it (tags, paragraph breaks, the restoring
 /// of counters) but none of the deleted content, nor the space after it or
-/// the marker of a deleted item, which are there for that content.
+/// the marker of a deleted item, which are there for that content. Content
+/// that draws nothing is kept: it decides whether the deletion is a block.
 fn without_deletions() -> String {
     format!(
         "{PREAMBLE}
 #let redline-del-real = redline-del
 #let redline-del(body, move: none, item: none, gap: false, block: false, ..args) = if move == none {{
-  redline-del-real([], block: block or item != none, ..args)
+  redline-del-real(if redline-unseen(body) {{ body }} else {{ [] }}, block: block or item != none, ..args)
 }}
 #let redline-summary(info) = none
 "

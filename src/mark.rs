@@ -7,7 +7,7 @@ use std::ops::Range;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
 use typst_syntax::ast::AstNode;
-use typst_syntax::{RootedPath, Source, SyntaxKind as K, SyntaxNode, VirtualPath, VirtualRoot, ast, parse};
+use typst_syntax::{RootedPath, Source, Span, SyntaxKind as K, SyntaxNode, VirtualPath, VirtualRoot, ast, parse};
 
 use crate::align::{Step, align};
 use crate::blame::{Steps, blame};
@@ -107,6 +107,10 @@ struct Aligned {
     /// For each byte of the new file the step that wrote it, and for each
     /// byte of the old file the step that removed it (see [`blame`]).
     blame: Option<(Steps, Steps)>,
+    /// The old file's [`top_bindings`].
+    old_top: Vec<(usize, Option<String>)>,
+    /// The names the new file binds anywhere.
+    new_names: HashSet<String>,
 }
 
 impl Ctx {
@@ -191,6 +195,8 @@ impl Ctx {
                 });
                 let a = Aligned {
                     old_path,
+                    old_top: top_bindings(os.root()),
+                    new_names: all_bindings(ns.root(), &HashSet::new()).into_iter().flatten().collect(),
                     sources: (os, ns),
                     docs,
                     steps,
@@ -1607,8 +1613,9 @@ impl<'a> Writer<'a> {
             return None;
         }
         // The number the old version gave it: one more than the item before
-        // it in the same enumeration, from the last explicit number.
-        let mut number = 0;
+        // it in the same enumeration, from the last explicit number, else
+        // counted from the enumeration's start.
+        let (mut number, mut explicit) = (0, false);
         if kind == K::EnumItem {
             for b in old.blocks[..=o]
                 .iter()
@@ -1618,6 +1625,7 @@ impl<'a> Writer<'a> {
                 let marker = b.parts().0;
                 if let Ok(n) = marker.trim().trim_end_matches('.').parse::<usize>() {
                     number += n;
+                    explicit = true;
                     break;
                 }
                 number += 1;
@@ -1625,7 +1633,7 @@ impl<'a> Writer<'a> {
         }
         let tight = attachment(old, o, false).is_none_or(|(_, apart)| !apart);
         let number = if kind == K::EnumItem {
-            number.to_string()
+            format!("{number}, counted: {}", !explicit)
         } else {
             "none".into()
         };
@@ -1748,8 +1756,12 @@ impl<'a> Writer<'a> {
     /// Source for deleted content: labels removed or renamed, references to
     /// unknown targets turned into text. `None` if the code cannot be kept
     /// live: deleted code is not evaluated (and then neither is math using
-    /// removed definitions), or it uses deleted labels.
+    /// removed definitions), it would not mean what it meant (see
+    /// [`Self::faithful`]), or it uses deleted labels.
     fn sanitize(&self, nodes: &[SyntaxNode]) -> Option<String> {
+        if !self.faithful(nodes) {
+            return None;
+        }
         fn attached(n: &SyntaxNode, parent: K, names: &mut HashSet<String>) {
             if n.kind() == K::Label && matches!(parent, K::Named | K::Math) {
                 names.insert(label_name(n));
@@ -1767,6 +1779,45 @@ impl<'a> Writer<'a> {
             self.sanitize_into(n, K::Markup, &renamed, &mut out)?;
         }
         Some(out)
+    }
+
+    /// Whether old code, evaluated where the new file has it with the last
+    /// definitions of its old file, means what it meant: no name it uses is
+    /// bound in a block, function or loop around it, or at the top level of
+    /// its file at or after it; and a name that its file does not bind before
+    /// it, the new file binds nowhere.
+    fn faithful(&self, nodes: &[SyntaxNode]) -> bool {
+        let free = free_names(nodes);
+        if free.is_empty() {
+            return true;
+        }
+        let Some(span) = nodes.iter().map(SyntaxNode::span).find(|s| !s.is_detached()) else {
+            return false;
+        };
+        let Some(a) = self
+            .ctx
+            .aligned
+            .iter()
+            .map(|(_, a)| a)
+            .find(|a| Some(a.sources.0.id()) == span.id())
+        else {
+            return false;
+        };
+        let Some(at) = a.sources.0.find(span) else {
+            return false;
+        };
+        let place = at.offset();
+        let own: HashSet<Span> = nodes.iter().map(SyntaxNode::span).collect();
+        let scope = std::iter::successors(Some(&at), |n| n.parent())
+            .filter(|n| is_scope(n.kind()))
+            .last();
+        let local = scope.map_or(vec![], |s| all_bindings(s.get(), &own));
+        let new_names = &self.ctx.aligned[self.file.index].1.new_names;
+        let binds = |b: &Option<String>, x: &String| b.as_ref().is_none_or(|b| b == x);
+        free.iter().all(|x| {
+            let top = |after: bool| a.old_top.iter().any(|(o, b)| (*o >= place) == after && binds(b, x));
+            !local.iter().any(|b| binds(b, x)) && !top(true) && (top(false) || !new_names.contains(x))
+        })
     }
 
     fn sanitize_into(&self, n: &SyntaxNode, parent: K, renamed: &HashSet<String>, out: &mut String) -> Option<()> {
