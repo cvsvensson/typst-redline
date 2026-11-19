@@ -64,7 +64,7 @@ while read -r name dir _; do
     a="$out/old/$name/$layout" b="$out/new/$name/$layout" c="$out/changes/$name/$layout"
     changed="" new="" removed="" notes=""
     rel=${dir#"$repo"/}
-    if [ -n "$old_repo" ] && [ "$rel" != "$dir" ] && [ ! -d "$old_repo/$rel" ]; then notes="new case"; fi
+    if [ -n "$old_repo" ] && [ "$rel" != "$dir" ] && [ "${dir#"$out"/}" = "$dir" ] && [ ! -d "$old_repo/$rel" ]; then notes="new case"; fi
     if [ -e "$a/preamble.typ" ] && ! cmp -s "$a/preamble.typ" "$b/preamble.typ"; then preamble=" The preamble differs between the two builds; the sources are compared without it."; fi
     for p in $( (ls "$a" "$b" 2> /dev/null | grep '^p[0-9]*$' | tr -d p | sort -nu) || true); do
       pages=$((pages + 1))
