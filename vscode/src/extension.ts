@@ -196,12 +196,23 @@ async function reviewedCommit(doc: vscode.TextDocument) {
   }
 }
 
+// The files the document is made of, or the root folder if the CLI cannot tell.
+async function documentFiles(doc: vscode.TextDocument, root: string) {
+  try {
+    const { stdout } = await run(exe(doc), [doc.fileName, "--list-files", "--root", root], path.dirname(doc.fileName), "");
+    const files = stdout.split(/\r?\n/).filter((l) => l.trim());
+    return files.length ? files : [root];
+  } catch {
+    return [root];
+  }
+}
+
 // The CLI follows the first parent, so every commit listed is one it accepts as a base or
 // as the end of a step or of a range. A commit without a parent in the repository, the
 // first or the edge of a shallow clone, has no version before its change and is left out.
-async function commits(dir: string, root: string): Promise<{ list: Commit[]; why: string }> {
+async function commits(dir: string, files: string[]): Promise<{ list: Commit[]; why: string }> {
   try {
-    const log = await git(dir, "log", "--first-parent", "-n", "40", "--date=short", "--format=%h%x09%p%x09%ad%x09%s", "--", root);
+    const log = await git(dir, "log", "--first-parent", "-n", "40", "--date=short", "--format=%h%x09%p%x09%ad%x09%s", "--", ...files);
     const all = log
       .split(/\r?\n/)
       .filter((l) => l.trim())
@@ -210,7 +221,7 @@ async function commits(dir: string, root: string): Promise<{ list: Commit[]; why
         return { hash, parent: parents.split(" ")[0], date, subject: subject.join("\t") };
       });
     const list = all.filter((c) => c.parent);
-    const why = list.length ? "" : all.length ? "The only commit here has nothing before it to compare with." : "No commits touch this folder.";
+    const why = list.length ? "" : all.length ? "The only commit here has nothing before it to compare with." : "No commits change this document.";
     return { list, why };
   } catch (e) {
     const message = (e as Error).message;
@@ -225,17 +236,18 @@ async function commits(dir: string, root: string): Promise<{ list: Commit[]; why
 const quote = (c: Commit) => `"${c.subject}"`;
 const commitItem = (c: Commit) => ({ label: c.subject, description: `${c.date}  ${c.hash}`, c });
 
-// A version to compare with HEAD if the project has changes since it, as the run sees
-// them: in files git tracks, or in the file itself if git does not track it. The run counts
-// other untracked files as part of both versions.
-async function uncommitted(doc: vscode.TextDocument, dir: string, root: string) {
+// HEAD if the document has changes since it, as the run sees them: in its files that git
+// tracks, in the file itself if git does not track it, or unsaved. The run counts other
+// untracked files as part of both versions.
+async function changedSinceHead(doc: vscode.TextDocument, dir: string, root: string, files: string[]) {
   try {
     const [head, tracked, own] = await Promise.all([
       git(dir, "rev-parse", "--short", "HEAD"),
-      git(dir, "--no-optional-locks", "status", "--porcelain", "--untracked-files=no", "--", root),
+      git(dir, "--no-optional-locks", "status", "--porcelain", "--untracked-files=no", "--", ...files),
       git(dir, "--no-optional-locks", "status", "--porcelain", "--", doc.fileName),
     ]);
-    return tracked.trim() || own.trim() || unsaved(doc, root).length ? head.trim() : undefined;
+    const edited = unsaved(doc, root).some((d) => files.some((f) => inside(d.fileName, f)));
+    return tracked.trim() || own.trim() || edited ? head.trim() : undefined;
   } catch {
     return undefined;
   }
@@ -245,29 +257,32 @@ const meaning = "A commit stands for its own change and every change after it.";
 
 async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promise<Base | undefined> {
   const dir = path.dirname(doc.fileName);
+  const files = proj.then((p) => (p.repo ? documentFiles(doc, p.root) : []));
   const [{ root, repo, why: noRepo }, reviewed] = await Promise.all([proj, reviewedCommit(doc)]);
   const targets: BaseItem[] = [];
   let list: Commit[] = [];
   let why = noRepo;
   if (repo) {
     const [log, date, head] = await Promise.all([
-      commits(dir, root),
+      files.then((f) => commits(dir, f)),
       reviewed ? git(dir, "log", "-1", "--date=short", "--format=%ad", reviewed).catch(() => "") : "",
-      uncommitted(doc, dir, root),
+      files.then((f) => changedSinceHead(doc, dir, root, f)),
     ]);
     ({ list, why } = log);
     if (reviewed) {
       targets.push({
-        label: "$(eye) Last reviewed version",
+        label: "$(bookmark) Last reviewed version",
         description: date.trim(),
         base: { rev: "reviewed", what: "changes since the last reviewed version" },
       });
     }
     if (head) {
-      targets.push({ label: "$(edit) Uncommitted changes", base: { rev: head, what: "uncommitted changes" } });
+      targets.push({ label: "$(edit) Changes since the last commit", base: { rev: head, what: "changes since the last commit" } });
     }
-    targets.push(...list.map((c) => ({ ...commitItem(c), base: { rev: c.parent, what: `changes from ${quote(c)} on` } })));
+    targets.push(...list.map((c) => ({ ...commitItem(c), base: { rev: c.parent, what: `changes in ${quote(c)} and after` } })));
   }
+  // Why nothing is listed; not said when other entries are.
+  const shown = targets.length ? "" : why;
   targets.push(
     { label: "", kind: vscode.QuickPickItemKind.Separator },
     { label: "$(file) Another file...", description: "compare with a .typ file of your choice", base: "other" },
@@ -279,7 +294,7 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>): Promi
     const more: BaseItem = { label: "$(settings) More options...", description: `View: ${viewName(currentView())}`, base: "more" };
     const [choice] = (await pick([...targets, more], {
       title: "Typst Redline: Show changes",
-      placeholder: `${why ? `${why} ` : ""}${meaning}`,
+      placeholder: `${shown ? `${shown} ` : ""}${meaning}`,
       active: targets.find((t) => t.kind !== vscode.QuickPickItemKind.Separator),
     })) ?? [undefined];
     const base = choice?.base;
@@ -340,7 +355,7 @@ async function pickSeveral(list: Commit[]): Promise<Base | "back" | undefined> {
       continue;
     }
     const [rev, ...ends] = ticked.map((i) => i.c.parent).reverse();
-    return { rev, what: `changes from ${quote(ticked[ticked.length - 1].c)} on`, ends: ends.length ? ends : undefined };
+    return { rev, what: `changes in ${quote(ticked[ticked.length - 1].c)} and after`, ends: ends.length ? ends : undefined };
   }
 }
 

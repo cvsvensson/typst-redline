@@ -151,7 +151,7 @@ suite("Typst Redline commands", () => {
         ? void opened.push({ uri: args[0], options: args[1] })
         : original.executeCommand(command, ...args);
     cp.spawn = (cmd: string, args: string[], ...rest: any[]) => {
-      if (cmd === binary && !args.includes("--show-reviewed")) {
+      if (cmd === binary && !args.includes("--show-reviewed") && !args.includes("--list-files")) {
         runs.push(args);
       }
       return spawn(cmd, args, ...rest);
@@ -193,14 +193,8 @@ suite("Typst Redline commands", () => {
   test("lists commits that have a parent by their subject as written, then the other choices", async () => {
     picks = [];
     await show();
-    assert.deepStrictEqual(labels(lists[0]), [
-      "third – ändrad “här”",
-      "second",
-      "",
-      "$(file) Another file...",
-      "$(list-selection) Several commits...",
-      "$(settings) More options...",
-    ]);
+    const words = labels(lists[0]).map((l) => l.replace(/^\$\([^)]*\) /, ""));
+    assert.deepStrictEqual(words, ["third – ändrad “här”", "second", "", "Another file...", "Several commits...", "More options..."]);
   });
 
   test("Enter shows the newest commit's change, and the PDF opens beside the editor", async () => {
@@ -315,10 +309,9 @@ suite("Typst Redline commands", () => {
 
   test("a merge lists the commits of the first parent, which can be ticked", async () => {
     const dir = path.dirname(file);
-    git(dir, "checkout", "-q", "-b", "side", "HEAD~1");
-    fs.writeFileSync(path.join(dir, "side.txt"), "side\n");
-    git(dir, "add", ".");
-    git(dir, "commit", "-q", "-m", "side work");
+    git(dir, "checkout", "-q", "-b", "side");
+    fs.appendFileSync(file, "\nSide.\n");
+    git(dir, "commit", "-q", "-am", "side work");
     git(dir, "checkout", "-q", "-");
     git(dir, "merge", "-q", "--no-ff", "side", "-m", "merge side");
     picks = ["Several commits"];
@@ -341,7 +334,7 @@ suite("Typst Redline commands", () => {
     fs.writeFileSync(path.join(dir, "new.typ"), "New.\n");
     await open(path.join(dir, "new.typ"));
     await setView("Marked, coloured by commit", "One colour per commit");
-    picks = ["second"];
+    picks = [""];
     await show();
     assertOpenedPdf();
     assert.deepStrictEqual(infos, [
@@ -363,20 +356,27 @@ suite("Typst Redline commands", () => {
     git(empty, "commit", "-q", "-m", "a");
     await config.update("root", path.join(empty, "sub"), vscode.ConfigurationTarget.Global);
     await show();
-    assert.match(placeholders[1], /^No commits touch this folder\. /);
+    assert.match(placeholders[1], /^No commits change this document\. /);
   });
 
-  test("uncommitted changes in tracked files are listed first and shown on Enter", async () => {
-    fs.writeFileSync(path.join(path.dirname(file), "untracked.pdf"), "");
+  test("changes since the last commit are listed first only when the document's files changed", async () => {
+    const dir = path.dirname(file);
+    fs.writeFileSync(path.join(dir, "notes.txt"), "Notes.\n");
+    git(dir, "add", ".");
+    git(dir, "commit", "-q", "-m", "add notes");
+    fs.writeFileSync(path.join(dir, "notes.txt"), "Other notes.\n");
+    fs.writeFileSync(path.join(dir, "untracked.pdf"), "");
     picks = [];
     await show();
-    assert.ok(!labels(lists[0]).some((l) => l.includes("Uncommitted")));
+    // Neither the commit nor the change of a file the document does not use is listed.
+    assert.strictEqual(actives[0]?.label, "third – ändrad “här”");
+    assert.ok(!labels(lists[0]).some((l) => /add notes|last commit/.test(l)));
     fs.writeFileSync(file, "= Title\n\nUncommitted.\n");
     picks = [""];
     await show();
     assertOpenedPdf();
-    assert.strictEqual(actives[1]?.label, "$(edit) Uncommitted changes");
-    assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", hash("third.*")]);
+    assert.match(actives[1]!.label, /Changes since the last commit/);
+    assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", hash("add notes")]);
   });
 
   test("unsaved changes are saved and compared", async () => {

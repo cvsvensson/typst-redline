@@ -2294,6 +2294,37 @@ fn show_reviewed_with_mark_reviewed_is_a_usage_error() {
 }
 
 #[test]
+fn list_files_prints_the_files_the_document_is_made_of() {
+    let dir = temp_dir("list-files");
+    std::fs::create_dir(dir.join("ch")).unwrap();
+    std::fs::write(dir.join("main.typ"), "#include \"ch/one.typ\"\n#image(\"fig.png\")\n").unwrap();
+    std::fs::write(dir.join("ch/one.typ"), "One.\n").unwrap();
+    std::fs::write(dir.join("notes.typ"), "Not used.\n").unwrap();
+    let out = cli(&dir, &["main.typ", "--list-files"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let listed: Vec<PathBuf> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(PathBuf::from)
+        .collect();
+    let root = std::path::absolute(&*dir).unwrap();
+    assert_eq!(
+        listed,
+        [
+            root.join("main.typ"),
+            root.join("ch").join("one.typ"),
+            root.join("fig.png")
+        ]
+    );
+    assert_eq!(
+        cli(&dir, &["main.typ", "--list-files", "--since", "HEAD"])
+            .status
+            .code(),
+        Some(2)
+    );
+}
+
+#[test]
 fn mark_reviewed_with_steps_is_a_usage_error() {
     let dir = temp_dir("mark-reviewed-steps");
     let out = cli(&dir, &["main.typ", "--mark-reviewed", "--each-commit"]);
