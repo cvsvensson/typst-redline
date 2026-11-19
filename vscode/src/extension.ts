@@ -88,10 +88,11 @@ function inside(file: string, dir: string) {
   return !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
-function activeTypstDocument() {
-  const doc = vscode.window.activeTextEditor?.document;
+// The file right-clicked in a menu, which VS Code passes as `uri`, or else the active editor's.
+async function typstDocument(uri?: vscode.Uri) {
+  const doc = uri instanceof vscode.Uri ? await vscode.workspace.openTextDocument(uri) : vscode.window.activeTextEditor?.document;
   if (!doc || doc.uri.scheme !== "file" || !doc.fileName.endsWith(".typ")) {
-    throw new Error("Open a saved .typ file first.");
+    throw new Error("Open or right-click a saved .typ file first.");
   }
   return doc;
 }
@@ -440,8 +441,8 @@ function hasPdfEditor() {
   );
 }
 
-async function showChanges() {
-  const doc = activeTypstDocument();
+async function showChanges(clicked?: vscode.Uri) {
+  const doc = await typstDocument(clicked);
   const file = doc.fileName;
   const config = vscode.workspace.getConfiguration("typstRedline", doc.uri);
   const extra = config.get<string[]>("extraArgs", []);
@@ -518,15 +519,15 @@ async function showChanges() {
 }
 
 async function markReviewed() {
-  const doc = activeTypstDocument();
+  const doc = await typstDocument();
   const message = await runCli(doc, [doc.fileName, "--mark-reviewed"]);
   vscode.window.showInformationMessage(`Typst Redline: ${message.match(/^marked \S+ as reviewed/)?.[0] ?? message}`);
 }
 
-function command(name: string, body: () => Promise<void>) {
-  return vscode.commands.registerCommand(name, async () => {
+function command(name: string, body: (uri?: vscode.Uri) => Promise<void>) {
+  return vscode.commands.registerCommand(name, async (uri?: vscode.Uri) => {
     try {
-      await body();
+      await body(uri);
     } catch (e) {
       if (e instanceof vscode.CancellationError) {
         return;

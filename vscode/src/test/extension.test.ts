@@ -210,6 +210,20 @@ suite("Typst Redline commands", () => {
     assert.strictEqual(runs[0].length, 5);
   });
 
+  test("a file passed by a menu is compared, not the active editor", async () => {
+    const dir = path.dirname(file);
+    const other = path.join(dir, "other.typ");
+    fs.writeFileSync(other, "Old other.\n");
+    git(dir, "add", ".");
+    git(dir, "commit", "-q", "-m", "add other");
+    fs.writeFileSync(other, "New other.\n");
+    picks = ["add other"];
+    await vscode.commands.executeCommand("typstRedline.showChanges", vscode.Uri.file(other));
+    assertOpenedPdf();
+    assert.strictEqual(vscode.window.activeTextEditor?.document.fileName, file);
+    assert.deepStrictEqual(runs[0].slice(0, 3), [vscode.Uri.file(other).fsPath, "--since", hash("add other")]);
+  });
+
   test("the view entry changes the view, which later runs use", async () => {
     await setView("Side by side, coloured by commit", "4 steps");
     picks = [];
