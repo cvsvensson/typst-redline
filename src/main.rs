@@ -2,6 +2,7 @@ mod tree;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Output};
 
@@ -22,6 +23,7 @@ With one file, the old version is the file at git revision --since (default
 HEAD) and the new version is the working copy, or the file at --to. --since
 A..B is --since A --to B; --since A...B compares the merge base of A and B
 with B. With two files, each is a path or REV:PATH (:PATH for the index).
+Without a file, in a terminal, it asks for the file and the old version.
 
 --mark-reviewed records HEAD as reviewed for the file, in a local git ref
 under refs/typst-redline/reviewed/, and makes no PDF. --since reviewed then
@@ -123,9 +125,13 @@ const MAX_STEPS: usize = 6;
 enum Parsed {
     Run(Box<Args>),
     Print(String),
+    /// No file is given and the user is to choose one; true if the options
+    /// already fix the old version.
+    Pick(bool),
 }
 
-fn parse_args() -> Result<Parsed, String> {
+/// `interactive`: a missing file is chosen by the user rather than an error.
+fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
     let mut a = Args {
         files: vec![],
         since: None,
@@ -144,7 +150,7 @@ fn parse_args() -> Result<Parsed, String> {
         no_moves: false,
         typst_args: vec![],
     };
-    let mut it = std::env::args().skip(1);
+    let mut it = argv.iter().cloned();
     while let Some(arg) = it.next() {
         let mut val = || it.next().ok_or(format!("{arg} needs a value"));
         match arg.as_str() {
@@ -184,6 +190,11 @@ fn parse_args() -> Result<Parsed, String> {
             s if s.starts_with('-') => return Err(format!("unknown option {s}")),
             _ => a.files.push(arg),
         }
+    }
+    if interactive && a.files.is_empty() {
+        return Ok(Parsed::Pick(
+            a.since.is_some() || a.to.is_some() || a.mark_reviewed || a.show_reviewed || a.list_files,
+        ));
     }
     if let Some(o) = &a.output
         && o.extension().is_some_and(|e| !e.eq_ignore_ascii_case("pdf"))
@@ -1774,14 +1785,195 @@ fn version_hint(typst: &str) -> Option<String> {
         .then(|| format!("hint: typst {installed} is installed, but typst-redline parses Typst {parser}"))
 }
 
+/// Ask on `out` for a Typst file in `dir` and, unless `file_only`, the
+/// version to compare it with, reading the answers from `input`: the
+/// arguments for that comparison, with the file relative to `dir`; `None` if
+/// the user quits; an error if there is nothing to choose from.
+fn pick(
+    input: &mut impl BufRead,
+    out: &mut impl Write,
+    dir: &Path,
+    file_only: bool,
+) -> Result<Option<Vec<String>>, String> {
+    let io = |e: std::io::Error| e.to_string();
+    let mut files: Vec<String> = std::fs::read_dir(dir)
+        .map_err(io)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("typ")))
+        .filter_map(|p| Some(p.file_name()?.to_str()?.to_string()))
+        .collect();
+    files.sort();
+    if files.is_empty() {
+        return Err("No .typ file is in this folder.".into());
+    }
+    // A file that another one includes is not a document on its own, so it
+    // comes after the documents.
+    let tree = Tree::Dir(dir.to_path_buf());
+    let read = |p: &str| tree.read(p);
+    let mut included_by: Vec<Option<&str>> = vec![None; files.len()];
+    for f in &files {
+        let version = Version {
+            label: String::new(),
+            entry: f.clone(),
+            read: &read,
+        };
+        for g in project_files(&version, None) {
+            if let Some(i) = files.iter().position(|h| *h == g && h != f) {
+                included_by[i].get_or_insert(f);
+            }
+        }
+    }
+    let mut order: Vec<usize> = (0..files.len()).collect();
+    order.sort_by_key(|&i| included_by[i].is_some());
+    let documents = included_by.iter().filter(|b| b.is_none()).count();
+    let file = if documents == 1 {
+        let file = &files[order[0]];
+        writeln!(out, "Using {file}, the only Typst document in this folder.").map_err(io)?;
+        file.clone()
+    } else {
+        let entries: Vec<String> = order
+            .iter()
+            .map(|&i| match included_by[i] {
+                Some(by) => format!("{}  (included by {by})", files[i]),
+                None => files[i].clone(),
+            })
+            .collect();
+        match choose(input, out, true, "Typst files in this folder:", &entries).map_err(io)? {
+            Some(k) => files[order[k]].clone(),
+            None => return Ok(None),
+        }
+    };
+    if file_only {
+        return Ok(Some(vec![file]));
+    }
+    let log = [
+        "log",
+        "--first-parent",
+        "-n",
+        "15",
+        "--date=short",
+        "--format=%h  %ad  %<(60,trunc)%s",
+        "--",
+        ".",
+    ];
+    let commits = git_text(dir, &log).unwrap_or_default();
+    if commits.is_empty() {
+        return Err(match git_text(dir, &["rev-parse", "--git-dir"]) {
+            Ok(_) => "No commit of this folder to compare with.",
+            Err(_) => "This folder is not in a git repository, so there is no earlier version to compare with.",
+        }
+        .into());
+    }
+    let (marked, named) = reviewed_commits(&dir.join(&file).to_string_lossy()).unwrap_or_default();
+    let reviewed = named.or(marked).is_some();
+    let mut entries: Vec<&str> = commits.lines().map(str::trim_end).collect();
+    if reviewed {
+        entries.insert(0, "the last reviewed version");
+    }
+    let Some(k) = choose(
+        input,
+        out,
+        documents == 1,
+        &format!("Show the changes to {file} made after:"),
+        &entries,
+    )
+    .map_err(io)?
+    else {
+        return Ok(None);
+    };
+    let since = match (reviewed, k) {
+        (true, 0) => "reviewed",
+        _ => entries[k].split(' ').next().unwrap_or_default(),
+    };
+    Ok(Some(vec![file, "--since".into(), since.into()]))
+}
+
+/// Print `title` and the numbered `entries` on `out`, after how to get help
+/// and quit if this is the `first` question, and read the number of one from
+/// `input`; Enter alone takes the first. `None` if the input ends or is `q`.
+fn choose(
+    input: &mut impl BufRead,
+    out: &mut impl Write,
+    first: bool,
+    title: &str,
+    entries: &[impl AsRef<str>],
+) -> std::io::Result<Option<usize>> {
+    if first {
+        writeln!(out, "typst-redline --help lists the options; q quits.")?;
+    }
+    writeln!(out, "{title}")?;
+    for (i, e) in entries.iter().enumerate() {
+        writeln!(out, "{:>4}  {}", i + 1, e.as_ref())?;
+    }
+    loop {
+        write!(out, "Number [1]: ")?;
+        out.flush()?;
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            writeln!(out)?;
+            return Ok(None);
+        }
+        match line.trim() {
+            "" => return Ok(Some(0)),
+            "q" | "Q" => return Ok(None),
+            s => {
+                if let Ok(n @ 1..) = s.parse::<usize>()
+                    && n <= entries.len()
+                {
+                    return Ok(Some(n - 1));
+                }
+            }
+        }
+        writeln!(out, "Give a number from 1 to {}, or q to quit.", entries.len())?;
+    }
+}
+
+/// The command line `typst-redline` with `args`, quoted where a shell needs it.
+fn command_line(args: &[String]) -> String {
+    let quote = |a: &String| {
+        if a.is_empty() || a.contains(char::is_whitespace) {
+            format!("\"{a}\"")
+        } else {
+            a.clone()
+        }
+    };
+    ["typst-redline".to_string()]
+        .iter()
+        .chain(args)
+        .map(quote)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn main() -> ExitCode {
-    let args = match parse_args() {
+    let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let mut parsed = parse_args(&argv, interactive);
+    if let Ok(Parsed::Pick(file_only)) = parsed {
+        match pick(
+            &mut std::io::stdin().lock(),
+            &mut std::io::stderr(),
+            Path::new("."),
+            file_only,
+        ) {
+            Ok(Some(picked)) => {
+                argv.splice(0..0, picked);
+                eprintln!("{}", command_line(&argv));
+            }
+            // As without a file and without the questions.
+            Ok(None) => return ExitCode::from(2),
+            Err(e) => eprintln!("{e}"),
+        }
+        parsed = parse_args(&argv, false);
+    }
+    let args = match parsed {
         Ok(Parsed::Run(a)) => a,
         Ok(Parsed::Print(text)) => {
             print!("{text}");
             return ExitCode::SUCCESS;
         }
-        Err(_) if std::env::args().len() == 1 => {
+        Ok(Parsed::Pick(_)) => unreachable!(),
+        Err(_) if argv.is_empty() => {
             eprint!("{USAGE}");
             return ExitCode::from(2);
         }
@@ -1825,7 +2017,38 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{balanced_cuts, reviewed_ref};
+    use super::{balanced_cuts, pick, reviewed_ref};
+
+    #[test]
+    fn picker_yields_the_chosen_file_since_the_last_commit() {
+        let dir = std::env::temp_dir().join(format!("typst-redline-pick-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .current_dir(&dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        git(&["init", "-q"]);
+        // The included file sorts first but is listed after the documents.
+        for f in ["a-chapter.typ", "a.typ"] {
+            std::fs::write(dir.join(f), "Text.\n").unwrap();
+        }
+        std::fs::write(dir.join("b.typ"), "#include \"a-chapter.typ\"\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "first"]);
+        std::fs::write(dir.join("b.typ"), "#include \"a-chapter.typ\"\nMore.\n").unwrap();
+        git(&["commit", "-q", "-am", "second"]);
+        let head = git(&["rev-parse", "--short", "HEAD"]);
+        let picked = pick(&mut "2\n\n".as_bytes(), &mut vec![], &dir, false).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(picked.unwrap(), ["b.typ", "--since", head.as_str()]);
+    }
 
     #[test]
     fn cuts_balance_the_weight_of_the_steps() {
