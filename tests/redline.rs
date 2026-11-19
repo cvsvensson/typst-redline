@@ -1146,6 +1146,36 @@ fn tool_text_keeps_its_look_under_the_documents_text_rules() {
     assert_eq!(plain, styled);
 }
 
+#[test]
+fn change_number_on_a_page_without_margins_is_clear_of_its_bar() {
+    let doc = |w: &str| {
+        format!(
+            "#set page(width: 10cm, height: auto, margin: 0pt)\n#show line: it => context [#metadata(here().position().x.pt())<probe>#it]\n#pad(1cm)[Some {w} words.]\n"
+        )
+    };
+    let r = redline_of(&doc("old"), &doc("new"));
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let Some(page) = glyphs("zero-margin-number", &files).map(|mut p| p.remove(0)) else {
+        return;
+    };
+    let dir = compile("zero-margin-bars", &files).unwrap();
+    let bars = query(&dir, "<probe>");
+    let bar_right = bars
+        .trim_matches(|c| c == '[' || c == ']')
+        .split(',')
+        .map(|x| x.parse::<f64>().unwrap())
+        .fold(0., f64::max)
+        + 1.;
+    let number: Vec<&Glyph> = page
+        .iter()
+        .filter(|g| g.x < 28. && g.fill.as_deref() == Some("#6e6e6e"))
+        .collect();
+    assert!(
+        !number.is_empty() && number.iter().all(|g| g.x > bar_right),
+        "{bars} {number:?}"
+    );
+}
+
 /// The `<probe>` values of the marked document and of the old version.
 fn old_probes(name: &str, old: &str, new: &str) -> Option<(String, String)> {
     let r = redline_of(old, new);
