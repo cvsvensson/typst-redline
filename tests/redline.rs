@@ -3745,8 +3745,18 @@ fn summary_rows_are_the_headings_laid_out_with_the_pages_of_their_changes() {
     if let Some(rows) = section_rows("section-rows", &doc("old"), &doc("new")) {
         assert_eq!(
             rows,
-            r#"[[["Startofthedocument","2changes",[1]],["Alpha","2changes",[1,2]],["Beta","1change",[2]]]]"#
+            r#"[[["Startofthedocument","2changes",[1,2]],["Alpha","2changes",[1,2]],["Beta","1change",[2]]]]"#
         );
+    }
+}
+
+#[test]
+fn change_laid_out_several_times_lists_each_page() {
+    let doc = |w: &str| {
+        format!("#set page(height: 8cm)\n= Intro\n#for i in range(3) [\n  #pagebreak()\n  Page #i says {w}.\n]\n")
+    };
+    if let Some(rows) = section_rows("loop-pages", &doc("hello"), &doc("goodbye")) {
+        assert_eq!(rows, r#"[[["Intro","1change",[2,3,4]]]]"#);
     }
 }
 
