@@ -30,7 +30,8 @@
 //   marked, either empty if inserted or deleted, bars: array of (id, old,
 //   new, what): marks that show only a bar, said in `what`, marks: array of (id,
 //   move: number of the move if it is one, joined: true if it continues
-//   the mark before it, old, new): its marks), bib: (added, removed,
+//   the mark before it, old, new, what: for replaced code, its changed
+//   arguments as in `bars`): its marks), bib: (added, removed,
 //   changed: arrays of citation keys whose bibliography entry is new, gone
 //   or edited, files: paths of other files that the document reads and
 //   that differ, unchecked: whether files read through a computed path were
@@ -792,7 +793,7 @@
   let at = query(<redline-summary>)
   if at.len() == 0 { return }
   let v = redline-value(at.first())
-  let n = v.unmarked + query(<redline-lost>).map(redline-value).flatten().len()
+  let n = v.unmarked
   let more = if n > 0 [ · #n #if n == 1 [change is] else [changes are] listed there, not marked] else if v.notes or query(<redline-unrestored>).len() > 0 [ · with notes on what this PDF shows differently]
   set text(size: 6.5pt, lang: "en", dir: ltr, weight: "regular", style: "normal")
   set par(justify: false)
@@ -1324,6 +1325,19 @@
   query(label("redline-move-to-" + str(m.move))).len() == 0
 } else { str(m.id) not in shown })
 
+// Marks as the summary lists them: an insertion that continues a deletion
+// is one change with it, old and new.
+#let redline-joined(marks) = {
+  let out = ()
+  for m in marks {
+    let i = out.len() - 1
+    if m.at("joined", default: false) and i >= 0 and out.at(i).new == "" and "move" not in out.at(i) {
+      out.at(i).new = m.new
+    } else { out.push(m) }
+  }
+  out
+}
+
 // The number of each change of `entries` (as for `redline-summary`), by the
 // id of each of its marks and changes of code, and by "m" and the number of
 // each move: changes are numbered in the order they are laid out in, a mark
@@ -1506,15 +1520,16 @@
     let lost = info.entries.map(e => redline-lost(e.marks, shown))
     let lost-ids = lost.flatten().map(m => m.id)
     if lost-ids.len() > 0 { redline-ints(lost-ids, <redline-lost>) }
+    let lost = lost.map(redline-joined)
     let unmarked = listed + info.entries.map(e => e.code.len()).sum(default: 0)
+    let apart = unmarked + lost.flatten().len()
     let total = info.entries.map(e => e.count).sum(default: 0) + info.at("moved", default: 0) + listed
     let unchecked = bib.at("unchecked", default: false)
-    redline-meta((unmarked: unmarked, notes: redline-fallback-note != none or unchecked, empty: total == 0), <redline-summary>)
+    redline-meta((unmarked: apart, notes: redline-fallback-note != none or unchecked, empty: total == 0), <redline-summary>)
     // English, whatever language the document is in.
     set text(lang: "en", dir: ltr)
     set par(justify: false)
     block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
-    let apart = unmarked + lost-ids.len()
     if total == 0 [No changes found between the two versions.] else [#total #if total == 1 [change] else [changes]#if apart == total [, not marked on the pages but listed below] else if apart > 0 [, #apart of them not marked on the pages but listed below].]
 
     let min-level = calc.min(..info.entries.map(e => e.level), 9)

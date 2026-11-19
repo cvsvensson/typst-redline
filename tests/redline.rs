@@ -290,7 +290,8 @@ fn deleted_punctuation_stays_next_to_its_word() {
 fn paragraphs_inserted_inside_a_run_are_marked_as_blocks() {
     let out = body("inserted-paragraphs");
     assert!(
-        out.contains("#redline-ins(block: true)[A whole new paragraph.]"),
+        out.contains("#redline-ins(block: true)[A whole new paragraph.]")
+            && out.contains("#redline-ins(block: true)[And more here.]"),
         "{out}"
     );
 }
@@ -336,9 +337,14 @@ fn deleted_code_that_is_not_evaluated_is_shown_by_name() {
 }
 
 #[test]
-fn heading_with_a_new_label_is_not_listed_as_deleted() {
-    let out = body("heading-label");
-    assert!(!out.contains("deleted: true"), "{out}");
+fn renamed_heading_label_is_listed_not_marked() {
+    let r = run("heading-label");
+    let changes: Vec<_> = r
+        .changes
+        .iter()
+        .map(|c| (c.kind, c.old.as_str(), c.text.as_str()))
+        .collect();
+    assert_eq!(changes, [(ChangeKind::Unmarked, "<m>", "<methods>")], "{}", r.body);
 }
 
 #[test]
@@ -442,14 +448,13 @@ fn edits_inside_moved_text_are_marked() {
 }
 
 #[test]
-fn moved_setup_code_is_listed_as_changed_code() {
+fn setup_code_moved_unchanged_is_listed_once_and_marks_nothing() {
     let r = run("moved-setup");
     assert!(
-        r.changes.iter().any(|c| c.kind == ChangeKind::Unmarked),
+        matches!(&r.changes[..], [c] if c.kind == ChangeKind::Unmarked && c.old == c.text),
         "{:?}",
         r.changes
     );
-    assert!(r.changes.iter().all(|c| c.kind != ChangeKind::Moved), "{:?}", r.changes);
 }
 
 #[test]
@@ -735,6 +740,47 @@ fn change_that_a_function_drops_is_listed() {
         .filter_map(|i| Some(r.changes.get(i.parse::<usize>().ok()?)?.text.as_str()))
         .collect();
     assert_eq!(texts, ["Gamma | 2", "Delta | 3"], "{lost}");
+}
+
+/// The ids of the marks that the compiled one-file redline `r` does not lay
+/// out; `None` without typst.
+fn lost_marks(name: &str, r: Redline) -> Option<String> {
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let dir = compile(name, &files)?;
+    Some(query_field(&dir, "<redline-lost>", "key"))
+}
+
+#[test]
+fn code_that_shows_the_same_after_a_change_is_listed_not_marked() {
+    let Some(dir) = compile("same-output", &run("inspected-arguments").files) else {
+        return;
+    };
+    assert_eq!(query_field(&dir, "<redline-lost>", "key"), r#"["0,1"]"#);
+}
+
+#[test]
+fn code_whose_styles_changed_is_marked() {
+    let doc = |c: &str| format!("#let f(c) = {{ set text(fill: c); [Word] }}\n#f({c})\n");
+    if let Some(lost) = lost_marks("styled-output", redline_of(&doc("red"), &doc("blue"))) {
+        assert_eq!(lost, "[]");
+    }
+}
+
+#[test]
+fn figure_whose_body_changed_shows_its_caption_once() {
+    let Some(dir) = compile("figure-body", &run("changed-shape").files) else {
+        return;
+    };
+    let captions = query_field(&dir, "figure", "caption");
+    assert_eq!(captions.matches("shape").count(), 1, "{captions}");
+}
+
+#[test]
+fn call_whose_changed_argument_is_not_content_is_replaced_whole() {
+    let doc = |c: &str| format!("Text.\n\n#rect(fill: rgb(\"{c}\"))[Box]\n");
+    if let Some(lost) = lost_marks("value-argument", redline_of(&doc("#ff0000"), &doc("#0000ff"))) {
+        assert_eq!(lost, "[]");
+    }
 }
 
 /// The `<probe>` values of the marked document and of the new version.
@@ -1102,6 +1148,18 @@ fn deleted_include_is_shown_struck() {
 fn renamed_included_file_gets_word_marks() {
     let r = run("include-renamed");
     assert!(r.file("b.typ").contains(WORD_CHANGE), "{:?}", r.files);
+}
+
+#[test]
+fn changed_include_path_is_listed() {
+    let r = run("include-renamed");
+    assert!(
+        r.changes
+            .iter()
+            .any(|c| c.kind == ChangeKind::Unmarked && c.old.contains("a.typ") && c.text.contains("b.typ")),
+        "{:?}",
+        r.changes
+    );
 }
 
 #[test]
@@ -1493,6 +1551,18 @@ fn replaced_word_counts_as_one_change() {
     let r = redline_of("Some old text.\n", "Some new text.\n");
     let main = &r.files.iter().find(|(p, _)| p == "main.typ").unwrap().1;
     assert!(main.contains("count: 1,"), "{main}");
+}
+
+#[test]
+fn paragraphs_replaced_at_one_place_count_as_one_change() {
+    let out = body("interleaved");
+    assert!(out.contains("count: 1,"), "{out}");
+}
+
+#[test]
+fn move_counts_once_where_it_arrives() {
+    let out = body("moved-section");
+    assert_eq!(out.matches("title: [").count(), 1, "{out}");
 }
 
 #[test]
