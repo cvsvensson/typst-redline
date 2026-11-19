@@ -1563,7 +1563,10 @@
         rows += row(e.level, text(fill: st.del, strike(e.title)), what(0, 0, k, [deleted section]), ns, redline-under-headings(e.marks).map(g => g.at).flatten())
       } else if e.target != none {
         let label = if e.new { ([new section],) } else if e.at("moved", default: false) { ([moved section],) } else { () }
-        rows += heading-row(e.level, query(e.target).first(), e.title, what(e.count, moves, k, out: out, ..label), ns)
+        // A heading that the document does not lay out, such as one in a
+        // body that a template drops, is listed by its title alone.
+        let el = query(e.target).at(0, default: none)
+        rows += if el == none { row(e.level, e.title, what(e.count, moves, k, out: out, ..label), ns, ()) } else { heading-row(e.level, el, e.title, what(e.count, moves, k, out: out, ..label), ns) }
       } else {
         // Headings that the source does not have at its top level, such as
         // those inside calls, are found where they are laid out.
