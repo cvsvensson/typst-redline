@@ -879,20 +879,26 @@
       place(redline-top-left, dx: if right-side { x + 3pt } else { edge + 2pt }, dy: y0, box(width: free, align(if right-side { start } else { end }, link-to(note))))
     }
   }
-  // The legend goes in the middle of the bottom margin below the footer,
-  // if there is room. A page number is taken to be one line high; in
+  // The legend goes at the bottom edge of the page, as the pointer line goes
+  // at the top edge, if it stays clear of the footer. The footer lies in the
+  // bottom margin below its descent, aligned in what is left; a page number
+  // is in it unless it is at the top, and is taken to be one line high. In
   // Typst 0.11 an unset footer reads as none.
   let hist = query(<redline-history>)
   let legend = if merged.len() > 0 and hist.len() > 0 { redline-legend(redline-value(hist.first()), body) }
   if legend != none {
     let margin = side(("bottom",), h)
-    let foot = if page.footer not in (none, auto) { page.footer } else if page.numbering != none and page.number-align.y == redline-bottom-left.y [0]
-    let below = if foot == none { 0pt } else {
-      absolute(page.footer-descent, margin) + measure(block(width: body, foot)).height
+    let foot = if page.footer not in (none, auto) { page.footer } else if page.numbering != none and page.number-align.y != redline-top-left.y [0]
+    let foot-end = if foot == none { 0pt } else {
+      let descent = absolute(page.footer-descent, margin)
+      let fh = measure(block(width: body, foot)).height
+      let y = if type(foot) == content and foot.func() == align { foot.alignment.y } else { none }
+      let free = margin - descent - fh
+      descent + fh + if y == redline-bottom-left.y { free } else if y == horizon { free / 2 } else { 0pt }
     }
-    let room = margin - below - measure(legend).height
-    if room >= 6pt {
-      place(redline-bottom-left, dx: left, dy: -room / 2, legend)
+    let edge = calc.max(2pt, margin / 4 - 3pt)
+    if margin - edge - measure(legend).height >= foot-end + 3pt {
+      place(redline-bottom-left, dx: left, dy: -edge, legend)
     }
   }
 }
