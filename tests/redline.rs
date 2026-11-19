@@ -1998,6 +1998,19 @@ fn side_by_side_shows_an_inserted_or_deleted_page_without_a_counterpart() {
 }
 
 #[test]
+fn side_by_side_shows_a_page_inserted_after_a_moved_one_without_a_counterpart() {
+    let c = |kind, id, page| Placed { kind, id, page };
+    let (mv, ins) = (PlacedKind::Move, PlacedKind::Ins);
+    // The old version marks the place of new page 4 on page 3, whose moved
+    // passage is on page 2 of the new version.
+    let old = [c(mv, 5, 3), c(mv, 5, 3), c(ins, 7, 3)];
+    let new = [c(mv, 5, 2), c(mv, 5, 2), c(ins, 7, 4)];
+    let (pairs, _) = pair_pages(&old, &new, (&[], &[]));
+    let pages: Vec<_> = pairs.iter().map(|p| (p.old.clone(), p.new.clone(), p.moved)).collect();
+    assert_eq!(pages, [(vec![3], vec![2], true), (vec![], vec![4], false)]);
+}
+
+#[test]
 fn side_by_side_summary_lists_bibliography_changes() {
     let side = Side {
         label: "v",
