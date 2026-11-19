@@ -1153,7 +1153,11 @@
   out
 }
 
-#let redline-head(body) = block(above: 1.5em, below: 0.75em, text(weight: "bold", body))
+// Arguments that keep a block with the next one on its page, where Typst
+// can.
+#let redline-sticky = if sys.version >= version(0, 12, 0) { (sticky: true) } else { (:) }
+
+#let redline-head(body) = block(above: 1.5em, below: 0.75em, ..redline-sticky, text(weight: "bold", body))
 
 // The changes that are not marked: `groups` is an array of (title, code:
 // array of (old, new, id)), `bib` as for `redline-summary`, `nums` the
@@ -1161,7 +1165,7 @@
 #let redline-not-marked(groups, bib, nums: none) = {
   let bib = redline-bib(bib, first: if nums != none { calc.max(0, ..nums.values()) + 1 })
   if groups.len() + bib.len() == 0 { return }
-  let group(title, body) = block(below: 0.9em, { block(below: 0.55em, emph(title)); pad(left: 1.2em, body) })
+  let group(title, body) = block(below: 0.9em, { block(below: 0.55em, ..redline-sticky, emph(title)); pad(left: 1.2em, body) })
   redline-head[Not marked in place]
   if groups.len() > 0 {
     block(below: 0.9em, text(fill: luma(110))[Changes in the source that the pages do not mark, such as a setting.])
@@ -1397,20 +1401,23 @@
   if steps { items.push(([], [colour: the #if "groups" in info.history [step] else [commit] that made the change])) }
   set text(size: 0.9em)
   set par(leading: 0.5em)
-  grid(
+  block(breakable: false, grid(
     columns: (auto, 1fr, auto, 1fr),
     column-gutter: (0.6em, 1.2em, 0.6em),
     row-gutter: 0.7em,
     ..items.map(((mark, words)) => (align(right, mark), text(fill: luma(110), words))).flatten(),
-  )
+  ))
 }
 
-// The summary's page: one page, as wide as the document's but wide enough
-// for lines of 25 em, as high as the document's or as the summary needs,
-// in the document's font at 9 to 12 pt, with margins in the proportion of
-// Typst's default and none of the document's page decoration. Typst 0.11
-// adds a blank page after a page set rule in a context; there the summary
-// takes the document's pages.
+// The summary's pages: as wide as the document's but wide enough for lines
+// of 25 em, in the document's font at 9 to 12 pt, with margins in the
+// proportion of Typst's default and none of the document's page decoration.
+// A sheet is as high as the document's page or a portrait sheet of that
+// width, whichever is higher. The summary takes one page, a sheet high or
+// as high as it needs up to one and a half sheets, rather than leave a few
+// lines on a page of their own; a longer one continues on pages a sheet
+// high. Typst 0.11 adds a blank page after a page set rule
+// in a context; there the summary takes the document's pages.
 #let redline-summary-page(body) = if sys.version < version(0, 12, 0) {
   set page(header: none, footer: none, numbering: none)
   body
@@ -1420,10 +1427,13 @@
     let (w, h) = if page.flipped { (page.height, page.width) } else { (page.width, page.height) }
     let w = calc.max(if w == auto { 21cm } else { w }, 25 * size * 21 / 16)
     let margin = 2.5 / 21 * w
-    set page(width: w, height: auto, margin: margin, flipped: false, columns: 1, fill: none, header: none, footer: none, numbering: none, foreground: none, background: none)
+    let h = if h == auto { 0pt } else { h }
+    let sheet = calc.max(h, calc.sqrt(2) * w)
+    let fits = measure(block(width: w - 2 * margin, text(size: size, fill: black, body))).height <= 1.5 * sheet - 2 * margin
+    set page(width: w, height: if fits { auto } else { sheet }, margin: margin, flipped: false, columns: 1, fill: none, header: none, footer: none, numbering: none, foreground: none, background: none)
     set text(size: size, fill: black)
     // The empty column keeps the page as high as the document's.
-    grid(columns: (0pt, 1fr), block(height: if h == auto { 0pt } else { h - 2 * margin }), body)
+    if fits { grid(columns: (0pt, 1fr), block(height: calc.max(0pt, h - 2 * margin)), body) } else { body }
   }
 }
 
@@ -1513,7 +1523,7 @@
           columns: (section, auto, calc.max(least(2), calc.min(widest(2), room - section)), auto),
           column-gutter: gutter,
           row-gutter: 0.6em,
-          ..head,
+          grid.header(..head),
           ..rows,
         )
       })
@@ -1525,7 +1535,7 @@
     if bars.len() > 0 {
       redline-head[Marked with a bar only]
       for e in bars {
-        block(below: 0.9em, { block(below: 0.55em, emph(e.title)); pad(left: 1.2em, e.bars.map(c => redline-code(c, n: nums.at(str(c.id), default: none))).join(v(0.3em))) })
+        block(below: 0.9em, { block(below: 0.55em, ..redline-sticky, emph(e.title)); pad(left: 1.2em, e.bars.map(c => redline-code(c, n: nums.at(str(c.id), default: none))).join(v(0.3em))) })
       }
     }
 
