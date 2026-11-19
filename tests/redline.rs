@@ -2224,6 +2224,41 @@ fn side_by_side_shows_changed_pages() {
 }
 
 #[test]
+fn side_by_side_shows_a_document_whose_layout_does_not_settle() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-unsettled");
+    let doc = |word: &str| {
+        format!(
+            "#context for i in range(calc.rem(counter(page).final().first(), 3) + 1) {{ pagebreak() }}\nThe {word} word.\n"
+        )
+    };
+    std::fs::write(dir.join("old.typ"), doc("old")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc("new")).unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn side_by_side_takes_a_heading_without_text() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-empty-heading");
+    std::fs::write(dir.join("old.typ"), "#heading[#[]]\nThe old word.\n").unwrap();
+    std::fs::write(dir.join("new.typ"), "#heading[#[]]\nThe new word.\n").unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-o", "out.pdf", "--layout", "side-by-side"],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
 fn side_by_side_shows_two_pages_with_the_same_edit() {
     if !typst_available() || typst_before_0_14() {
         return;
