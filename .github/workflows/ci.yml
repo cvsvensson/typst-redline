@@ -70,10 +70,12 @@ jobs:
           command -v pdftoppm && command -v compare || {
             sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends poppler-utils imagemagick
           }
-      # Both builds share target/, so the base build only recompiles the crate itself.
+      # Both builds share the dependencies in target/. Cargo takes the two crates for one, as they
+      # have the same name and version, so the base crate is cleaned before the head build.
       - run: |
           cargo build --release --locked --manifest-path base/Cargo.toml --target-dir target
           mv target/release/typst-redline "$RUNNER_TEMP/typst-redline-base"
+          cargo clean --release --package typst-redline --manifest-path base/Cargo.toml --target-dir target
           cargo build --release --locked
       - run: tests/output-diff.sh "$RUNNER_TEMP/typst-redline-base" target/release/typst-redline "$RUNNER_TEMP/output-diff"
       - uses: actions/upload-artifact@v7
