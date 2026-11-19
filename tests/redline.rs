@@ -242,7 +242,24 @@ fn spaces_belong_to_the_new_version() {
 #[test]
 fn unspaced_scripts_are_compared_by_character() {
     let out = body("cjk");
-    assert!(out.contains("日本語#redline-ins()[の];テキスト"), "{out}");
+    assert!(out.contains("日本語#redline-ins(bare: \"both\")[の];テキスト"), "{out}");
+}
+
+#[test]
+fn marks_hold_whole_characters() {
+    let out = body("whole-characters");
+    for (old, new) in [
+        ("👍🏽", "👍🏻"),
+        ("👨\u{200d}👩\u{200d}👧", "👨\u{200d}👩\u{200d}👦"),
+        ("Cafe\u{301}", "Cafe\u{300}"),
+        ("পড়ে", "পড়ো"),
+        ("தமிழில்", "தமிழின்"),
+    ] {
+        assert!(
+            out.contains(&format!("#redline-del(gap: true)[{old}];#redline-ins()[{new}];")),
+            "{out}"
+        );
+    }
 }
 
 #[test]
@@ -1034,6 +1051,27 @@ fn bars_of_right_to_left_text_are_on_the_page() {
             !xs.is_empty() && xs.iter().all(|x| (0.0..=283.5).contains(x)),
             "{marked}"
         );
+    }
+}
+
+#[test]
+fn bar_of_chinese_text_starts_on_the_line_its_change_starts() {
+    let doc = |w: &str| {
+        format!(
+            "#set text(size: 10pt)\n#show line: it => context [#metadata(here().position().y.pt())<probe>#it]\n#show \"{w}\": it => context [#metadata(-here().position().y.pt())<probe>#it]\n第一行 \\\n{w}的功能。\n"
+        )
+    };
+    if let Some((marked, _)) = probes("cjk-bar-line", &doc("它"), &doc("这")) {
+        // The tops of the bars, and the baselines of the changed text as
+        // negative numbers.
+        let ys: Vec<f64> = marked
+            .trim_matches(|c| c == '[' || c == ']')
+            .split(',')
+            .map(|y| y.parse().unwrap())
+            .collect();
+        let text = ys.iter().filter(|y| **y < 0.0).map(|y| -y).fold(f64::MAX, f64::min);
+        let bars: Vec<&f64> = ys.iter().filter(|y| **y > 0.0).collect();
+        assert!(!bars.is_empty() && bars.iter().all(|&&y| y > text - 12.0), "{marked}");
     }
 }
 

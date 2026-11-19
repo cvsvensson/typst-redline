@@ -462,6 +462,48 @@ struct Writer<'a> {
     /// The old value of the argument that [`Self::marked_arg`] took in
     /// that code.
     hoisted: Option<String>,
+    /// The edges of the change being written that touch CJK text.
+    bare: Bare,
+}
+
+/// The edges of a change at which a CJK character meets the text on the
+/// other side: there, Typst spaces or compresses the two, which the inline
+/// marks leave to it with tags that take no part in the layout. A deletion
+/// sits at the start of the change if an insertion follows, else at both
+/// edges, once its text is gone.
+#[derive(Clone, Copy, Default)]
+struct Bare {
+    start: bool,
+    end: bool,
+    replaced: bool,
+}
+
+impl Bare {
+    fn of(old: &[Tok], new: &[Tok], before: Option<&Tok>, after: Option<&Tok>) -> Self {
+        let starts = |t: Option<&Tok>| t.is_some_and(|t| t.text.starts_with(is_cjk));
+        let ends = |t: Option<&Tok>| t.is_some_and(|t| t.text.ends_with(is_cjk));
+        Bare {
+            start: ends(before) || starts(old.first()) || starts(new.first()),
+            end: starts(after) || ends(old.last()) || ends(new.last()),
+            replaced: !new.is_empty(),
+        }
+    }
+
+    /// The edges of a mark of `kind` with bare tags, as the preamble names
+    /// them.
+    fn edges(self, kind: ChangeKind) -> Option<&'static str> {
+        let (start, end) = match kind {
+            ChangeKind::Del if self.replaced => (self.start, self.start),
+            ChangeKind::Del => (self.start || self.end, self.start || self.end),
+            _ => (self.start, self.end),
+        };
+        match (start, end) {
+            (true, true) => Some("both"),
+            (true, false) => Some("start"),
+            (false, true) => Some("end"),
+            (false, false) => None,
+        }
+    }
 }
 
 /// A run of tokens that is the same in both versions or changed.
@@ -623,6 +665,7 @@ impl<'a> Writer<'a> {
             arrived: HashMap::new(),
             content_code: false,
             hoisted: None,
+            bare: Bare::default(),
         }
     }
 
@@ -739,7 +782,13 @@ impl<'a> Writer<'a> {
     /// The call that marks `body` as change `id`, without `#`.
     fn call(&self, kind: ChangeKind, args: &str, body: &str, step: Option<u8>, id: usize) -> String {
         let step = step.map_or(String::new(), |s| format!("step: {s}, "));
-        let args = match args {
+        let inline = !["block:", "heading:", "item:"].iter().any(|k| args.contains(k));
+        let args = match (self.bare.edges(kind).filter(|_| inline), args) {
+            (Some(e), "") => format!("bare: \"{e}\""),
+            (Some(e), _) => format!("{args}, bare: \"{e}\""),
+            (None, _) => args.to_string(),
+        };
+        let args = match args.as_str() {
             "" => format!("{step}id: {id}"),
             _ => format!("{args}, {step}id: {id}"),
         };
@@ -1912,18 +1961,31 @@ impl<'a> Writer<'a> {
             }
         }
         cover_shown_strings(&mut merged, new, &self.ctx.shown_strings);
+        let outer = self.bare;
+        let around = |r: &Range<usize>| (r.start.checked_sub(1).map(|i| &new[i]), new.get(r.end));
         for s in merged {
             if !s.equal {
+                let (before, after) = around(&s.new);
+                self.bare = Bare::of(&old[s.old.clone()], &new[s.new.clone()], before, after);
                 let last = s.new.end == new.len();
                 self.change(&old[s.old], &new[s.new], last);
+                self.bare = outer;
                 continue;
             }
-            for (ot, nt) in old[s.old].iter().zip(&new[s.new]) {
+            for (j, (ot, nt)) in s.new.clone().zip(old[s.old].iter().zip(&new[s.new.clone()])) {
                 if ot.text == nt.text || nt.kind != TK::Atom {
                     self.out.push_str(&nt.text);
-                } else if !self.diff_code(ot, nt, false) {
-                    self.change(std::slice::from_ref(ot), std::slice::from_ref(nt), false);
+                    continue;
                 }
+                let ((before, after), (o, n)) = (
+                    around(&(j..j + 1)),
+                    (std::slice::from_ref(ot), std::slice::from_ref(nt)),
+                );
+                self.bare = Bare::of(o, n, before, after);
+                if !self.diff_code(ot, nt, false) {
+                    self.change(o, n, false);
+                }
+                self.bare = outer;
             }
         }
     }

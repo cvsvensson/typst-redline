@@ -243,11 +243,11 @@
   }))
 })))
 
-// Content with the end tag appended inside its set rules, which can set the
+// Content with end tag `t` appended inside its set rules, which can set the
 // page: after them, the tag would get a page of its own.
-#let redline-end-in(c) = if repr(c.func()) == "styled" {
-  (c.func())(redline-end-in(c.child), c.styles)
-} else { c + redline-tag("end", 0.3em) }
+#let redline-end-in(c, t) = if repr(c.func()) == "styled" {
+  (c.func())(redline-end-in(c.child, t), c.styles)
+} else { c + t }
 
 // Whether content takes no room in the flow, such as placed content or a
 // counter update.
@@ -316,8 +316,15 @@
 // (see `redline-frame`). A box in the text that shows no text is a drawing
 // too, framed at its own size. A figure's caption is styled all the same.
 // The tags around content that takes no room are placed, so that they do
-// not form a line.
-#let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, whole: false, step: none, id: none) = {
+// not form a line. The tags at the `bare` edges of an inline mark, "start",
+// "end" or "both", take no part in the layout of the text, which Typst
+// spaces or compresses against the characters on the other side: a bare
+// start tag can fall on the line before, and a bare end tag does not know
+// its container.
+#let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, whole: false, bare: none, step: none, id: none) = {
+  let bare-start = not block and bare in ("start", "both")
+  let bare-end = not block and bare in ("end", "both")
+  let end-tag = if bare-end { context redline-tag("end", 0.3em, width: 0pt) } else { redline-tag("end", 0.3em) }
   let (lead, ch, trail) = redline-parts(body)
   let n = ch.len()
   let framed = ch.map(c => redline-framed(c, block and n == 1))
@@ -345,32 +352,49 @@
       } else { plain(f) })
     } else {
       // A tag in a box, joined to the text after it, starts the line the
-      // text starts, on its baseline; a tag alone stays on the line before a
-      // break. Before a block, a box would add a line.
+      // text starts, on its baseline; a tag alone, as a bare one, stays on
+      // the line before a break. Before a block, a box would add a line. A
+      // bare tag after a first Han or kana character, which does not shape
+      // with the next, is on its line. The joiner is shaped apart from the
+      // text, whose first character it would otherwise hide from Typst's
+      // spacing of CJK text.
       let between = block and not redline-inline(c)
-      if i == 0 { run.push(if between { redline-tag(kind, start-dy, step: step, id: id) } else [#box(redline-tag(kind, -0.8em, step: step, id: id))\u{2060}]) }
+      let c = if i == 0 and bare-start and c.func() == text and c.text.match(regex("^[\p{Han}\p{Hiragana}\p{Katakana}]")) != none {
+        let cl = c.text.clusters()
+        run += (text(cl.first()), redline-tag(kind, -0.8em, step: step, id: id))
+        text(cl.slice(1).join())
+      } else {
+        if i == 0 and (between or bare-start) { run.push(redline-tag(kind, if between { start-dy } else { -0.8em }, step: step, id: id)) }
+        if i == 0 and not (between or bare-start) { out.push[#box(redline-tag(kind, -0.8em, step: step, id: id))\u{2060}] }
+        c
+      }
       let c = if c.func() == box and c.at("body", default: none) != none and not redline-textual(c) {
         box(stroke: stroke, outset: redline-style.outset.top, {
           c
           if kind == "del" { context { let s = measure(c); redline-cross(stroke, s.width, s.height) } }
         })
       } else { c }
-      run.push(if i == n - 1 and styled { redline-end-in(c) } else { c })
+      run.push(if i == n - 1 and styled { redline-end-in(c, end-tag) } else { c })
       if i == 0 and between and n > 1 and not roomless and id != none { run.push(redline-first(c, id)) }
     }
   }
   if run.len() > 0 { out.push(style(run.join())) }
+  let marked = {
+    if n == 0 { redline-tag(kind, start-dy, step: step, id: id) }
+    out.join()
+    // Content computed at layout can set the page, and anything visible after
+    // it would get a page of its own; such a tag has no width of its container.
+    if n == 1 and block and not framed.last() and repr(ch.last().func()) in ("context", "layout") {
+      context redline-tag("end", 0.3em, width: 0pt)
+    } else if roomless or block and ch.last().func() in (list.item, enum.item, terms.item) {
+      // After a list, a tag in the text would start a line of its own.
+      place(layout(size => redline-tag("end", -0.2em, width: size.width)))
+    } else if n == 0 or not (framed.last() or styled) { end-tag }
+  }
   lead
-  if n == 0 { redline-tag(kind, start-dy, step: step, id: id) }
-  out.join()
-  // Content computed at layout can set the page, and anything visible after
-  // it would get a page of its own; such a tag has no width of its container.
-  if n == 1 and block and not framed.last() and repr(ch.last().func()) in ("context", "layout") {
-    context redline-tag("end", 0.3em, width: 0pt)
-  } else if roomless or block and ch.last().func() in (list.item, enum.item, terms.item) {
-    // After a list, a tag in the text would start a line of its own.
-    place(layout(size => redline-tag("end", -0.2em, width: size.width)))
-  } else if n == 0 or not (framed.last() or styled) { redline-tag("end", 0.3em) }
+  // Tags alone at the end of a paragraph are laid out after it, unless an
+  // element that the paragraph opens closes after them.
+  if bare-end [#marked<redline-bare>] else { marked }
   trail
 }
 
@@ -738,7 +762,7 @@
   parbreak()
 }
 
-#let redline-ins(body, block: false, step: none, move: none, id: none) = {
+#let redline-ins(body, block: false, bare: none, step: none, move: none, id: none) = {
   if move != none {
     let end = move.at("end", default: false)
     // Both ends, so that the pages a long move spans are shown.
@@ -749,10 +773,10 @@
   if redline-side != none { redline-side-mark("ins", body, id: id) }
   if redline-side == "old" {
     let look = redline-del-look.with(st: st)
-    redline-mark("del", redline-footnotes(body, look), block, look, st.del-frame, frame-style: look, step: step, id: id)
+    redline-mark("del", redline-footnotes(body, look), block, look, st.del-frame, frame-style: look, bare: bare, step: step, id: id)
   } else {
     let body = redline-footnotes(body, b => redline-ins-rules(b, false, st: st))
-    redline-mark("ins", body, block, b => redline-ins-rules(b, block, st: st), st.ins-frame, frame-style: text.with(fill: st.ins), step: step, id: id)
+    redline-mark("ins", body, block, b => redline-ins-rules(b, block, st: st), st.ins-frame, frame-style: text.with(fill: st.ins), bare: bare, step: step, id: id)
   }
 }
 
@@ -779,7 +803,7 @@
 
 // On a side of the side-by-side layout, a deletion is content the version
 // does not have: the page next to it shows it.
-#let redline-del(body, block: false, heading: none, item: none, gap: false, step: none, move: none, id: none) = {
+#let redline-del(body, block: false, heading: none, item: none, gap: false, bare: none, step: none, move: none, id: none) = {
   let st = redline-step-style(step)
   // The binary pairs the pages of a move's two places by the marks around
   // its content, which each side has.
@@ -815,7 +839,7 @@
   // Its tags take no room either: a box or a placed element in a paragraph
   // would add a space or break it.
   let mark = if unseen [#redline-tag("del", -0.8em, step: step, id: id)#body#context redline-tag("end", 0.3em, width: 0pt)] else {
-    redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, whole: true, step: step, id: id)
+    redline-mark("del", body, block, look, st.del-frame, frame-style: look, plain: redline-del-unlisted, whole: true, bare: bare, step: step, id: id)
   }
   if item == none { mark } else { redline-item(item, st.del, mark) }
   redline-restore(start)

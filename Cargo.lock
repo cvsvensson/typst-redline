@@ -356,6 +356,7 @@ version = "0.1.0"
 dependencies = [
  "similar",
  "typst-syntax",
+ "unicode-segmentation",
 ]
 
 [[package]]

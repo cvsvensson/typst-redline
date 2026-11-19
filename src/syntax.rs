@@ -5,6 +5,7 @@ use std::collections::HashSet;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
 use typst_syntax::{Span, SyntaxKind as K, SyntaxNode, ast};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum Kind {
@@ -349,28 +350,39 @@ fn is_refs(t: &Tok) -> bool {
     t.kind == TK::Atom && t.nodes.iter().all(|n| matches!(n.kind(), K::Ref | K::Space))
 }
 
+/// Chinese and Japanese characters and punctuation, which Typst spaces or
+/// compresses against the characters next to them.
+pub fn is_cjk(c: char) -> bool {
+    matches!(c as u32, 0x2E80..=0x9FFF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x3FFFF)
+}
+
 /// Split text into runs of word characters, runs of whitespace, and single
-/// other characters.
+/// other characters. The unit is the grapheme cluster: a mark between a
+/// letter and its combining marks would draw them apart.
 pub fn split_words(s: &str) -> Vec<&str> {
     #[derive(PartialEq, Clone, Copy)]
     enum Class {
         Word,
         Space,
         Single,
+        // Runs of CJK punctuation, which Typst compresses as a whole.
+        Punct,
     }
     // Scripts written without spaces between words: each character is a word.
     let unspaced = |c: char| {
         matches!(c as u32, 0x0E00..=0x0EFF | 0x1000..=0x109F | 0x1780..=0x17FF | 0x2E80..=0x9FFF
             | 0xF900..=0xFAFF | 0xFF66..=0xFF9F | 0x20000..=0x3FFFF)
     };
-    let chars: Vec<(usize, char)> = s.char_indices().collect();
+    let clusters: Vec<(usize, &str)> = s.grapheme_indices(true).collect();
+    let first = |j: usize| clusters[j].1.chars().next().unwrap();
     let mut out = vec![];
     let mut start = 0;
     let mut prev = None;
-    for (j, &(i, c)) in chars.iter().enumerate() {
+    for (j, &(i, _)) in clusters.iter().enumerate() {
+        let c = first(j);
         // Numbers with a decimal point and hyphenated words are one word.
         let near = |f: &dyn Fn(char) -> bool| {
-            j.checked_sub(1).is_some_and(|p| f(chars[p].1)) && chars.get(j + 1).is_some_and(|n| f(n.1))
+            j.checked_sub(1).is_some_and(|p| f(first(p))) && j + 1 < clusters.len() && f(first(j + 1))
         };
         let joins = match c {
             '.' | ',' => near(&|c| c.is_ascii_digit()),
@@ -379,6 +391,8 @@ pub fn split_words(s: &str) -> Vec<&str> {
         };
         let class = if joins {
             Class::Word
+        } else if matches!(c as u32, 0x3001..=0x303F | 0x30FB | 0xFF00..=0xFF65) && !c.is_alphanumeric() {
+            Class::Punct
         } else if unspaced(c) {
             Class::Single
         } else if c.is_alphanumeric() {
