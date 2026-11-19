@@ -18,16 +18,20 @@
 //   its pages (`body => body` for nothing).
 // - redline-summary(info): the summary, after the document; `info` is (old, new: version labels,
 //   ins, del: numbers of changes, moved: number of moves, entries: array of
-//   (file, level, target: label or none, title, count: changed passages,
+//   (file, level, target: label or none, title, count: changes, a deletion
+//   and the insertion that replaces it counting as one,
 //   moves: moves into or out of the section other than its own, before:
 //   the changes before the first heading at the top level, deleted,
 //   new, moved, code: array of (old, new): changed code that is not
 //   marked, either empty if inserted or deleted, marks: array of (id,
-//   move: number of the move if it is one, old, new): its marks), bib: (added,
-//   removed, changed: arrays of citation keys whose bibliography entry is
-//   new, gone or edited, files: paths of other files that the document
-//   reads and that differ, unchecked: whether files read through a computed
-//   path were not checked), and if the versions are git revisions,
+//   move: number of the move if it is one, joined: true if it continues
+//   the mark before it, old, new): its marks), bib: (added, removed,
+//   changed: arrays of citation keys whose bibliography entry is new, gone
+//   or edited, files: paths of other files that the document reads and
+//   that differ, unchecked: whether files read through a computed path were
+//   not checked, names: the entries of those keys by authors and year, such
+//   as "Aguado et al. 2017", by key, where found), and if the versions are
+//   git revisions,
 //   history: (commits: array of (hash, date, subject), oldest first,
 //   earlier: number of earlier commits left out, uncommitted: whether the
 //   new version has uncommitted changes, steps: whether marks are coloured
@@ -142,12 +146,12 @@
 // The note on states that deleted content updates covers "states".
 #let redline-fallback-note = {
   let says = (
-    frames: [Changed content that the document computes during layout, such as many drawings, has no frame; its bar in the margin still marks it.],
+    frames: [Changed drawings, and other content that the document lays out by code, have no frame; the bar in the margin still marks them.],
     names: [Deleted code is shown by its name instead of as it looked.],
-    whole: [Code with changes inside its content arguments is marked whole: the old call deleted, the new one inserted.],
+    whole: [A changed call is marked whole, the old call deleted and the new one inserted, even where only text inside it changed.],
   )
   let lines = redline-fallback.filter(f => f in says).map(f => says.at(f))
-  if lines.len() > 0 [The document did not compile with every change marked in full, so this PDF marks some changes more coarsely. #lines.join[ ]]
+  if lines.len() > 0 [Some changes are marked more coarsely, because the document did not compile with every change marked in full. #lines.join[ ]]
 }
 
 // Whether a part of a mark is laid out as a block of its own and gets a
@@ -495,8 +499,46 @@
   at
 }
 
-// The page number printed on the page of `loc`, or its page in this PDF.
-#let redline-page-of(loc) = if loc.page-numbering() == none { loc.page() } else { counter(page).at(loc).first() }
+// The counting symbols of page numbering patterns that Typst 0.11 knows.
+#let redline-counting = ("1", "a", "A", "i", "I", "α", "Α", "*", "一", "壹", "あ", "い", "ア", "イ", "א", "가", "ㄱ")
+
+// The number printed on the page of `loc`, in the style of the first
+// counting symbol of its numbering; none if the page has no number.
+#let redline-printed(loc) = {
+  let pattern = loc.page-numbering()
+  if pattern == none { return none }
+  let n = counter(page).at(loc).first()
+  let symbol = if type(pattern) == str { pattern.clusters().find(c => c in redline-counting) }
+  if symbol == none { str(n) } else { numbering(symbol, n) }
+}
+
+// The pages of the locations `locs` as a reader finds them, consecutive
+// pages joined: by the number printed on them, with the page of this PDF
+// where that differs, such as "p. 7 (PDF page 8)"; a page without a number
+// by its page of this PDF, called so if other pages have numbers. Without
+// `prefix`, "p." and "pp." are left out.
+#let redline-page-names(locs, prefix: true) = {
+  let numbered = query(<redline-page>).any(m => m.location().page-numbering() != none)
+  let firsts = (:)
+  for l in locs {
+    if str(l.page()) not in firsts { firsts.insert(str(l.page()), l) }
+  }
+  let runs = ()
+  for l in firsts.values().sorted(key: l => l.page()) {
+    if runs.len() > 0 and runs.last().last().page() + 1 == l.page() { runs.last().push(l) } else { runs.push((l,)) }
+  }
+  runs.map(run => {
+    let (a, b) = (run.first(), run.last())
+    let one = run.len() == 1
+    let (pa, pb) = (redline-printed(a), redline-printed(b))
+    let span(x, y) = if one [#x] else [#x–#y]
+    let pdf = [PDF #if one [page] else [pages] #span(a.page(), b.page())]
+    let p = if prefix { if one [p. ] else [pp. ] }
+    if pa == none or pb == none {
+      if numbered or pa != pb { pdf } else [#p#span(a.page(), b.page())]
+    } else if pa == str(a.page()) and pb == str(b.page()) [#p#span(pa, pb)] else [#p#span(pa, pb) (#pdf)]
+  }).join[, ]
+}
 
 // Content as pieces that can be cut between: words of text, other elements
 // whole.
@@ -522,7 +564,7 @@
       let to = redline-move-start(m.id)
       let head = if to == none [Moved:] else {
         let down = m.at("down", default: true)
-        let where = if to.page() != here().page() [to p. #redline-page-of(to)] else if down [below] else [above]
+        let where = if to.page() != here().page() [to #redline-page-names((to,))] else if down [below] else [above]
         [#text(fill: redline-step-style(step).del, if down { sym.arrow.b } else { sym.arrow.t }) Moved #where:]
       }
       let line(k) = {
@@ -630,7 +672,8 @@
 }
 
 // A line at the top edge of the first page, above any header, that links
-// to the summary and says how many changes it lists that are not marked.
+// to the summary and says how many changes it lists that are not marked,
+// or that there are none.
 #let redline-pointer(x, margin, width) = {
   let at = query(<redline-summary>)
   if at.len() == 0 { return }
@@ -639,8 +682,9 @@
   let more = if n > 0 [ · #n #if n == 1 [change is] else [changes are] listed there, not marked] else if v.notes or query(<redline-unrestored>).len() > 0 [ · with notes on what this PDF shows differently]
   set text(size: 6.5pt, lang: "en", dir: ltr, weight: "regular", style: "normal")
   set par(justify: false)
+  let lead = if v.at("empty", default: false) [typst-redline found no changes] else [Changes marked by typst-redline]
   // The colours inside the link, which the document can style.
-  let line = [#text(fill: luma(110))[Changes marked by typst-redline · summary on page #at.first().location().page()]#text(fill: redline-style.del, more)]
+  let line = [#text(fill: luma(110))[#lead · summary on #redline-page-names((at.first().location(),))]#text(fill: redline-style.del, more)]
   place(top + left, dx: x, dy: calc.max(2pt, margin / 4 - 3pt), block(width: width, link(at.first().location(), line)))
 }
 
@@ -804,9 +848,9 @@
     if s.page != pg { continue }
     // Notes that run up along the bracket have no arrow, which would turn.
     let (notes, along) = if other != none and other.location().page() != pg {
-      let n = redline-page-of(other.location())
+      let n = redline-page-names((other.location(),))
       let arrow = if other.location().page() < pg { sym.arrow.t } else { sym.arrow.b }
-      (([moved from p. #n #arrow], [moved#linebreak()from p. #n #arrow], [moved]), ([moved from p. #n], [moved]))
+      (([moved from #n #arrow], [moved#linebreak()from #n #arrow], [moved]), ([moved from #n], [moved]))
     } else { (([moved],), ([moved],)) }
     let free = if right-side { edge - 2pt - x - 3pt } else { x - 3pt - edge - 2pt }
     let sst = redline-step-style(redline-value(a).step)
@@ -873,16 +917,81 @@
   body
 }
 
-// The bibliography entries and other files that changed, as sentences, or
-// none.
+// Changed code that is not marked, (old, new, what): what changed in words,
+// then, unless the words say all of it, the old code in the colour of
+// deletions and the new in that of insertions, or the code once if only a
+// file it reads changed. Text, not raw, so that the document's show rules on
+// raw leave it alone.
+#let redline-code(c) = {
+  let st = redline-style
+  let mono = text.with(font: "DejaVu Sans Mono", hyphenate: false)
+  let value(v, fill, f) = if "text" in v {
+    ["] + v.text.map(((t, changed)) => if changed { text(fill: fill, f(t)) } else { t }).join() + ["]
+  } else { mono(size: 0.9em, fill: fill, v.code) }
+  let words = c.at("what", default: ()).map(w => if "file" in w [#mono(size: 0.9em, w.file) changed] else {
+    let name = mono(size: 0.9em, w.name)
+    if w.old == none [#name: #value(w.new, st.ins, x => x) added] else if w.new == none [#name: #value(w.old, st.del, x => x) removed] else [#name: #value(w.old, st.del, strike) → #value(w.new, st.ins, underline)]
+  })
+  if words.len() > 0 { block(above: 0.6em, below: 0.4em, words.join[; ]) }
+  // Values too long for a line are elided, and a change in what is called
+  // has no argument to name.
+  let what = c.at("what", default: ())
+  let elided(v) = v != none and v.at("code", default: none) == "…"
+  let args = what.filter(w => "name" in w)
+  if what.len() > 0 and not args.any(w => elided(w.old) or elided(w.new)) and (c.old == c.new or args.len() > 0) { return }
+  let rows = if c.old == c.new { ((c.new, "", none),) } else { ((c.old, "−", st.del), (c.new, "+", st.ins)).filter(r => r.first() != "") }
+  let paint(fill, t) = if fill == none { t } else { text(fill: fill, t) }
+  set text(font: "DejaVu Sans Mono", size: 0.8em, hyphenate: false)
+  set par(justify: false)
+  grid(columns: (auto, 1fr), column-gutter: 0.5em, row-gutter: 0.5em, ..rows.map(((code, sign, fill)) => (paint(fill, sign), paint(fill, code))).flatten())
+}
+
+// A bibliography entry: as the document prints it if `printed` and the
+// document cites it and has a bibliography, else by its authors and year
+// from `names`, else by its key. Citations cannot be queried before Typst
+// 0.14, where the key is taken to be cited.
+#let redline-bib-entry(key, names, printed) = context {
+  let cited(c) = c.key == label(key) and not (c.has("label") and c.label == <redline-deleted-cite>)
+  if printed and query(bibliography).len() > 0 and (sys.version < version(0, 14, 0) or query(cite).any(cited)) {
+    cite(label(key), form: "full")
+  } else { names.at(key, default: redline-mono(key)) }
+}
+
+// The bibliography entries and other files that changed, as (title, lines)
+// pairs.
 #let redline-bib(bib) = {
-  let entries = (([new], bib.added), ([no longer cited], bib.removed), ([changed], bib.changed)).filter(p => p.at(1).len() > 0)
+  let names = bib.at("names", default: (:))
+  let entries = (([New], bib.added, true), ([No longer cited], bib.removed, false), ([Changed], bib.changed, true))
+  let lines = entries.map(((what, keys, printed)) => keys.map(k => [#what: #redline-bib-entry(k, names, printed)])).flatten()
   let files = bib.at("files", default: ())
   let out = ()
-  if entries.len() > 0 { out.push[Bibliography entries, not marked in the bibliography: #entries.map(p => [#p.at(0): #p.at(1).map(raw).join(", ")]).join("; ").] }
-  if files.len() > 0 { out.push[Changed files that the document reads, not marked: #files.map(raw).join(", ").] }
-  if bib.at("unchecked", default: false) { out.push[Files that the document reads through a computed path were not checked for changes; that needs Typst 0.14 or later.] }
-  if out.len() > 0 { out.join(" ") }
+  if lines.len() > 0 { out.push(([Bibliography entries, not marked in the bibliography], lines)) }
+  if files.len() > 0 { out.push(([Images and data files that changed], (files.map(redline-mono).join[, ],))) }
+  out
+}
+
+#let redline-head(body) = block(above: 1.5em, below: 0.75em, text(weight: "bold", body))
+
+// The changes that are not marked: `groups` is an array of (title, code:
+// array of (old, new)), `bib` as for `redline-summary`.
+#let redline-not-marked(groups, bib) = {
+  let bib = redline-bib(bib)
+  if groups.len() + bib.len() == 0 { return }
+  let st = redline-style
+  let group(title, body) = block(below: 0.9em, { block(below: 0.55em, emph(title)); pad(left: 1.2em, body) })
+  redline-head[Not marked in place]
+  if groups.len() > 0 {
+    block(below: 0.9em)[These changes are in the source of the document but have no mark on its pages, such as a changed setting or a title that a template prints. Each says what changed, old in red and new in blue; where words cannot say it all, the source text follows, the old after #text(fill: st.del)[−] and the new after #text(fill: st.ins)[+].]
+    for (title, code) in groups { group(title, code.map(redline-code).join(v(0.3em))) }
+  }
+  for (title, lines) in bib { group(title, lines.join(linebreak())) }
+}
+
+// Notes on what this PDF shows differently from the new version, or
+// nothing without any.
+#let redline-notes(notes) = if notes.len() > 0 {
+  redline-head[What this PDF shows differently]
+  block(stroke: (left: 1.5pt + redline-style.del), inset: (left: 0.8em, y: 0.2em), list(..notes))
 }
 
 // The steps of --steps, each in the colour of its marks with its range,
@@ -907,11 +1016,11 @@
     if lines.len() == 0 { lines.push(emph[No changes to the document]) }
     rows += ([], grid.cell(colspan: 3, text(size: 0.85em, lines.join(linebreak()))))
   }
-  block(below: 1.5em, {
-    block(below: 0.8em, strong[Steps from #old to #new])
+  {
+    redline-head[Steps from #old to #new]
     set par(justify: false)
     grid(columns: (auto, auto, auto, 1fr), column-gutter: 0.6em, row-gutter: 0.6em, ..rows)
-  })
+  }
 }
 
 // The commits from the old version to the new one, each in the colour of
@@ -927,33 +1036,11 @@
   let rows = hist.commits.enumerate().map(p => row(hist.earlier + p.at(0) + 1, raw(p.at(1).hash), p.at(1).date, p.at(1).subject))
   if hist.uncommitted { rows.push(row(hist.earlier + hist.commits.len() + 1, [], [], emph[Uncommitted changes])) }
   if hist.steps { redline-meta(hist, <redline-history>) }
-  block(below: 1.5em, {
-    block(below: 0.8em, strong[Commits from #old to #new])
+  {
+    redline-head[Commits from #old to #new]
     if hist.earlier > 0 { block(emph[#hist.earlier earlier commits, not listed]) }
     grid(columns: if hist.steps { (auto, auto, auto, 1fr) } else { (auto, auto, 1fr) }, column-gutter: 0.6em, row-gutter: 0.6em, ..rows.flatten())
-  })
-}
-
-// Changed code that is not marked, (old, new, what): what changed in words,
-// then the old code in the colour of deletions and the new in that of
-// insertions, or the code once if only a file it reads changed. Text, not
-// raw, so that the document's show rules on raw leave it alone.
-#let redline-code(c) = {
-  let st = redline-style
-  let mono = text.with(font: "DejaVu Sans Mono", hyphenate: false)
-  let value(v, fill, f) = if "text" in v {
-    ["] + v.text.map(((t, changed)) => if changed { text(fill: fill, f(t)) } else { t }).join() + ["]
-  } else { mono(size: 0.9em, fill: fill, v.code) }
-  let words = c.at("what", default: ()).map(w => if "file" in w [#mono(size: 0.9em, w.file) changed] else {
-    let name = mono(size: 0.9em, w.name)
-    if w.old == none [#name: #value(w.new, st.ins, x => x) added] else if w.new == none [#name: #value(w.old, st.del, x => x) removed] else [#name: #value(w.old, st.del, strike) → #value(w.new, st.ins, underline)]
-  })
-  if words.len() > 0 { block(above: 0.6em, below: 0.4em, words.join[; ]) }
-  let rows = if c.old == c.new { ((c.new, "", none),) } else { ((c.old, "−", st.del), (c.new, "+", st.ins)).filter(r => r.first() != "") }
-  let paint(fill, t) = if fill == none { t } else { text(fill: fill, t) }
-  set text(font: "DejaVu Sans Mono", size: 0.9em, hyphenate: false)
-  set par(justify: false)
-  grid(columns: (auto, 1fr), column-gutter: 0.5em, row-gutter: 0.5em, ..rows.map(((code, sign, fill)) => (paint(fill, sign), paint(fill, code))).flatten())
+  }
 }
 
 #let redline-move-bracket = {
@@ -986,18 +1073,9 @@
 // The marks among `marks` that were not laid out (`shown` is from
 // `redline-laid-out`), such as marks in content that a function reads as
 // text, listed as code; a move counts as laid out if its new place is.
-#let redline-lost(marks, shown) = {
-  let lost = marks.filter(m => if "move" in m {
-    query(label("redline-move-to-" + str(m.move))).len() == 0
-  } else { str(m.id) not in shown })
-  if lost.len() > 0 { redline-ints(lost.map(m => m.id), <redline-lost>) }
-  if lost.len() > 0 and redline-side == none {
-    pad(left: 1.5em, text(size: 0.85em, {
-      block(text(fill: redline-style.del)[Changes that did not reach the page, not marked:])
-      lost.map(redline-code).join()
-    }))
-  }
-}
+#let redline-lost(marks, shown) = marks.filter(m => if "move" in m {
+  query(label("redline-move-to-" + str(m.move))).len() == 0
+} else { str(m.id) not in shown })
 
 // Page numbers in increasing order as runs, such as "2–4, 7".
 #let redline-pages(ps) = {
@@ -1009,14 +1087,10 @@
   if runs.len() == 0 { "–" } else { runs.map(r => str(r.first()) + if r.len() > 1 { "–" + str(r.last()) } else { "" }).join(", ") }
 }
 
-// A line of the summary that links to the element `el` with `title`, its
-// number if it is a numbered heading, `what` changed, and its page.
-#let redline-section-line(el, title, what) = {
-  let loc = el.location()
-  let num = if el.func() == heading and el.numbering != none {
-    numbering(el.numbering, ..counter(heading).at(loc)) + h(0.5em)
-  }
-  [#link(loc, underline[#num#title]) (#what)#box(width: 1fr, repeat[#h(0.4em).])#h(0.4em)#link(loc, [#redline-page-of(loc)])]
+// The number and title of the heading `el`, as the summary lists it.
+#let redline-heading-name(el, title) = {
+  let num = if el.numbering != none { numbering(el.numbering, ..counter(heading).at(el.location())) + h(0.5em) }
+  [#num#title]
 }
 
 // The text of content without its deletions, whose marks must not be laid
@@ -1026,7 +1100,7 @@
 } else if c.has("body") { redline-plain(c.body) } else if c.has("child") { redline-plain(c.child) } else { "" }
 
 // The marks among `marks` that are laid out, grouped by the last heading of
-// level 1 or 2 before them, or none: array of (heading, count: marks other
+// level 1 or 2 before them, or none: array of (heading, count: changes other
 // than moves, moves: numbers of the moves, at: locations). Deleted headings,
 // which are neither outlined nor bookmarked, do not count.
 #let redline-under-headings(marks) = {
@@ -1047,7 +1121,7 @@
       i = groups.len() - 1
     }
     groups.at(i).at.push(loc)
-    if "move" in m { groups.at(i).moves.push(m.move) } else { groups.at(i).count += 1 }
+    if "move" in m { groups.at(i).moves.push(m.move) } else if not m.at("joined", default: false) { groups.at(i).count += 1 }
   }
   groups
 }
@@ -1088,6 +1162,18 @@
   }
 }
 
+// The legend of the marks; `info` as for `redline-summary`.
+#let redline-marks-legend(info) = {
+  let st = redline-style
+  let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
+  let moved = if info.at("moved", default: 0) > 0 [ #redline-move-legend(st)]
+  let rest = [New equations, figures, code blocks and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through; code blocks and filled boxes keep their colours. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones.#moved]
+  if info.at("history", default: (steps: false)).steps {
+    let st = st + redline-colours(luma(70))
+    [#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the #if "groups" in info.history [step] else [commit] that made the change. #rest]
+  } else [#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. #rest]
+}
+
 #let redline-summary(info) = if redline-side == none {
   let st = redline-style
   // Pages of its own, without the document's header, footer and numbers.
@@ -1096,82 +1182,107 @@
   context {
     let shown = redline-laid-out()
     redline-layout()
-    let bib = info.at("bib", default: (:))
+    let bib = info.at("bib", default: (added: (), removed: (), changed: ()))
     let listed = ("added", "removed", "changed", "files").map(k => bib.at(k, default: ()).len()).sum()
+    let lost = info.entries.map(e => redline-lost(e.marks, shown))
+    let lost-ids = lost.flatten().map(m => m.id)
+    if lost-ids.len() > 0 { redline-ints(lost-ids, <redline-lost>) }
     let unmarked = listed + info.entries.map(e => e.code.len()).sum(default: 0)
-    redline-meta((unmarked: unmarked, notes: redline-fallback-note != none or bib.at("unchecked", default: false)), <redline-summary>)
+    let total = info.entries.map(e => e.count).sum(default: 0) + info.at("moved", default: 0) + listed
+    let unchecked = bib.at("unchecked", default: false)
+    redline-meta((unmarked: unmarked, notes: redline-fallback-note != none or unchecked, empty: total == 0), <redline-summary>)
     // English, whatever language the document is in.
     set text(lang: "en", dir: ltr)
-    block({
-      block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
-      let bib = redline-bib(info.at("bib", default: (added: (), removed: (), changed: ())))
-      let steps = info.at("history", default: (steps: false)).steps
-      if info.entries.len() == 0 and bib == none { [No changes.] } else if steps {
-        let st = st + redline-colours(luma(70))
-        let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
-        block(below: 1.5em)[#redline-ins-rules([Inserted], false, st: st) and #redline-del-rules(st: st)[deleted] text, in the colour of the #if "groups" in info.history [step] else [commit] that made the change. New equations, figures, code blocks and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through; code blocks and filled boxes keep their colours. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend(st)] Numbers count changed passages.]
+    set par(justify: false)
+    block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
+    let apart = unmarked + lost-ids.len()
+    if total == 0 [No changes found between the two versions.] else [#total #if total == 1 [change] else [changes]#if apart > 0 [, #apart of them not marked on the pages but listed under _Not marked in place_].]
+
+    let min-level = calc.min(..info.entries.map(e => e.level), 9)
+    let what(n, moves, unmarked, ..label) = {
+      let parts = label.pos()
+      if n > 0 { parts.push[#n #if n == 1 [change] else [changes]] }
+      if moves > 0 { parts.push[#moves #if moves == 1 [passage] else [passages] moved] }
+      [#parts.join[, ]#if unmarked > 0 [ (#unmarked not marked)]]
+    }
+    let row(level, name, what, at) = (pad(left: (level - min-level) * 1.2em, name), what, if at.len() > 0 { redline-page-names(at, prefix: false) })
+    let heading-row(level, el, title, what) = {
+      let loc = el.location()
+      row(level, link(loc, redline-heading-name(el, title)), what, (loc,)).enumerate().map(((i, c)) => if i == 2 { link(loc, c) } else { c })
+    }
+    let rows = ()
+    for (e, l) in info.entries.zip(lost) {
+      let moves = e.at("moves", default: 0)
+      let k = e.code.len() + l.len()
+      if e.deleted {
+        rows += row(e.level, text(fill: st.del, strike(e.title)), what(0, 0, k, [deleted section]), ())
+      } else if e.target != none {
+        let label = if e.new { ([new section],) } else if e.at("moved", default: false) { ([moved section],) } else { () }
+        rows += heading-row(e.level, query(e.target).first(), e.title, what(e.count, moves, k, ..label))
       } else {
-        let frame(stroke, body) = box(stroke: stroke, inset: (x: 2pt), outset: (y: 2pt), body)
-        block(below: 1.5em)[#redline-ins-rules([Inserted], false) and #redline-del-rules[deleted] text; #text(fill: st.ins)[new paragraphs] in blue. New equations, figures, code blocks and drawings are #frame(st.ins-frame)[framed], deleted ones #frame(st.del-frame)[framed dashed] and crossed where they cannot be struck through; code blocks and filled boxes keep their colours. Bars in the margin: solid for inserted lines, dashed and further out for deleted ones. #if info.at("moved", default: 0) > 0 [#redline-move-legend(st)] Numbers count changed passages.]
-      }
-      redline-commits(info.at("history", default: none), info.old, info.new)
-      if bib != none { block(below: 1.5em, bib) }
-      if redline-fallback-note != none { block(below: 1.5em, text(fill: st.del, redline-fallback-note)) }
-      context {
-        let unbarred = query(<redline-unbarred>).map(redline-value).flatten()
-        if unbarred.len() > 0 {
-          block(text(fill: st.del)[Changes on these pages of this PDF have no bars in the margin, because the document sets its own page foreground and background there: #unbarred.map(str).join(", ").])
+        // Headings that the source does not have at its top level, such as
+        // those inside calls, are found where they are laid out.
+        let groups = redline-under-headings(e.marks)
+        let found = if e.at("before", default: false) { groups.filter(g => g.heading != none) } else { () }
+        let placed = found.map(g => g.count).sum(default: 0)
+        let left = calc.max(0, moves - found.map(g => g.moves).flatten().dedup().len())
+        if found.len() == 0 or e.count > placed or left > 0 {
+          let at = groups.filter(g => found.len() == 0 or g.heading == none).map(g => g.at).flatten()
+          rows += row(e.level, e.title, what(e.count - placed, left, k), at)
         }
-        let lost = query(<redline-unrestored>)
-        if lost.len() > 0 {
-          let keys = lost.map(redline-value).flatten().dedup()
-          let pages = lost.map(m => m.location().page()).dedup()
-          let names = keys.map(k => if k == page [the page counter] else { raw(k) }).join(", ")
-          let (it, that) = if keys.len() == 1 { ([a state], [that state]) } else { ([states], [those states]) }
-          let on = if pages.len() == 1 [page] else [pages]
-          block(below: 1.5em, text(fill: st.del)[Deleted content on #on #pages.map(str).join(", ") updates #it (#names). What reads #that afterwards can differ from the new version.])
+        let top = calc.min(..found.map(g => g.heading.level), 9)
+        for g in found {
+          rows += heading-row(e.level + g.heading.level - top, g.heading, redline-plain(g.heading.body).trim(), what(g.count, g.moves.dedup().len(), 0))
         }
       }
-      let min-level = calc.min(..info.entries.map(e => e.level), 9)
-      let row(level, line, e) = block(above: 0.5em, below: 0.5em, pad(left: (level - min-level) * 1.5em, {
-        line
-        if e.code.len() > 0 { pad(left: 1.5em, text(size: 0.85em, e.code.map(redline-code).join())) }
-        redline-lost(e.marks, shown)
-      }))
-      for e in info.entries {
-        let note = if e.code.len() > 0 [; changed code not marked]
-        let what(count, moves, ..label) = (..label.pos(), if count > 0 [#count], if moves > 0 [#moves moved]).filter(x => x != none).join[, ]
-        let moves = e.at("moves", default: 0)
-        if e.deleted {
-          row(e.level, text(fill: st.del)[#strike(e.title) (deleted section#note)], e)
-        } else if e.at("before", default: false) {
-          // Headings that the source does not have at its top level, such
-          // as those inside calls, are found where they are laid out.
-          context {
-            let groups = redline-under-headings(e.marks)
-            let found = groups.filter(g => g.heading != none)
-            let placed = found.map(g => g.count).sum(default: 0)
-            let left = calc.max(0, moves - found.map(g => g.moves).flatten().dedup().len())
-            if e.count > placed or left > 0 {
-              let at = groups.filter(g => g.heading == none).map(g => g.at).flatten()
-              let leader = if at.len() > 0 [#box(width: 1fr, repeat[#h(0.4em).])#h(0.4em)#redline-pages(at.map(redline-page-of).dedup())]
-              row(e.level, [#e.title (#what(e.count - placed, left)#note)#leader], e)
-            }
-            let top = calc.min(..found.map(g => g.heading.level), 9)
-            for g in found {
-              row(e.level + g.heading.level - top, redline-section-line(g.heading, redline-plain(g.heading.body).trim(), what(g.count, g.moves.dedup().len())), (code: (), marks: ()))
-            }
-          }
-        } else if e.target == none {
-          row(e.level, [#e.title (#what(e.count, moves)#note)], e)
-        } else {
-          let new = if e.new { ([new section],) } else if e.at("moved", default: false) { ([moved section],) } else { () }
-          row(e.level, context redline-section-line(query(e.target).first(), e.title, [#what(e.count, moves, ..new)#note]), e)
-        }
+    }
+    if rows.len() > 0 {
+      redline-head[Changes by section]
+      let grey = text.with(size: 0.85em, fill: luma(110))
+      grid(
+        columns: (1fr, auto, auto),
+        column-gutter: 1.5em,
+        row-gutter: 0.6em,
+        grey[Section], grey[Changes], grey[Page],
+        ..rows,
+      )
+    }
+
+    let groups = info.entries.zip(lost).filter(((e, l)) => e.code.len() + l.len() > 0)
+    redline-not-marked(groups.map(((e, l)) => (if e.deleted { strike(e.title) } else { e.title }, e.code + l)), bib)
+
+    context {
+      let notes = ()
+      if redline-fallback-note != none { notes.push(redline-fallback-note) }
+      let unbarred = query(<redline-unbarred>).map(redline-value).flatten()
+      if unbarred.len() > 0 {
+        let at = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location()).filter(l => l.page() in unbarred)
+        notes.push[Changes on #redline-page-names(at) have no bars in the margin, because the document sets its own page foreground and background there.]
       }
-    })
+      let states = query(<redline-unrestored>)
+      if states.len() > 0 {
+        let keys = states.map(redline-value).flatten().dedup()
+        let names = keys.map(k => if k == page [the page counter] else { raw(k) }).join(", ")
+        let (it, that) = if keys.len() == 1 { ([a state], [that state]) } else { ([states], [those states]) }
+        notes.push[Deleted content on #redline-page-names(states.map(m => m.location())) updates #it (#names). What reads #that afterwards can differ from the new version.]
+      }
+      if unchecked { notes.push[Files that the document reads through a computed path were not checked for changes; that needs Typst 0.14 or later.] }
+      redline-notes(notes)
+    }
+
+    redline-commits(info.at("history", default: none), info.old, info.new)
+    if total > 0 {
+      redline-head[How changes are marked]
+      redline-marks-legend(info)
+    }
   }
-} else { context { redline-layout(); redline-lost(info.entries.map(e => e.marks).flatten(), redline-laid-out()) } }
+} else {
+  context {
+    redline-layout()
+    let lost = redline-lost(info.entries.map(e => e.marks).flatten(), redline-laid-out())
+    if lost.len() > 0 { redline-ints(lost.map(m => m.id), <redline-lost>) }
+  }
+}
 
 // The side-by-side layout. `info` is (old, new: (label, pdf: the version
 // compiled with `redline-side`, pages, unbarred: pages with changes but no
@@ -1206,8 +1317,7 @@
   block(width: width + gap, align(center, block(width: calc.min(width + gap, 36 * size), align(left, {
     block(text(size: 1.4em, weight: "bold")[Changes from #o.label to #n.label])
     let (lo, ln) = (left-out(o, info.pairs.map(p => p.old + p.steps-old)), left-out(n, info.pairs.map(p => p.new + p.steps-new)))
-    let bib = redline-bib(info.bib)
-    if info.pairs.len() == 0 { if bib == none and info.unmarked.len() == 0 [No changes.] } else [
+    if info.pairs.len() == 0 { if redline-bib(info.bib).len() == 0 and info.unmarked.len() == 0 [No changes found between the two versions.] } else [
       Pages of #name(o) on the left, with #redline-del-rules(st: sample)[deleted] text; pages of #name(n) on the right, with #redline-ins-rules([inserted], false, st: sample) text#if steps [, in the colour of the #if "groups" in hist [step] else [commit] that made the change]. Bars in the margin mark the changed lines.#if info.at("moved", default: false) [ Moved text has a grey bracket #redline-move-bracket and a #text(size: 0.8em)[moved] note in the margin on both sides, and its old page is shown next to its new one; edits made while moving are marked as usual.]
       #if lo + ln > 0 [Pages without changes are left out: #ln of the #n.pages pages of #n.label and #lo of the #o.pages of #o.label.]
     ]
@@ -1248,16 +1358,15 @@
         [#what on page #u.page of #info.at(u.side).label]
       }))
     }
-    if info.unmarked.len() > 0 {
-      [Changes that are not marked:]
-      list(..info.unmarked.map(u => [In #raw(u.file): #redline-code(u)]))
-    }
-    if bib != none { block(bib) }
-    if redline-fallback-note != none { block(text(fill: st.del, redline-fallback-note)) }
-    redline-commits(hist, o.label, n.label)
+    let files = info.unmarked.map(u => u.file).dedup()
+    redline-not-marked(files.map(f => ([In #redline-mono(f)], info.unmarked.filter(u => u.file == f))), info.bib)
+    let notes = if redline-fallback-note != none { (redline-fallback-note,) } else { () }
     for side in (o, n) {
-      if side.unbarred.len() > 0 { block[Changes on these pages of #name(side) have no bars in the margin, because the document sets its own page foreground and background there: #pages(side.unbarred).] }
+      if side.unbarred.len() > 0 { notes.push[Changes on pages #pages(side.unbarred) of #name(side) have no bars in the margin, because the document sets its own page foreground and background there.] }
     }
+    if info.bib.at("unchecked", default: false) { notes.push[Files that the document reads through a computed path were not checked for changes; that needs Typst 0.14 or later.] }
+    redline-notes(notes)
+    redline-commits(hist, o.label, n.label)
   }))))
   let head(side, pg, s, ps) = if pg != none [#name(side), page #pg#if s.len() > 0 [, the last step of #pages(s + (pg,))]] else if ps.len() == 0 [Not in #name(side)]
   // A side without a page keeps its width, so that the other stays in place.

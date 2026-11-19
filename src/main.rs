@@ -757,6 +757,14 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                     "note: {note}, because the document did not compile with every change marked in full ({first_error})"
                 );
             }
+            let b = &result.bib;
+            if result.changes.is_empty()
+                && [&b.added, &b.removed, &b.changed, &b.files]
+                    .iter()
+                    .all(|l| l.is_empty())
+            {
+                eprintln!("note: no changes found between {} and {}", old.label, new.label);
+            }
             if let Some(back) = &back {
                 compose(
                     &a,

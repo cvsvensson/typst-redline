@@ -1237,6 +1237,91 @@ fn new_gone_and_edited_bibliography_entries_are_listed() {
 }
 
 #[test]
+fn bibliography_entries_are_named_by_authors_and_year() {
+    let r = run("bib-entries");
+    assert!(
+        r.body
+            .contains(r#"names: ("c": "Cc 2003","a": "Aa 2011","b": "Bb 2002",)"#),
+        "{}",
+        r.body
+    );
+}
+
+#[test]
+fn bibliography_file_is_not_listed_when_its_changed_entries_are() {
+    let read = |side: &'static str| move |p: &str| read_fixture("bib-entries", side, p).map(String::into_bytes);
+    let (read_old, read_new) = (read("old"), read("new"));
+    let v = |read| Version {
+        label: "v".into(),
+        entry: "main.typ".into(),
+        read,
+    };
+    let reads = ["refs.bib".to_string()];
+    let r = redline(
+        &v(&read_old),
+        &v(&read_new),
+        FULL,
+        &History::default(),
+        Moves::Find,
+        Some(&reads),
+    );
+    assert_eq!(r.bib.changed, ["a"]);
+    assert!(r.bib.files.is_empty(), "{:?}", r.bib.files);
+}
+
+#[test]
+fn replaced_word_counts_as_one_change() {
+    let r = redline_of("Some old text.\n", "Some new text.\n");
+    let main = &r.files.iter().find(|(p, _)| p == "main.typ").unwrap().1;
+    assert!(main.contains("count: 1,"), "{main}");
+}
+
+#[test]
+fn page_names_give_the_printed_number_and_the_pdf_page_where_they_differ() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("page-names");
+    std::fs::write(dir.join(PREAMBLE_PATH), PREAMBLE).unwrap();
+    std::fs::write(
+        dir.join("main.typ"),
+        format!(
+            "#import \"{PREAMBLE_PATH}\": redline-bars, redline-page-names, redline-plain
+#show: redline-bars
+Cover <a>
+#set page(numbering: \"i\")
+Front <b>
+#set page(numbering: \"1\")
+#counter(page).update(1)
+Body <c>
+#pagebreak()
+More <d>
+#context [#metadata((<a>, <b>, <c>).map(l => redline-plain(redline-page-names((locate(l),)))) + (redline-plain(redline-page-names((locate(<c>), locate(<d>)))),))<probe>]
+"
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        query(&dir, "<probe>"),
+        r#"[["PDFpage1","p.ii(PDFpage2)","p.1(PDFpage3)","pp.1–2(PDFpages3–4)"]]"#
+    );
+}
+
+#[test]
+fn comparison_without_changes_says_so() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("no-changes");
+    std::fs::write(dir.join("a.typ"), doc("alpha")).unwrap();
+    let out = cli(&dir, &["a.typ", "a.typ"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("no changes found"), "{stderr}");
+    assert!(dir.join("a.redline.pdf").exists());
+}
+
+#[test]
 fn page_foregrounds_of_the_document_are_kept_with_the_bars() {
     let Some(dir) = compile("page-foreground", &run("page-foreground").files) else {
         return;

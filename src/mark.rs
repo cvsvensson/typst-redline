@@ -605,7 +605,15 @@ impl<'a> Writer<'a> {
             text,
             old: String::new(),
             what: vec![],
+            joined: false,
         });
+    }
+
+    /// The changes recorded from `start` on are one change at one place.
+    fn join_from(&mut self, start: usize) {
+        for c in self.changes.iter_mut().skip(start + 1) {
+            c.joined = true;
+        }
     }
 
     /// Record changed code that is not marked, `old` or `new` empty if it
@@ -668,6 +676,7 @@ impl<'a> Writer<'a> {
         let runs: Vec<&[u8]> = steps.chunk_by(|a, b| a == b).collect();
         // Runs of several steps are parts of one block, each laid out inline.
         let args = if runs.len() > 1 { "" } else { args };
+        let start = self.changes.len();
         let mut i = 0;
         for run in runs {
             let (lead, core, trail) = trim_spaces(&toks[i..i + run.len()]);
@@ -685,6 +694,7 @@ impl<'a> Writer<'a> {
             }
             self.out.push_str(&trail);
         }
+        self.join_from(start);
     }
 
     /// The step of each token: the one that wrote most of its source, or
@@ -779,11 +789,11 @@ impl<'a> Writer<'a> {
         };
         // Changes outside sections: before the entry's first heading, and in
         // files that are not read in order (imported, or included by code).
-        let first = front(self.ctx.entry(), "[Before the first section]".into());
+        let first = front(self.ctx.entry(), "[Start of the document]".into());
         let others: Vec<Section> = self
             .files
             .iter()
-            .map(|(p, _)| front(p, format!("[Changes in #raw({}), marked where used]", typst_str(p))))
+            .map(|(p, _)| front(p, format!("[In #raw({})]", typst_str(p))))
             .collect();
         // A heading deleted where a heading with the same title remains was
         // changed or moved, not deleted: its changes count with the section
@@ -831,7 +841,7 @@ impl<'a> Writer<'a> {
             };
             // A move is counted apart from edits, once in each section it
             // left or reached; a moved section's own move is its label.
-            let n = count(&|c| here(c) && c.kind != ChangeKind::Moved);
+            let n = count(&|c| here(c) && c.kind != ChangeKind::Moved && !c.joined);
             let moves: HashSet<usize> = self
                 .changes
                 .iter()
@@ -864,6 +874,7 @@ impl<'a> Writer<'a> {
                     m.old = self.ctx.unpin(&m.old).0;
                     let mv = match c.kind {
                         ChangeKind::Moved => format!("move: {}, ", c.text),
+                        _ if c.joined => "joined: true, ".into(),
                         _ => String::new(),
                     };
                     format!(
@@ -1720,6 +1731,7 @@ impl<'a> Writer<'a> {
             }
             self.out.truncate(at);
         }
+        let start = self.changes.len();
         let before = !olead.is_empty() || ocore.is_empty();
         if before {
             self.out.push_str(&nlead);
@@ -1762,6 +1774,7 @@ impl<'a> Writer<'a> {
             self.out.push_str(gap.map_or("", |t| &t.text));
         }
         self.out.push_str(&ntrail);
+        self.join_from(start);
     }
 }
 

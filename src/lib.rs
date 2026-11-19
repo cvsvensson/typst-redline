@@ -125,6 +125,9 @@ pub struct Change {
     /// For a change that is not marked, the old code, empty if it is new;
     /// for moved text at its new place, a line that names it.
     pub old: String,
+    /// Continues the change before it at the same place, as the insertion
+    /// that replaces a deletion does: the summary counts them as one.
+    pub joined: bool,
     /// For a change that is not marked, what it changes, in words.
     pub what: Vec<What>,
 }
@@ -265,8 +268,9 @@ pub fn redline(
     let new_files = project(new, &mut warnings, modules);
     let unknown = reads.is_none();
     let reads = reads.unwrap_or_default();
-    let mut bib = bibliography(old, &old_files, new, &new_files);
+    let (mut bib, explained) = bibliography(old, &old_files, new, &new_files);
     bib.files = changed_reads(old, &old_files, new, &new_files, reads);
+    bib.files.retain(|f| !explained.contains(f));
     bib.unchecked = unknown && reads_computed_paths(&new_files);
     let mut checked = literal_reads(&new_files);
     checked.extend(new_files.iter().map(|(p, _)| p.clone()));
@@ -408,6 +412,9 @@ pub struct Bib {
     pub changed: Vec<String>,
     pub files: Vec<String>,
     pub unchecked: bool,
+    /// The entries of the keys above that have an author and a year, by
+    /// key, named by them.
+    pub names: Vec<(String, String)>,
 }
 
 impl Bib {
@@ -415,12 +422,19 @@ impl Bib {
     pub(crate) fn to_typst(&self) -> String {
         let keys = |ks: &[String]| format!("({})", ks.iter().map(|k| mark::typst_str(k) + ",").collect::<String>());
         format!(
-            "(added: {}, removed: {}, changed: {}, files: {}, unchecked: {})",
+            "(added: {}, removed: {}, changed: {}, files: {}, unchecked: {}, names: ({}))",
             keys(&self.added),
             keys(&self.removed),
             keys(&self.changed),
             keys(&self.files),
-            self.unchecked
+            self.unchecked,
+            match self.names.as_slice() {
+                [] => ":".into(),
+                names => names
+                    .iter()
+                    .map(|(k, n)| format!("{}: {},", mark::typst_str(k), mark::typst_str(n)))
+                    .collect::<String>(),
+            }
         )
     }
 }
@@ -452,7 +466,14 @@ fn bib_paths(files: &[(String, String)]) -> Vec<String> {
     paths
 }
 
-fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, new_files: &[(String, String)]) -> Bib {
+/// The changes of the bibliography, and the bibliography files whose
+/// changes they hold.
+fn bibliography(
+    old: &Version,
+    old_files: &[(String, String)],
+    new: &Version,
+    new_files: &[(String, String)],
+) -> (Bib, Vec<String>) {
     // The bibliography files a version names, and the references in it that
     // are not to one of its labels. Keys found in no entry are left out,
     // such as labels that code makes.
@@ -470,7 +491,7 @@ fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, ne
     };
     let ((old_paths, old_keys), (new_paths, new_keys)) = (scan(old_files), scan(new_files));
     if new_paths.is_empty() {
-        return Bib::default();
+        return (Bib::default(), vec![]);
     }
     let entries = |v: &Version, paths: &[String]| -> HashMap<String, String> {
         paths
@@ -480,7 +501,7 @@ fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, ne
             .collect()
     };
     let (old_entries, new_entries) = (entries(old, &old_paths), entries(new, &new_paths));
-    Bib {
+    let mut bib = Bib {
         added: new_keys
             .difference(&old_keys)
             .filter(|k| new_entries.contains_key(*k))
@@ -493,11 +514,39 @@ fn bibliography(old: &Version, old_files: &[(String, String)], new: &Version, ne
             .collect(),
         changed: new_keys
             .iter()
-            .filter(|k| old_entries.get(*k).is_some_and(|e| Some(e) != new_entries.get(*k)))
+            .filter(|k| {
+                old_entries
+                    .get(*k)
+                    .is_some_and(|e| Some(collapse_ws(e)) != new_entries.get(*k).map(|n| collapse_ws(n)))
+            })
             .cloned()
             .collect(),
         ..Bib::default()
-    }
+    };
+    let named = |entries: &HashMap<String, String>, k: &String| Some((k.clone(), bib_name(entries.get(k)?)?));
+    bib.names = (bib.added.iter().chain(&bib.changed))
+        .filter_map(|k| named(&new_entries, k))
+        .chain(bib.removed.iter().filter_map(|k| named(&old_entries, k)))
+        .collect();
+    // A bibliography file whose changes are all in the entries listed is not
+    // listed as a changed file.
+    let listed: HashSet<&String> = bib.added.iter().chain(&bib.removed).chain(&bib.changed).collect();
+    let rest = |v: &Version, p: &str| -> Option<BTreeSet<(String, String)>> {
+        let entries = bib_entries(p, &text(v, p)?);
+        Some(
+            entries
+                .into_iter()
+                .filter(|(k, _)| !listed.contains(k))
+                .map(|(k, e)| (k, collapse_ws(&e)))
+                .collect(),
+        )
+    };
+    let explained = new_paths
+        .iter()
+        .filter(|p| old_paths.contains(p) && rest(old, p).is_some_and(|r| Some(r) == rest(new, p)))
+        .cloned()
+        .collect();
+    (bib, explained)
 }
 
 const READERS: [&str; 9] = ["image", "read", "json", "csv", "yaml", "toml", "xml", "cbor", "plugin"];
@@ -631,9 +680,9 @@ fn text(v: &Version, path: &str) -> Option<String> {
     String::from_utf8((v.read)(path)?).ok().map(|s| normalize(&s))
 }
 
-/// The entries of a BibTeX or Hayagriva file by key, with whitespace
-/// collapsed: a BibTeX entry starts at a line `@type{key,`, a Hayagriva
-/// entry at an unindented line `key:`.
+/// The entries of a BibTeX or Hayagriva file by key, as they are written: a
+/// BibTeX entry starts at a line `@type{key,`, a Hayagriva entry at an
+/// unindented line `key:`.
 fn bib_entries(path: &str, src: &str) -> Vec<(String, String)> {
     let yaml = path.ends_with(".yml") || path.ends_with(".yaml");
     let mut out: Vec<(String, String)> = vec![];
@@ -651,13 +700,98 @@ fn bib_entries(path: &str, src: &str) -> Vec<(String, String)> {
         match (key, out.last_mut()) {
             (Some(k), _) => out.push((k.trim().into(), line.into())),
             (None, Some((_, text))) => {
-                text.push(' ');
+                text.push('\n');
                 text.push_str(line);
             }
             _ => {}
         }
     }
-    out.into_iter().map(|(k, t)| (k, collapse_ws(&t))).collect()
+    out
+}
+
+/// A bibliography entry named by its authors' family names and its year,
+/// such as "Aguado 2017", "Aguado and Lee 2017" or "Aguado et al. 2017".
+fn bib_name(entry: &str) -> Option<String> {
+    let yaml = !entry.starts_with('@');
+    let authors: Vec<String> = if yaml {
+        yaml_field(entry, "author")?
+    } else {
+        bibtex_field(entry, "author")?
+            .split(" and ")
+            .map(str::to_string)
+            .collect()
+    };
+    let date = if yaml {
+        yaml_field(entry, "date")?.join(" ")
+    } else {
+        bibtex_field(entry, "year").or_else(|| bibtex_field(entry, "date"))?
+    };
+    let year: String = date.split(|c: char| !c.is_ascii_digit()).find(|d| d.len() == 4)?.into();
+    let family = |a: &String| {
+        let a = a.trim_matches(['"', '\'', ' ']).replace(['{', '}'], "");
+        match a.split_once(',') {
+            Some((family, _)) => family.trim().to_string(),
+            None => a.split_whitespace().last().unwrap_or_default().to_string(),
+        }
+    };
+    let names = match authors.as_slice() {
+        [a] => family(a),
+        [a, b] => format!("{} and {}", family(a), family(b)),
+        [a, ..] => format!("{} et al.", family(a)),
+        [] => return None,
+    };
+    (!names.is_empty()).then(|| format!("{names} {year}"))
+}
+
+/// The value of the field `name = {...}`, `name = "..."` or `name = value` of
+/// a BibTeX entry.
+fn bibtex_field(entry: &str, name: &str) -> Option<String> {
+    let lower = entry.to_ascii_lowercase();
+    lower.match_indices(name).find_map(|(i, _)| {
+        if lower[..i].ends_with(|c: char| c.is_alphanumeric()) {
+            return None;
+        }
+        let rest = entry[i + name.len()..].trim_start().strip_prefix('=')?.trim_start();
+        if let Some(inner) = rest.strip_prefix('{') {
+            let mut depth = 0;
+            let end = inner.find(|c| {
+                depth += match c {
+                    '{' => 1,
+                    '}' => -1,
+                    _ => 0,
+                };
+                depth < 0
+            })?;
+            Some(inner[..end].to_string())
+        } else if let Some(inner) = rest.strip_prefix('"') {
+            Some(inner.split('"').next()?.to_string())
+        } else {
+            Some(rest.split([',', '}', '\n']).next()?.trim().to_string())
+        }
+    })
+}
+
+/// The values of the field `name` of a Hayagriva entry: one value, a list
+/// in brackets or a list of lines starting with `-`.
+fn yaml_field(entry: &str, name: &str) -> Option<Vec<String>> {
+    let mut lines = entry.lines().skip(1);
+    let first = lines
+        .find_map(|l| l.trim_start().strip_prefix(name)?.strip_prefix(':'))?
+        .trim();
+    let values: Vec<String> = if first.is_empty() {
+        lines
+            .map_while(|l| l.trim_start().strip_prefix('-'))
+            .map(|v| v.trim().to_string())
+            .collect()
+    } else if let Some(list) = first.strip_prefix('[') {
+        list.trim_end_matches(']')
+            .split("\",")
+            .map(|v| v.trim().to_string())
+            .collect()
+    } else {
+        vec![first.to_string()]
+    };
+    Some(values)
 }
 
 /// A path relative to the file `from`, or to the root if it starts with
