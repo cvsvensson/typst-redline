@@ -28,7 +28,6 @@ fn attachment(doc: &Doc, i: usize, head: bool) -> Option<(Option<usize>, bool)> 
     if b.kind != Kind::Item {
         return None;
     }
-    let parbreak = |gap: &str| parse(gap).children().any(|c| c.kind() == K::Parbreak);
     let mut apart = parbreak(&b.gap);
     for j in (0..i).rev() {
         let p = &doc.blocks[j];
@@ -49,6 +48,11 @@ fn attachment(doc: &Doc, i: usize, head: bool) -> Option<(Option<usize>, bool)> 
         return joins.then_some((Some(j), apart));
     }
     head.then_some((None, apart))
+}
+
+/// Whether whitespace `gap` holds a paragraph break.
+fn parbreak(gap: &str) -> bool {
+    parse(gap).children().any(|c| c.kind() == K::Parbreak)
 }
 
 /// Text that closes what comes before it.
@@ -394,6 +398,8 @@ struct File {
     old_path: String,
     /// Indentation of the list item body being written.
     indent: String,
+    /// Number of list items the blocks being written are nested in.
+    depth: usize,
     /// Names that deleted code which is not evaluated must not use: defined
     /// in the old file or project but not in the new one.
     removed: HashSet<String>,
@@ -607,6 +613,7 @@ impl<'a> Writer<'a> {
             path: path.into(),
             old_path,
             indent: String::new(),
+            depth: 0,
             removed,
             index,
         };
@@ -1058,6 +1065,8 @@ impl<'a> Writer<'a> {
             .collect();
         // Only a deleted section's own blocks count with it.
         let mut outer = None;
+        // A deleted item is written in the body of the item before it.
+        let mut in_item = false;
         for (k, &s) in steps.iter().enumerate() {
             match s {
                 Step::Del(o) if old.blocks[o].kind == Kind::Heading => {
@@ -1082,7 +1091,17 @@ impl<'a> Writer<'a> {
                     match moved(&ctx.moved_from, o) {
                         Some(&r) if ctx.moves[r].old.1.start == o => self.moved_from(r, list_ends),
                         Some(_) => {}
-                        None => self.deleted(&old.blocks[o], list_ends),
+                        None => {
+                            // A paragraph that went on after setup code that
+                            // is kept stays in its paragraph.
+                            let ob = &old.blocks[o];
+                            let after_setup = k > 0
+                                && matches!(steps[k - 1], Step::Keep(Some(p), _) | Step::Pair(p, _)
+                                    if p + 1 == o && old.blocks[p].kind == Kind::Setup);
+                            let inline = ob.kind == Kind::Para && after_setup && !parbreak(&ob.gap);
+                            let args = self.item_args(old, o, in_item).or(inline.then(String::new));
+                            self.deleted(ob, list_ends, args)
+                        }
                     }
                 }
                 Step::Ins(n) => match moved(&ctx.moved_to, n) {
@@ -1094,6 +1113,9 @@ impl<'a> Writer<'a> {
                     let spacing = self.spacing(old, new, s, &old_of, head);
                     self.write_new(old, new, s, (&spacing, ""))
                 }
+            }
+            if let Step::Keep(_, n) | Step::Pair(_, n) | Step::Ins(n) = s {
+                in_item = new.blocks[n].kind == Kind::Item;
             }
         }
         if let Some(c) = outer {
@@ -1137,7 +1159,7 @@ impl<'a> Writer<'a> {
             Step::Keep(_, n) => self.kept(&new.blocks[n], marks),
             Step::Pair(o, n) => self.pair(&old.blocks[o], &new.blocks[n], marks),
             Step::Ins(n) => self.inserted(&new.blocks[n], marks),
-            Step::Del(o) => self.deleted(&old.blocks[o], false),
+            Step::Del(o) => self.deleted(&old.blocks[o], false, None),
         }
     }
 
@@ -1367,8 +1389,10 @@ impl<'a> Writer<'a> {
         let gap = ndoc.blocks.first().or(odoc.blocks.first()).map_or("", |b| &b.gap);
         let indent = gap.rsplit('\n').next().unwrap().to_string();
         let outer = std::mem::replace(&mut self.file.indent, indent);
+        self.file.depth += 1;
         let text = |toks: Vec<Tok>| toks.iter().any(|t| t.kind != TK::Space && t.kind != TK::Comment);
         self.docs(&odoc, &ndoc, text(tokenize(ohead)) && text(tokenize(nhead)));
+        self.file.depth -= 1;
         self.file.indent = outer;
         self.close(nb, marks.1, &(suffix + &label));
     }
@@ -1405,13 +1429,52 @@ impl<'a> Writer<'a> {
         self.close(nb, marks.1, &(suffix + &label));
     }
 
-    fn deleted(&mut self, ob: &Block, list_ends: bool) {
+    /// The `item` argument of deleted list or enum item `o` of `old`, written
+    /// in the body of the item before it if `in_item`.
+    fn item_args(&self, old: &Doc, o: usize, in_item: bool) -> Option<String> {
+        let kind = old.blocks[o].nodes[0].kind();
+        if !matches!(kind, K::ListItem | K::EnumItem) {
+            return None;
+        }
+        // The number the old version gave it: one more than the item before
+        // it in the same enumeration, from the last explicit number.
+        let mut number = 0;
+        if kind == K::EnumItem {
+            for b in old.blocks[..=o]
+                .iter()
+                .rev()
+                .take_while(|b| b.nodes[0].kind() == K::EnumItem)
+            {
+                let marker = b.parts().0;
+                if let Ok(n) = marker.trim().trim_end_matches('.').parse::<usize>() {
+                    number += n;
+                    break;
+                }
+                number += 1;
+            }
+        }
+        let tight = attachment(old, o, false).is_none_or(|(_, apart)| !apart);
+        let number = if kind == K::EnumItem {
+            number.to_string()
+        } else {
+            "none".into()
+        };
+        Some(format!(
+            "item: (depth: {}, number: {number}, inside: {in_item}, tight: {tight})",
+            self.file.depth + 1
+        ))
+    }
+
+    /// Deleted block `ob`, marked with `args` if given, else as a block.
+    fn deleted(&mut self, ob: &Block, list_ends: bool, args: Option<String>) {
         if ob.kind == Kind::Setup {
             // A deleted include of a file that is gone shows its content,
             // through a root-relative path.
             let path = ob.include_target().and_then(|t| resolve(&self.file.old_path, &t));
+            let paired = path.as_ref().is_some_and(|p| self.ctx.pairs.values().any(|o| o == p));
+            let include = ob.nodes.get(1).is_some_and(|n| n.kind() == K::ModuleInclude);
             match path {
-                Some(p) if !self.ctx.pairs.values().any(|o| *o == p) && source(&self.ctx.old_files, &p).is_some() => {
+                Some(p) if !paired && source(&self.ctx.old_files, &p).is_some() => {
                     self.old_scope = true;
                     let root = parse(&format!("#include {}", typst_str(&format!("/{OLD_DIR}/{p}"))));
                     self.deleted(
@@ -1422,25 +1485,26 @@ impl<'a> Writer<'a> {
                             key: String::new(),
                         },
                         list_ends,
+                        None,
                     );
                 }
-                _ if !ob.is_import() => self.list(&ob.text(), ""),
+                // An include whose content cannot be shown is listed.
+                _ if !ob.is_import() || include && !paired => self.list(&ob.text(), ""),
                 _ => {}
             }
             return;
         }
         let (prefix, nodes, _) = ob.parts();
         let toks = tokenize(&nodes);
-        // A deleted item shows its marker: it is written as a continuation
-        // of the block before it.
+        // A deleted term item shows its term: it is written as a
+        // continuation of the block before it. List and enum items take
+        // their marker from `item`.
         let marker = match ob.nodes[0].kind() {
-            K::ListItem => "#sym.bullet ".into(),
-            K::EnumItem => prefix.trim().replace('.', "\\.").replace('+', "#sym.bullet") + " ",
             K::TermItem => prefix.trim().trim_start_matches('/').trim_start().to_string() + " ",
             _ => String::new(),
         };
         let body = marker + &self.content(&toks, ChangeKind::Del);
-        let mut args = "block: true".to_string();
+        let mut args = args.unwrap_or("block: true".into());
         if ob.kind == Kind::Heading {
             let level = ob.heading_level();
             if level <= 2 && self.top {
