@@ -51,6 +51,39 @@ jobs:
           typst-version: ${{ matrix.typst }}
       - run: cargo test --locked
 
+  # Lists the output pages that differ between the base and the head of a pull request, so that
+  # only those need looking at. Differences do not fail the job.
+  output-diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - uses: Swatinem/rust-cache@v2
+      - uses: typst-community/setup-typst@v5
+        with:
+          typst-version: 0.15.1
+      - run: |
+          command -v pdftoppm && command -v compare || {
+            sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends poppler-utils imagemagick
+          }
+      # Both builds share target/, so the base build only recompiles the crate itself.
+      - run: |
+          cargo build --release --locked --manifest-path base/Cargo.toml --target-dir target
+          mv target/release/typst-redline "$RUNNER_TEMP/typst-redline-base"
+          cargo build --release --locked
+      - run: tests/output-diff.sh "$RUNNER_TEMP/typst-redline-base" target/release/typst-redline "$RUNNER_TEMP/output-diff"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: output-diff
+          path: |
+            ${{ runner.temp }}/output-diff/summary.md
+            ${{ runner.temp }}/output-diff/changes
+          if-no-files-found: ignore
+
   vscode:
     runs-on: ubuntu-latest
     env:
