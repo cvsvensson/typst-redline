@@ -97,7 +97,7 @@ The summary is set in the document's font, without its template, header, footer,
 
 ## Slides and side by side
 
-`--layout side-by-side` shows each changed page of the old version next to the same page of the new version and leaves out pages without changes. The first page lists which pages are shown, and the last pages are the summary of the default layout. A page that a change only listed on the summary draws differently, such as one with renumbered headings, is shown as well, unless a page with a marked change lies between it and the nearest page that looks the same in both versions. It needs Typst 0.14 or later.
+`--layout side-by-side` shows each changed page of the old version next to the same page of the new version and leaves out pages without changes. The first page lists which pages are shown, and the last pages are the summary of the default layout. A page that a change only listed on the summary draws differently, such as one with renumbered headings, is shown as well, also where such a page may only have reflowed after a marked change. It needs Typst 0.14 or later and an old version that compiles; the default layout falls back to coarser marks instead.
 
 ```
 typst-redline talk.typ --since HEAD~1 --layout side-by-side
@@ -148,11 +148,13 @@ Each of these was tried with the current version.
 - In Chinese and Japanese text, a change that starts with a letter or digit right after a Chinese or Japanese character has its bar and number on the line before when it starts a line. A change that ends with or next to a Chinese or Japanese character in a table cell or `columns` has its bar in the left margin.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
 - The bracket of a moved passage that ends with a block, such as a framed box or a list, reaches down past the spacing below it to the next paragraph or heading.
-- A moved passage in a middle column of a page with three or more columns, and one in a narrow margin, has a bracket but no "moved" note.
+- A moved passage in a middle column of a page with three or more columns, and one on a page where both margins are too narrow, has a bracket but no "moved" note.
 - Change numbers and bars can overlap the document's own margin notes and line numbers; with `par.line` numbering, a change number stands just left of the line number. Where neither margin has room for a number, it is set smaller at the page edge and can touch a bar.
 - Side by side shows the numbers of changes on the new pages only, a deletion's number where the deleted content was.
 - In side by side, a document whose layout does not settle (Typst warns that it did not converge) can show other pages than those of its changes; the tool warns about it.
 - In side by side, an inserted or deleted page is shown next to an empty one only when the pages have headings or a moved passage on them; otherwise it can be paired with a neighbouring page.
+- In side by side, a version without content, such as an empty file, is shown as a blank page. Pages of the same slide built step by step are shown once, as its last step, only where they have the same headings; slides whose only change is the same changed header or footer are each shown.
+- Two plain files whose projects need different roots, such as two copies of a project that use paths starting with `/`, cannot be compared, because `--root` is one folder for both; comparing git revisions of the project works.
 - Files outside the project root and package files are not checked for changes.
 - Typst 0.12 and 0.13 are not tested. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked. With Typst 0.12 and 0.13, inserted CJK text can show as missing-glyph boxes; with 0.11, 0.14 and 0.15 it shows as written. With Typst 0.11, the summary is laid out on the document's pages, with its header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.
 

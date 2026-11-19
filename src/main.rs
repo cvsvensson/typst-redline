@@ -35,7 +35,8 @@ Options:
   --preamble <file>     Replace the built-in change styling
   --layout <layout>     inline (default): the new version with changes marked;
                         side-by-side: changed pages of the old and the new
-                        version next to each other (needs Typst 0.14 or later)
+                        version next to each other (needs Typst 0.14 or later,
+                        and an old version that compiles)
   --each-commit         Colour each change by the commit that made it, for at
                         most 6 commits between the two versions (one file
                         only)
@@ -172,6 +173,14 @@ fn parse_args() -> Result<Parsed, String> {
             s if s.starts_with('-') => return Err(format!("unknown option {s}")),
             _ => a.files.push(arg),
         }
+    }
+    if let Some(o) = &a.output
+        && o.extension().is_some_and(|e| !e.eq_ignore_ascii_case("pdf"))
+    {
+        return Err(format!(
+            "the output {} is not a .pdf file; typst-redline writes a PDF",
+            o.display()
+        ));
     }
     if a.files.len() > 2 {
         return Err(format!(
@@ -671,7 +680,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     write(dir, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
     // typst writes next to the staging directory, so that an output that
     // cannot be written is reported as such and is never left half written.
-    let tmp = dir.with_extension(pdf.extension().unwrap_or("pdf".as_ref()));
+    let tmp = dir.with_extension("pdf");
     let mut first_error = String::new();
     let mut stderr = String::new();
     // The old side of the side-by-side layout is the old version marked

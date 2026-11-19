@@ -2409,7 +2409,7 @@ fn bad_paths_are_reported_before_compiling() {
     std::fs::write(dir.join("old.typ"), doc("alpha")).unwrap();
     std::fs::write(dir.join("new.typ"), doc("beta")).unwrap();
     for (args, msg) in [
-        (&["old.typ", "new.typ", "-o", "new.typ"][..], "is an input"),
+        (&["old.typ", "new.typ", "-o", "new.typ"][..], "not a .pdf"),
         (&["old.typ", "new.typ", "-o", "none/x.pdf"], "does not exist"),
         (&["old.typ", "gone.typ"], "does not exist"),
         (&["old.typ", "new.typ", "--root", "none"], "not a directory"),
@@ -2438,6 +2438,13 @@ fn unknown_revision_is_reported() {
 fn to_with_a_range_is_a_usage_error() {
     let dir = temp_dir("to-range");
     let out = cli(&dir, &["main.typ", "--since", "a..b", "--to", "c"]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn output_other_than_a_pdf_is_a_usage_error() {
+    let dir = temp_dir("output-png");
+    let out = cli(&dir, &["old.typ", "new.typ", "-o", "out.png"]);
     assert_eq!(out.status.code(), Some(2));
 }
 
