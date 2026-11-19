@@ -26,6 +26,9 @@ picture 1 paper
 run "$docs/moved" old.typ new.typ
 picture 1 moved
 
+run "$docs/footnotes" old.typ new.typ
+picture 1 footnotes
+
 run "$docs/slides" old.typ new.typ --layout side-by-side
 picture 4 slides 150
 

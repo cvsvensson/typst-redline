@@ -1,22 +1,34 @@
 # Gallery
 
-Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again.
+Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again. [Known problems](known-problems.md) lists the cases where the marks fall short.
 
 ## Text, formulas and figures
 
-Deleted words are struck out in red and new ones highlighted in blue; a new paragraph is blue. The old formula and plot are in dashed red frames, the plot crossed out, above the new ones in blue frames. The equation and the figure keep their numbers. Bars in the margin mark each changed line, with the number of each change next to them; the old and the new formula are one change and share a number.
+Deleted words are struck out in red and new ones highlighted in blue; a new paragraph is blue. The old formula is tinted in a dashed red frame above the new one in a blue frame. The figure's plot changed: the old plot, crossed out, stands before the new figure, whose caption appears once with its new words marked. The equation and the figure keep their numbers. Bars in the margin mark each changed line, with the number of each change next to them; the old and the new formula are one change and share a number, and a line with two changes is labelled *7–8*.
 
 ```
 typst-redline old.typ new.typ
 ```
 
-<img src="paper.png" width="560" alt="A paper page with a deleted word, new words, a changed formula and plot in frames, a new paragraph and bars in the margin">
+<img src="paper.png" width="560" alt="A paper page with a deleted word, new words, the old formula tinted and the old plot crossed out in dashed red frames above the new ones in blue frames, a new paragraph, and bars and change numbers in the margin">
 
 Files: [paper/old.typ](paper/old.typ), [paper/new.typ](paper/new.typ).
 
+## Footnotes
+
+A new footnote is highlighted at the foot of the page. A deleted footnote is struck through in parentheses where it stood, so that the remaining footnotes keep the new version's numbers.
+
+```
+typst-redline old.typ new.typ
+```
+
+<img src="footnotes.png" width="560" alt="A page where a deleted footnote is struck through in parentheses at the end of its sentence, and a new footnote is highlighted in blue at the foot of the page">
+
+Files: [footnotes/old.typ](footnotes/old.typ), [footnotes/new.typ](footnotes/new.typ).
+
 ## Moved text
 
-The camera paragraph moved from *Setup* to *Analysis*, and its frame rate changed on the way. It is shown once, at its new place, with a grey bracket and a "moved" note in the margin; the edit is marked as usual. At the old place, a grey line names its first words and links to it. Both places show the move's number, 1.
+The camera paragraph moved from *Setup* to *Analysis*, and its frame rate changed on the way. It is shown once, at its new place, with a grey bracket and a "moved" note in the margin; the edit is marked as usual. At the old place, a grey line names its first words and links to it. Both places show the move's number, 1; the changed frame rate is change 2.
 
 ```
 typst-redline old.typ new.typ
@@ -28,7 +40,7 @@ Files: [moved/old.typ](moved/old.typ), [moved/new.typ](moved/new.typ).
 
 ## Several files and git
 
-A report whose chapters are separate files, compared with a tagged commit three commits back. The first paragraph moved here from the introduction, which is another file. The plot is an SVG file that a later commit replaced; the `image` call did not change, and the figure is marked with the old image above the new one.
+A report whose chapters are separate files, compared with a tagged commit three commits back. The first paragraph moved here from the introduction, which is another file. The plot is an SVG file that a later commit replaced; the `image` call did not change, and the old image, crossed out, stands above the new figure.
 
 ```
 typst-redline main.typ --since draft-1
@@ -40,7 +52,7 @@ Files: the four commits are the folders [report/1](report/1) to [report/4](repor
 
 ## The summary page
 
-The last page of the same PDF. It gives the numbers and the count of the changes in each section and lists, by number, what has no mark on the pages: here the report's new title, which the template prints from a string argument, and a new bibliography entry. Then the commits in the range, and the legend.
+The last page of the same PDF, set without the document's header and footer. It counts the changes, gives for each section the numbers of its changes as they stand in the margin, their count and pages, and lists, by number, what has no mark on the pages: here the report's new title, which the template prints from a string argument, and a new bibliography entry. Then the commits in the range, and the legend.
 
 <img src="report-summary.png" width="560" alt="The summary page with changed sections, the changed title in words, a new bibliography entry, three commits and the legend">
 
