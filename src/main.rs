@@ -895,9 +895,11 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             return Ok(pdf);
         }
         if first_error.is_empty() {
+            // A Typst that panics, as 0.11 does on some marks, prints no error line.
             first_error = stderr
                 .lines()
                 .find(|l| l.starts_with("error:"))
+                .or_else(|| stderr.lines().find(|l| !l.trim().is_empty()))
                 .unwrap_or_default()
                 .into();
         }
