@@ -96,15 +96,15 @@ jobs:
           cargo clean --release --package typst-redline --manifest-path base/Cargo.toml --target-dir target
           cargo build --release --locked
       - if: steps.changed.outputs.run == 'true'
-        run: tests/output-diff.sh "$RUNNER_TEMP/typst-redline-base" target/release/typst-redline "$RUNNER_TEMP/output-diff"
-      - if: steps.changed.outputs.run == 'true' && hashFiles(format('{0}/output-diff/changes/**', runner.temp)) != ''
+        run: tests/output-diff.sh "$RUNNER_TEMP/typst-redline-base" target/release/typst-redline output-diff base
+      - if: steps.changed.outputs.run == 'true' && hashFiles('output-diff/changes/**') != ''
         uses: actions/upload-artifact@v7
         with:
           name: output-diff
           retention-days: 7
           path: |
-            ${{ runner.temp }}/output-diff/summary.md
-            ${{ runner.temp }}/output-diff/changes
+            output-diff/summary.md
+            output-diff/changes
           if-no-files-found: ignore
 
   vscode:
