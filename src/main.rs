@@ -214,12 +214,18 @@ struct Spec {
 /// git revision, in a tree rooted at `root` or the file's directory.
 fn spec(file: &Path, rev: Option<&str>, root: Option<&Path>, label: String) -> Result<Spec, String> {
     let file = std::path::absolute(file).map_err(|e| e.to_string())?;
+    if rev.is_none() && !file.exists() {
+        return Err(format!("{} does not exist", file.display()));
+    }
     let root = std::path::absolute(root.unwrap_or(file.parent().unwrap())).map_err(|e| e.to_string())?;
     if !root.is_dir() {
         return Err(format!("the root {} is not a directory", root.display()));
     }
     if rev.is_none() && file.is_dir() {
-        return Err(format!("{} is a directory", file.display()));
+        return Err(format!(
+            "{} is a directory; give the document's main .typ file in it",
+            file.display()
+        ));
     }
     // Through a symbolic link, such as /var to /private/var on macOS, the
     // root can be written differently from the file's path.
@@ -248,7 +254,9 @@ fn spec(file: &Path, rev: Option<&str>, root: Option<&Path>, label: String) -> R
             let out = output(git(&root).args(["rev-parse", "--show-toplevel", "--show-prefix"]))?;
             if !rev.is_empty() {
                 output(git(&root).args(["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")]))
-                    .map_err(|_| format!("git: no commit {rev}"))?;
+                    .map_err(|_| {
+                        format!("git: no commit {rev}; give a commit hash, tag or branch, as listed by git log --oneline --decorate")
+                    })?;
             }
             let out = String::from_utf8_lossy(&out);
             let mut lines = out.lines();
@@ -539,9 +547,14 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             a.typst
         ));
     }
-    let (old, new) = specs(&a, reviewed).map_err(|e| match a.root_env && e.contains("the root") {
-        true => format!("{e} (set by TYPST_ROOT)"),
-        false => e,
+    let (old, new) = specs(&a, reviewed).map_err(|e| {
+        if a.root_env && e.contains("the root") {
+            format!("{e} (set by TYPST_ROOT)")
+        } else if a.files.len() == 1 && e.contains("not a git repository") {
+            format!("{e}\nhint: with one file, the old version comes from git; to compare two files, give both: typst-redline old.typ new.typ")
+        } else {
+            e
+        }
     })?;
     if new.tree.read(&new.entry).is_none() {
         return Err(match new.tree {
@@ -716,7 +729,9 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             eprint!("{stderr}");
             if !fallbacks.is_empty() {
                 let note = fallback_note(fallbacks);
-                eprintln!("note: {note}, because the full proof failed to compile ({first_error})");
+                eprintln!(
+                    "note: {note}, because the document did not compile with every change marked in full ({first_error})"
+                );
             }
             if let Some(back) = &back {
                 compose(
@@ -747,7 +762,14 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             }
             let written = std::fs::copy(&tmp, &pdf);
             let _ = std::fs::remove_file(&tmp);
-            written.map_err(|e| format!("cannot write {}: {e}", pdf.display()))?;
+            written.map_err(|e| {
+                // ERROR_SHARING_VIOLATION: a PDF viewer on Windows holds the file open.
+                let open = match e.raw_os_error() {
+                    Some(32) if cfg!(windows) => "; close it in the program that has it open",
+                    _ => "",
+                };
+                format!("cannot write {}: {e}{open}", pdf.display())
+            })?;
             return Ok(pdf);
         }
         if first_error.is_empty() {
@@ -771,10 +793,14 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             "hint: paths starting with / resolve against the directory of the file; set another root with --root"
         );
     }
-    if (not_found || stderr.contains("project root"))
-        && let Some(top) = repository(&new).filter(|top| !same_dir(top, &new.root))
-    {
-        eprintln!("hint: to use the repository as the root, add --root {}", top.display());
+    if not_found || stderr.contains("project root") {
+        match repository(&new).filter(|top| !same_dir(top, &new.root)) {
+            Some(top) => eprintln!("hint: to use the repository as the root, add --root {}", top.display()),
+            None if a.root.is_none() && !not_found => {
+                eprintln!("hint: give the folder that holds all the files of the document with --root")
+            }
+            None => {}
+        }
     }
     let hint = if a.keep {
         ""
@@ -1154,6 +1180,13 @@ fn output_path(a: &Args, old: &Spec, new: &Spec) -> Result<PathBuf, String> {
         }
     };
     let pdf = std::path::absolute(&pdf).map_err(|e| e.to_string())?;
+    if pdf.is_dir() {
+        return Err(format!(
+            "the output {} is a directory; give a file name, such as {}",
+            pdf.display(),
+            pdf.join("changes.pdf").display()
+        ));
+    }
     if !pdf.parent().is_some_and(Path::is_dir) {
         return Err(format!("the directory of the output {} does not exist", pdf.display()));
     }
@@ -1478,8 +1511,11 @@ fn main() -> ExitCode {
         let file = args.files[0].clone();
         since_reviewed(&args).and_then(|reviewed| {
             let pdf = run(*args, reviewed.as_deref(), None)?;
-            if reviewed.is_some() {
-                eprintln!("hint: to mark the last commit as reviewed, run: typst-redline {file} --mark-reviewed");
+            let path = std::path::absolute(&file).map_err(|e| e.to_string())?;
+            if let Some(r) = reviewed
+                && git_text(path.parent().unwrap(), &["rev-parse", "HEAD"]).ok().as_deref() != Some(r.as_str())
+            {
+                eprintln!("hint: once you have read it, mark the last commit as reviewed: typst-redline {file} --mark-reviewed");
             }
             Ok(pdf.display().to_string())
         })

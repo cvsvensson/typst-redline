@@ -1862,6 +1862,19 @@ fn side_by_side_needs_the_preamble_function() {
 }
 
 #[test]
+fn a_missing_old_file_is_an_error() {
+    let dir = temp_dir("missing-old");
+    std::fs::write(dir.join("new.typ"), "New.\n").unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(1) && stderr.contains("does not exist"),
+        "{stderr}"
+    );
+    assert!(!dir.join("new.redline.pdf").exists());
+}
+
+#[test]
 fn typst_root_sets_the_root() {
     if !typst_available() {
         return;
