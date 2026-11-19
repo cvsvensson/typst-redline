@@ -21,7 +21,7 @@ A CLI that shows what changed between two versions of a Typst document, as a PDF
 - Fix the general cause. Many reported problems share a few causes; a fix that handles one document, package, editor or platform as a special case is usually the wrong fix.
 - Keep the boundaries above clean, so that a later feature is a small addition. Don't add an option, type or abstraction for a need nobody has yet.
 - No promises. This project is developed largely by AI agents and its author makes no commitment to maintain it. Try hard to make it work across Typst versions and platforms, but never write "supported", "guaranteed" or "we will" in the README, docs or messages. Say what is tested and what is known not to work.
-- Keep `README.md` true to current behaviour, especially its Known problems section.
+- Keep `README.md` and `docs/known-problems.md` true to current behaviour; the README's Known problems section holds the few most users meet, the docs page all of them.
 - A change to the command line or to what the output shows also updates, in the same pull request, `--help`, the README, the agent skill in `claude-plugin/skills/typst-redline/SKILL.md`, and the extension in `vscode/` where it is affected. The skill stays short: when to use the tool, a few recipes, how to read the summary page, and `--help` for the rest.
 
 ## Checking a change

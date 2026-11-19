@@ -1,8 +1,8 @@
 # typst-redline
 
-`typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document. It makes a PDF of the new version with deleted text struck out, new text highlighted, changed formulas and figures framed, and bars in the margin; a summary on the last page lists every change, including those it cannot mark on the page. It does for Typst what `latexdiff` does for LaTeX. AI agents wrote this tool.
+`typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document. It makes a PDF of the new version with deleted text struck out, new text highlighted, changed formulas and figures framed, and bars and change numbers in the margin; a summary at the end lists every change, including those it cannot mark on the page. It does for Typst what `latexdiff` does for LaTeX. AI agents wrote this tool.
 
-<img src="docs/paper.png" width="480" alt="A paper page: a deleted word struck out in red, new words highlighted in blue, the old formula and plot in dashed red frames above the new ones in blue frames, a new paragraph in blue, and bars in the margin next to each changed line, with the number of each change beside them">
+<img src="docs/paper.png" width="480" alt="A paper page: a deleted word struck out in red, new words highlighted in blue, the old formula tinted and the old plot crossed out in dashed red frames above the new ones in blue frames, a new paragraph in blue, and bars in the margin next to each changed line, with the number of each change beside them">
 
 The [gallery](docs/gallery.md) shows every kind of mark, each with the files it was made from.
 
@@ -64,7 +64,8 @@ If the document reads files outside its own folder, such as `#include "../shared
 Each item links to a picture in the gallery.
 
 - **Text** ([picture](docs/gallery.md#text-formulas-and-figures)): deleted words are struck out in red, new words highlighted in blue, and a wholly new paragraph is blue. This also works inside headings, list items, captions, bold and emphasized text. A deleted list item stays in its list, with its old marker or number in red, and a deleted line break shows as a struck ↵ instead of breaking the line.
-- **Formulas, figures, code blocks and drawings** ([picture](docs/gallery.md#text-formulas-and-figures)) are shown whole: the old one in a dashed red frame, the new one in a blue frame. In the old one, text is struck through where it can be; a picture is crossed out, and anything else, such as a formula or a code block, is tinted red. A drawing in a box in the text, such as an icon, gets a frame of its own size. Code blocks and filled boxes keep their colours inside the frame. Where the text is light, as on a dark slide, deleted words get a light background and new paragraphs a lighter blue.
+- **Footnotes** ([picture](docs/gallery.md#footnotes)): a new footnote is highlighted at the foot of the page; a deleted one is struck through in parentheses where it stood, so that the footnotes keep the new version's numbers.
+- **Formulas, figures, code blocks and drawings** ([picture](docs/gallery.md#text-formulas-and-figures)) are shown whole: the old one in a dashed red frame, the new one in a blue frame. In the old one, text is struck through where it can be; an image or a drawing, such as a plot, is crossed out, and anything else, such as a formula, a table, a code block or a chart built from boxes, is tinted red. A drawing in a box in the text, such as an icon, gets a frame of its own size. Code blocks and filled boxes keep their colours inside the frame. Where the text is light, as on a dark slide, deleted words get a light background and new paragraphs a lighter blue.
 - **Bars in the margin** point to every changed line: dashed for deletions, solid for insertions.
 - **Numbers**: next to the bars, each change has a small grey number, counted in the reading order of the new version, so that a co-author can write "change 14 is wrong". Changes that start on one line share a label such as *3–5*. A change in a column between others, or next to a margin too narrow for its number, has its number in the other margin on the same line. The summary page uses the same numbers, also for changes that have no mark on the pages.
 - **Moved text** ([picture](docs/gallery.md#moved-text)): a paragraph, heading, list item or section moved elsewhere, also into another file, is shown once, unmarked, at its new place, with a grey bracket and a "moved" note in the margin. At its old place, a grey line with an arrow names its first words and links to it. Both places show the move's number. Edits made while moving are marked as usual. `--no-moves` shows moved text as deleted at one place and inserted at the other.
@@ -75,11 +76,11 @@ Each item links to a picture in the gallery.
 - **Changes that do not reach the page**: a change in content that is never shown, or inside `hide`, or in text that a function reads as a string, cannot carry a mark; the summary page lists it with its source text.
 - **Who changed what** ([picture](docs/gallery.md#who-changed-what)): with `--each-commit`, each change has the colour of the commit that made it.
 
-With the deleted parts removed, the marked PDF has the same text, layout and numbering as the new version (see Known problems for the exceptions). Deleted figures and equations keep their old numbers without shifting the numbers after them, and references in deleted text point to the right place in this PDF.
+With the deleted parts removed, the marked PDF has the same text, layout and numbering as the new version ([Known problems](docs/known-problems.md#deleted-content-in-the-new-layout) lists the exceptions). Deleted figures and equations keep their old numbers without shifting the numbers after them, and references in deleted text point to the right place in this PDF. The summary's pages do not count in the document's page total, so a footer such as *page 3 of 12* reads as in the new version.
 
 ## The summary page
 
-The last page lists what changed, so that nothing is missed when a change cannot be marked. A line at the top of the first page says where the summary is and how many changes it lists that are not marked on the pages.
+The last page, or pages, list what changed, so that nothing is missed when a change cannot be marked. A line at the top of the first page says where the summary is and how many changes it lists that are not marked on the pages.
 
 <img src="docs/report-summary.png" width="480" alt="The summary page: a sentence with the number of changes, a table of changed sections with the numbers of their changes, counts and pages, a changed title shown as old and new text, a new bibliography entry, the commits in the range, and the legend">
 
@@ -89,7 +90,7 @@ From the top:
 - **Changes by section**: each section with changes, the numbers of its changes, how many changes it has (not a page count; text deleted and inserted at one place is one change), how many passages moved into it, and the pages of its changes, or for a deleted section where it was. Changes before the first heading, such as in `#set` rules or a template call, are under *Start of the document*, and a change in a page header or footer is under the section whose code sets it. A heading written as a call, such as `#heading[...]`, or inside a call starts a section too. Pages are numbered as in the PDF; the column is headed *PDF page* when the document prints other page numbers.
 - **Marked with a bar only**: changes that have a bar in the margin but nothing else to show, such as a blank line added before a list item, which spaces it apart, explained in words, or deleted code that draws nothing, such as a counter update, with its source; each after its number.
 - **Not marked in place**: each change that has no mark on the pages, after its number, said in words with old in red and new in blue where it can be (a changed argument, a label, a definition or a rule), and its source. Bibliography entries that changed are listed here too.
-- **What this PDF shows differently**: notes on where this PDF differs from a plain proof, for example pages without bars or coarser marks; see Known problems.
+- **What this PDF shows differently**: notes on where this PDF differs from a plain proof, for example pages without bars or coarser marks; see [Known problems](docs/known-problems.md).
 - **Commits**: for a comparison with git, the commits between the two versions that change the document or a file it reads.
 - **How changes are marked**: the legend, a sample of each kind of mark.
 
@@ -97,13 +98,13 @@ The summary is set in the document's font, without its template, header, footer,
 
 ## Slides and side by side
 
-`--layout side-by-side` shows each changed page of the old version next to the same page of the new version and leaves out pages without changes. The first page lists which pages are shown, and the last pages are the summary of the default layout. A page that a change only listed on the summary draws differently, such as one with renumbered headings, is shown as well, also where such a page may only have reflowed after a marked change. It needs Typst 0.14 or later and an old version that compiles; the default layout falls back to coarser marks instead.
+`--layout side-by-side` shows each changed page of the old version next to the same page of the new version and leaves out pages without changes. The first page lists which pages are shown, and the last pages are the same summary as in the default layout, without its legend. Change numbers are on the new pages only. A page that a change only listed on the summary draws differently, such as one with renumbered headings, is shown as well, also where such a page may only have reflowed after a marked change. It needs Typst 0.14 or later and an old version that compiles; the default layout falls back to coarser marks instead.
 
 ```
 typst-redline talk.typ --since HEAD~1 --layout side-by-side
 ```
 
-<img src="docs/slides.png" width="800" alt="An old slide with a deleted list item and an old bar chart in a dashed frame, next to the new slide with the new list item and the new chart in a blue frame">
+<img src="docs/slides.png" width="800" alt="An old slide with a deleted list item and the old bar chart tinted in a dashed frame, next to the new slide with the new list item and the new chart in a blue frame">
 
 This is the layout for slides. In the default layout, deleted content is shown on the same page as the new content, so a full slide overflows; side by side, each page holds only its own version. A page that moved is shown next to its old page. Deleted content looks as it did in the old version, since the old pages are shown as they were.
 
@@ -129,34 +130,14 @@ Only the first and the last version are compared, so text that one commit added 
 
 ## Known problems
 
-Each of these was tried with the current version.
+The ones you are most likely to meet; [docs/known-problems.md](docs/known-problems.md) has the full list, each tried with the current version.
 
-- Some moved text shows as deleted at one place and inserted at the other: a sentence moved within or between paragraphs (text after a display equation belongs to the paragraph of the equation), paragraphs reordered inside a moved section, a nested list item moved on its own, a passage of fewer than four words unless it moves with a longer one next to it, text inside a call's content argument such as `#slide[...]`, text moved into or out of a file that is not shown in order (imported, included by code, or no longer included), and a passage rewritten so much that it keeps less than about 60% of its words. Setup code such as `#set` and `#let` moved unchanged within its file is listed as moved, not marked.
-- Deleted content shifts line and page breaks compared with the new version. A deleted figure, table or drawing that fits on a page is kept whole, so on a full slide it and the new one each take a page of their own.
-- A reference or citation in deleted text to a label or bibliography entry that the new version lacks shows the label or key, not the number the old version printed. A deleted citation of an entry that the new version keeps shows that entry's number in the new bibliography.
-- Deleted content is laid out under the new version's show and set rules, so where such a rule changed, deleted content does not look as it did in the old version. Side by side shows the old pages as they were.
-- Deleted content that updates a state, for example in a show rule of a package, leaves the state changed after it, because Typst records no initial value to set it back to; the summary page names such states. Counters are set back, so deleted content and the content after it can get the same number; a package that keys a state by such a number, as `algo` does with its comments, then shows the deleted content's entries in the new content as well.
-- Deleted figures, equations and citations are still figures, equations and citations, so the document's own queries for them, such as a count with `query(figure)`, also find the deleted ones. `outline` leaves them out.
-- A citation added to or removed from a group such as `@a @b` marks the whole group.
-- A figure whose body changed is deleted and inserted whole, caption and all, when it is passed to another call, as in `#align(center, figure(...))`, when it is inline, or when an argument other than its body and content in brackets changed. A raw block with one changed line is deleted and inserted whole.
-- Where a function reads its content as text, a changed text can be missing from the page, not only its mark; the summary page lists it. A function that fails on marked content makes the whole document fall back to coarser marks, and the summary says so.
-- A changed element that sets the page from inside a function, such as a slide, cannot be framed. The document is then compiled again without frames around content computed at layout (calls of functions built on `context` or `layout`, which includes many drawings), and the summary says so.
-- Pages where a template or a later `set page` rule gives both its own page foreground and background get no margin bars; the summary lists those pages.
-- In deleted code, a label passed as a named argument or written in math is taken to be attached by the code and is renamed; a label passed positionally is taken to be a reference, to the renamed label where the same deleted code passes it as a named argument. Code that uses labels the other way makes the tool show deleted code by name.
-- Deleted code is evaluated with the definitions its file has at its end. Where a name it uses meant something else at its place, it is shown by its name, such as *[unit]*, not as it looked: a name bound around it by a `let` in a block, a function parameter or a loop, one bound again later at the top level of its file, and one that its file does not define but the new version does. A wildcard import after it counts as binding every name.
-- Show rules on `strike`, `highlight` or `text` in your document also restyle the marks. A text show rule with a `regex` selector stops matching where a mark cuts its match; for a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
-- In Chinese and Japanese text, a change that starts with a letter or digit right after a Chinese or Japanese character has its bar and number on the line before when it starts a line. A change that ends with or next to a Chinese or Japanese character in a table cell or `columns` has its bar in the left margin.
-- A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
-- The bracket of a moved passage that ends with a block, such as a framed box or a list, reaches down past the spacing below it to the next paragraph or heading.
-- A moved passage in a middle column of a page with three or more columns, and one on a page where both margins are too narrow, has a bracket but no "moved" note.
-- Change numbers and bars can overlap the document's own margin notes and line numbers; with `par.line` numbering, a change number stands just left of the line number. Where neither margin has room for a number, it is set smaller at the page edge and can touch a bar.
-- Side by side shows the numbers of changes on the new pages only, a deletion's number where the deleted content was.
-- In side by side, a document whose layout does not settle (Typst warns that it did not converge) can show other pages than those of its changes; the tool warns about it.
-- In side by side, an inserted or deleted page is shown next to an empty one only when the pages have headings or a moved passage on them; otherwise it can be paired with a neighbouring page.
-- In side by side, a version without content, such as an empty file, is shown as a blank page. Pages of the same slide built step by step are shown once, as its last step, only where they have the same headings; slides whose only change is the same changed header or footer are each shown.
-- Two plain files whose projects need different roots, such as two copies of a project that use paths starting with `/`, cannot be compared, because `--root` is one folder for both; comparing git revisions of the project works.
-- Files outside the project root and package files are not checked for changes.
-- Typst 0.12 and 0.13 are not tested. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked. With Typst 0.12 and 0.13, inserted CJK text can show as missing-glyph boxes; with 0.11, 0.14 and 0.15 it shows as written. With Typst 0.11, the summary is laid out on the document's pages, with its header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.
+- In the default layout, deleted content takes room on the page, so line and page breaks shift, and on a full slide the old and the new version of a figure each take a page of their own; use side by side for slides.
+- Some moved text shows as deleted at one place and inserted at the other, for example a sentence moved within or between paragraphs, or a passage rewritten so much that it keeps less than about 60% of its words.
+- Where a function reads its content as text, a changed text can be missing from the page, not only its mark, and a function that fails on marked content makes the whole document fall back to coarser marks; the summary page says so in both cases.
+- Deleted code that uses a name which meant something else at its place, such as a loop variable or a function parameter, is shown by that name, such as *[unit]*, not as it looked.
+- Deleted content is laid out under the new version's show and set rules, and a reference in it to a label that the new version lacks shows the label, not the number the old version printed.
+- Typst 0.12 and 0.13 are not tested; before Typst 0.14, side by side does not work and a file read only through a computed path, such as `#include name + ".typ"`, is not checked for changes.
 
 ## Styling
 

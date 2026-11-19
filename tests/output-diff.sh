@@ -45,7 +45,8 @@ sweep() {
         find "$d/typ" -name .redline-preamble.typ -delete
         find "$d/typ" \( -name .redline-deps -o -name '.redline-*.pdf' \) -delete
       fi
-      { echo "exit $code"; grep -v '^kept ' "$d/stderr" | sed -E 's/typst-redline-[0-9]+/typst-redline-N/g' || true; } > "$d/result"
+      # Typst's package downloads print a line, a blank line and progress lines only in the run that downloads.
+      { echo "exit $code"; grep -vE '^(kept |downloading @|$|.*B / .*ETA: )' "$d/stderr" | sed -E 's/typst-redline-[0-9]+/typst-redline-N/g' || true; } > "$d/result"
       if [ -f "$d/out.pdf" ]; then pdftoppm -r 80 -png "$d/out.pdf" "$d/page"; fi
       for p in "$d"/page-*.png; do
         [ -e "$p" ] || continue

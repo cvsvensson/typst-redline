@@ -26,7 +26,7 @@ When the user only asks for the changes, the redline alone is enough: it is the 
 
 ## Read the result before you report it
 
-Diagnostics go to stderr; pass on any warning or note. Then read the last page of the PDF, the summary (`pdftotext` or reading the PDF works):
+Diagnostics go to stderr; pass on any warning or note. Then read the summary at the end of the PDF; the line at the top of the first page gives its page (`pdftotext` or reading the PDF works):
 
 - *No changes found between the two versions*: say so and do not send the PDF as if it showed changes. Check that you compared with the right revision.
 - *Changes by section*: *No.* gives the numbers of the section's changes, which also stand next to their marks in the margin; the count after it counts changes, not pages. Refer to changes by these numbers when you report them.
