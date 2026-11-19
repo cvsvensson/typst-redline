@@ -797,10 +797,13 @@ impl<'a> Writer<'a> {
         let file = typst_str(&format!("/{OLD_DIR}/{}", self.file.old_path));
         let old_value = |code: &str| format!("{{import {file}: *; {code}}}");
         let by_arg = match arg {
+            // The old body sits where the new call puts its body: a figure
+            // centres it.
             Some((value, marked)) => format!(
-                "let {p}-arg = {}; if type({p}-arg) == content {} else ",
+                "let {p}-arg = {}; if type({p}-arg) == content [#{{let d = {}; if figure in ({p}-new.func(), ..{p}-new.fields().at(\"children\", default: ()).map(c => c.func())) {{ align(center, d) }} else {{ d }}}}#{}] else ",
                 old_value(value),
-                both(&format!("#{p}-arg"), marked)
+                mark(ChangeKind::Del, dargs, &format!("#{p}-arg"), id),
+                mark(ChangeKind::Ins, iargs, marked, id + 1)
             ),
             None => String::new(),
         };
