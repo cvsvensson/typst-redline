@@ -49,7 +49,8 @@ Options:
                         inserted at its new place
   --typst <path>        typst executable (default: typst)
   --mark-reviewed       Record HEAD as reviewed for the file (see above)
-  --keep-typ            Keep the generated project and print its path on stderr
+  --keep-typ            Keep the generated project and print its path on stderr;
+                        the marked source is at the new file's path inside it
   -V, --version         Print the version
   -h, --help            Print this help
 Arguments after -- are passed to `typst compile`.
