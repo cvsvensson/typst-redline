@@ -107,13 +107,16 @@
   redline-style + redline-colours(cs.at(calc.rem(step - 1, cs.len())))
 }
 
-// The tool's own bookkeeping: a labelled update of the state "redline",
-// which the document's queries do not find as they find metadata.
-// `redline-value` reads its value back. The binary reads the key, which for
-// `redline-ints` lists the integers.
-#let redline-meta(value, label, key: "redline") = [#state(key, none).update(value)#label]
-#let redline-value(m) = state(m.key).at(m.location())
-#let redline-ints(ints, label) = redline-meta(ints, label, key: if ints.len() == 0 { "" } else { ints.map(str).join(",") })
+// The tool's own bookkeeping: an update of the state "redline", which the
+// document's queries do not find as they find metadata, and an empty
+// labelled `hide` after it, which takes no room. The label is not on the
+// update, because functions that rebuild content from its fields can
+// construct a `hide` but not a state update. `redline-value` reads the value
+// back. `redline-ints`, for the summary, is a labelled update whose key,
+// which the binary reads, lists the integers.
+#let redline-meta(value, label) = [#state("redline", none).update(value)#hide([])#label]
+#let redline-value(m) = state(m.at("key", default: "redline")).at(m.location())
+#let redline-ints(ints, label) = [#state(if ints.len() == 0 { "" } else { ints.map(str).join(",") }, none).update(ints)#label]
 
 // Each mark is bracketed by two of these; `redline-bars` draws a bar in the
 // margin from the start of one to its end, `dy` beyond the tags. The end tag
@@ -456,33 +459,42 @@
 // which nothing records; neither can the page counter, which steps with the
 // pages. The summary lists those that the content updates, such as states
 // that a show rule updates.
-#let redline-restore(start) = context {
-  // Typst 0.11 orders the elements of right-to-left text by position, so
-  // that the start can come after the end; nothing is restored then.
-  let starts = query(selector(start).before(here()))
-  if starts.len() == 0 { return }
-  let start = starts.last().location()
-  let inside(s) = query(selector(s).after(start).before(here()))
-  // By the change inside the content rather than to the value before it:
-  // that value depends on the updates of every earlier deletion, so that
-  // setting it would take a layout pass per deletion to settle. The update
-  // holds only the change, so that it is the same in every pass.
-  for k in redline-counter-keys() {
-    let (b, a) = (counter(k).at(start), counter(k).at(here()))
-    let d = b.enumerate().map(((i, v)) => a.at(i, default: 0) - v)
-    if d.any(x => x != 0) or a.len() != b.len() {
-      counter(k).update((..now) => d.enumerate().map(((i, x)) => calc.max(0, now.pos().at(i, default: 0) - x)))
+#let redline-restore(start) = {
+  // Counters are read at an element of the previous layout pass: there,
+  // `here()` can be one that pass did not lay out, which reads as the end
+  // of the document.
+  let end = label(str(start) + "-end")
+  redline-meta(none, end)
+  context {
+    let ends = query(selector(end).before(here()))
+    if ends.len() == 0 { return }
+    let end = ends.last().location()
+    // Typst 0.11 orders the elements of right-to-left text by position, so
+    // that the start can come after the end; nothing is restored then.
+    let starts = query(selector(start).before(end))
+    if starts.len() == 0 { return }
+    let start = starts.last().location()
+    let inside(s) = query(selector(s).after(start).before(end))
+    // By the change inside the content rather than to the value before it:
+    // that value depends on the updates of every earlier deletion, so that
+    // setting it would take a layout pass per deletion to settle. The update
+    // holds only the change, so that it is the same in every pass.
+    for k in redline-counter-keys() {
+      let (b, a) = (counter(k).at(start), counter(k).at(end))
+      let d = b.enumerate().map(((i, v)) => a.at(i, default: 0) - v)
+      if d.any(x => x != 0) or a.len() != b.len() {
+        counter(k).update((..now) => d.enumerate().map(((i, x)) => calc.max(0, now.pos().at(i, default: 0) - x)))
+      }
     }
+    // Counting the state updates before each end, the tool's own apart, is
+    // cheaper than finding those inside every deletion.
+    let count(c) = c.at(end).first() - c.at(start).first()
+    let changed = if count(counter(redline-state-update)) != count(counter(redline-state-update.where(key: "redline"))) {
+      inside(redline-state-update).filter(u => u.key != "redline").map(u => u.key).dedup()
+    } else { () }
+    let lost = changed + if inside(redline-counter-update.where(key: page)).len() > 0 { (page,) } else { () }
+    if lost.len() > 0 { redline-meta(lost, <redline-unrestored>) }
   }
-  // Counting the state updates before each end, the tool's own apart, is
-  // cheaper than finding those inside every deletion.
-  let count(c) = c.at(here()).first() - c.at(start).first()
-  let own(u) = u.has("label") and str(u.label).starts-with("redline-")
-  let changed = if count(counter(redline-state-update)) != count(counter(redline-state-update.where(key: "redline"))) {
-    inside(redline-state-update).filter(u => not own(u)).map(u => u.key).dedup()
-  } else { () }
-  let lost = changed + if inside(redline-counter-update.where(key: page)).len() > 0 { (page,) } else { () }
-  if lost.len() > 0 { redline-meta(lost, <redline-unrestored>) }
 }
 
 #let redline-del-look(body, st: redline-style) = {
@@ -1111,7 +1123,7 @@
   // the ones labelled here.
   // The visible tag repeats the value that the tag set just before it.
   show <redline-tag-at>: t => [#state("redline").update(v => v)<redline-tag>]
-  show hide: it => {
+  show hide: it => if it.has("label") and it.label == <redline-tag-at> { it } else {
     show <redline-tag-at>: none
     it
   }

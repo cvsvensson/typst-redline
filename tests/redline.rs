@@ -316,6 +316,11 @@ fn figure_gaining_a_label_is_listed_not_replaced() {
 }
 
 #[test]
+fn deleted_code_refers_to_the_labels_it_passes() {
+    compile("deleted-label-reference", &run("deleted-label-reference").files);
+}
+
+#[test]
 fn deleted_code_sees_the_old_definitions_and_files() {
     let Some(dir) = compile("old-definitions-query", &run("old-definitions").files) else {
         return;
@@ -497,7 +502,7 @@ fn moved_heading_is_marked_once_with_an_outline_and_running_headers() {
     let Some(dir) = compile("moved-heading-outline", &run("moved-heading-outline").files) else {
         return;
     };
-    let labels = query_field(&dir, r#"state("").update(none).func()"#, "label");
+    let labels = query_field(&dir, "<redline-move-to-0>", "label");
     assert_eq!(labels.matches("redline-move-to-").count(), 1, "{labels}");
 }
 
