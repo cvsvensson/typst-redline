@@ -145,12 +145,12 @@ npm run package     # makes typst-redline-0.1.0.vsix
 code --install-extension typst-redline-0.1.0.vsix
 ```
 
-or use *Extensions: Install from VSIX…* in VS Code. It adds two commands:
+or use *Extensions: Install from VSIX…* in VS Code. VS Code finds `typst-redline` on the `PATH` it started with, so restart it after installing the tool. The extension is turned off in Restricted Mode, because it runs git and the programs its settings name. It adds two commands:
 
-- *Typst Redline: Show changes since…* lists the commits of the open file, the last reviewed version and *Another file…*, then asks for options: side by side, colour by commit, colour by step and no moves. It saves the open `.typ` files, runs the tool with a progress notification, which can cancel it, and opens the PDF. Notes and warnings of the tool show as a notification and in the *Typst Redline* output.
+- *Typst Redline: Show changes since…* lists the recent commits that changed the project, the last reviewed version and *Another file…*; picking one makes the PDF and opens it. Run it on the main file of a multi-file document. *Options…* at the end of the list sets side by side, colour by commit, colour by step and no moves for this and later runs. Before a run it saves the open files of the project; the run shows a progress notification, which can cancel it. Warnings and notes of the tool show as a notification, everything it prints in the *Typst Redline* output.
 - *Typst Redline: Mark as reviewed* runs `--mark-reviewed` for the open file.
 
-The settings are `typstRedline.executable` and `typstRedline.typst` for the paths of the two programs, `typstRedline.root` for `--root` (by default the workspace folder), `typstRedline.extraArgs` for further arguments, such as `["--", "--font-path", "fonts"]`, and `typstRedline.openPdf`. The PDF opens beside the document in VS Code when a PDF viewer extension is installed, otherwise in the system viewer.
+The settings are `typstRedline.executable` and `typstRedline.typst` for the paths of the two programs, `typstRedline.root` for `--root`, `typstRedline.extraArgs` for further arguments, such as `["--", "--font-path", "fonts"]`, and `typstRedline.openPdf`. The root is by default the workspace folder, or the git repository if the workspace folder contains it. The PDF opens beside the document in VS Code when a PDF viewer extension is installed, otherwise in the system viewer.
 
 ## Claude Code
 
