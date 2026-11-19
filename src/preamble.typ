@@ -807,10 +807,11 @@
   } else if block { rules } else {
     b => { show linebreak: text(top-edge: "x-height", bottom-edge: "baseline", "\u{21B5}"); rules(b) }
   }
+  // Before the start, where it is not taken for an update by the content.
+  if unseen { redline-ints((id,), <redline-unseen>) }
   // A label of its own, which is found faster than the last of many.
   let start = label("redline-del-start-" + repr(id))
   redline-meta(none, start)
-  if unseen { redline-ints((id,), <redline-unseen>) }
   // Its tags take no room either: a box or a placed element in a paragraph
   // would add a space or break it.
   let mark = if unseen [#redline-tag("del", -0.8em, step: step, id: id)#body#context redline-tag("end", 0.3em, width: 0pt)] else {
