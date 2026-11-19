@@ -97,7 +97,7 @@ The summary is set in the document's font, without its template, header, footer,
 
 ## Slides and side by side
 
-`--layout side-by-side` shows each changed page of the old version next to the same page of the new version and leaves out pages without changes. The first page lists which pages are shown. It needs Typst 0.14 or later.
+`--layout side-by-side` shows each changed page of the old version next to the same page of the new version and leaves out pages without changes. The first page lists which pages are shown, and the last pages are the summary of the default layout. A page that a change only listed on the summary draws differently, such as one with renumbered headings, is shown as well, unless a page with a marked change lies between it and the nearest page that looks the same in both versions. It needs Typst 0.14 or later.
 
 ```
 typst-redline talk.typ --since HEAD~1 --layout side-by-side
@@ -145,7 +145,8 @@ Each of these was tried with the current version.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks. A text show rule with a `regex` selector stops matching where a mark cuts its match; for a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
 - A box or table deleted or inserted whole whose fill comes from a `set` or `show` rule has its text coloured like other text, which can be hard to read on a dark fill.
 - A moved passage in a middle column of a page with three or more columns, and one in a narrow margin, has a bracket but no "moved" note. Changes in such a middle column have no number in the margin.
-- Side by side shows the numbers of changes on the new pages only, a deletion's number where the deleted content was; its summary lists changes without numbers.
+- Side by side shows the numbers of changes on the new pages only, a deletion's number where the deleted content was.
+- In side by side, a document whose layout does not settle (Typst warns that it did not converge) can show other pages than those of its changes; the tool warns about it.
 - In side by side, an inserted or deleted page is shown next to an empty one only when the pages have headings or a moved passage on them; otherwise it can be paired with a neighbouring page.
 - Files outside the project root and package files are not checked for changes.
 - Typst 0.12 and 0.13 are not tested. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked. With Typst 0.11, the summary is laid out on the document's pages, with its header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.
