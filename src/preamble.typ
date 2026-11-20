@@ -726,6 +726,11 @@
 // The version laid out for the side-by-side layout, or none.
 #let redline-side = sys.inputs.at("redline-side", default: none)
 
+// Whether the binary keeps only the pages with marks and the summary
+// (`--input redline-only-changes`), so that a page of this PDF is not one of
+// the output.
+#let redline-only-changes = "redline-only-changes" in sys.inputs
+
 // On each side of the side-by-side layout, every change records its kind
 // as a change from the old version to the new one, an identity, so that
 // the binary can pair the pages of the two sides, its id and its content.
@@ -810,11 +815,11 @@
     let one = run.len() == 1
     let (pa, pb) = (redline-printed(a), redline-printed(b))
     let span(x, y) = if one [#x] else [#x–#y]
-    let pdf = [PDF #if one [page] else [pages] #span(a.page(), b.page())]
+    let pdf = if redline-only-changes [#if one [page] else [pages] #span(a.page(), b.page()) of the full PDF] else [PDF #if one [page] else [pages] #span(a.page(), b.page())]
     let p = if prefix { if one [p. ] else [pp. ] }
     if pa == none or pb == none {
-      if numbered or pa != pb { pdf } else [#p#span(a.page(), b.page())]
-    } else if pa == str(a.page()) and pb == str(b.page()) [#p#span(pa, pb)] else [#p#span(pa, pb) (#pdf)]
+      if numbered or pa != pb or redline-only-changes { pdf } else [#p#span(a.page(), b.page())]
+    } else if pa == str(a.page()) and pb == str(b.page()) or redline-only-changes [#p#span(pa, pb)] else [#p#span(pa, pb) (#pdf)]
   }).join[, ]
 }
 
@@ -1056,13 +1061,13 @@
   show: redline-own-text.with(6.5pt)
   set par(justify: false)
   let lead = if v.at("empty", default: false) [typst-redline found no changes] else [Changes marked by typst-redline]
-  let pages = redline-page-names((at.first().location(),))
+  let pages = if redline-only-changes [at the end] else [on #redline-page-names((at.first().location(),))]
   // The colours inside the link, which the document can style. Without
   // its first words where it would wrap; on white and at the right, to read
   // on a header band beside a title.
   let line(head) = [#redline-text(fill: redline-style.number, head)#redline-text(fill: redline-style.del, more)]
-  let full = line[#lead · summary on #pages]
-  let line = context if measure(full).width <= width { full } else { line[Summary on #pages] }
+  let full = line[#lead · summary #pages]
+  let line = context if measure(full).width <= width { full } else { line[Summary #pages] }
   let line = box(fill: white, outset: (x: 2pt, y: 1.5pt), radius: 1pt, line)
   let dy = calc.max(2pt, margin / 4 - 3pt)
   // Where the top margin has no room for it, it would cover the text.
@@ -1793,6 +1798,27 @@
   let drawn = query(<redline-page>).map(m => m.location().page())
   let unbarred = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location().page()).dedup().filter(p => p not in drawn)
   redline-ints(unbarred, <redline-unbarred>)
+  if redline-only-changes and redline-side == none {
+    // The first page of the summary, then each page that a mark, a bar or a
+    // bracket covers, or that holds the old place of moved text.
+    let span(a, b) = range(calc.min(a, b), calc.max(a, b) + 1)
+    let tags = query(<redline-tag>)
+    let marked = range(calc.quo(tags.len(), 2)).map(i => {
+      let (a, b) = (tags.at(2 * i), tags.at(2 * i + 1))
+      span(redline-start-at(a.location(), redline-value(a).at(6, default: none)).page(), b.location().page())
+    }).flatten()
+    for t in query(<redline-move>) {
+      let s = redline-move-start(redline-value(t).id)
+      marked += span(if s == none { t.location().page() } else { s.page() }, t.location().page())
+    }
+    let nums = query(<redline-numbers>).map(redline-value)
+    for k in nums.at(0, default: (:)).keys().filter(k => k.starts-with("m")) {
+      let from = redline-move-find("from", k.slice(1))
+      if from != none { marked.push(from.location().page()) }
+    }
+    let start = query(<redline-summary>).map(m => m.location().page())
+    redline-ints((start.at(0, default: 0), ..marked.sorted().dedup()), <redline-marked>)
+  }
   if redline-side != none {
     // The pages where the marks of each id end, in order: the tags of a mark
     // are the visible tags that follow each other, its id on the first.
@@ -1919,19 +1945,24 @@
     if total == 0 [No changes found between the two versions.] else [#total #if total == 1 [change] else [changes]#if apart == total [, not marked on the pages but listed below] else if apart > 0 [, #apart of them not marked on the pages but listed below].]
 
     // Pages by their number in this PDF, which is the number printed on
-    // them unless a page prints another.
+    // them unless a page prints another. Where pages are left out of the
+    // output, by the names that the margin uses.
     let printed = query(<redline-page>).all(m => redline-printed(m.location()) in (none, str(m.location().page())))
+    let page-at = (:)
+    for m in query(<redline-page>) { page-at.insert(str(m.location().page()), m.location()) }
     let rows = redline-section-rows(info, lost, nums)
     let min-level = calc.min(..rows.map(r => r.level), 9)
     let rows = rows.map(r => {
-      let pages = if r.pages.len() > 0 { redline-pages(r.pages) }
+      let pages = if r.pages.len() == 0 { none } else if redline-only-changes {
+        redline-page-names(r.pages.map(p => page-at.at(str(p), default: none)).filter(l => l != none), prefix: false)
+      } else { redline-pages(r.pages) }
       let (name, pages) = if r.heading == none { (r.name, pages) } else { (link(r.heading, r.name), link(r.heading, pages)) }
       (pad(left: (r.level - min-level) * 1.2em, name), if r.ns.len() > 0 { redline-number(r.ns) }, r.what, pages)
     }).flatten()
     if rows.len() > 0 {
       redline-head[Changes by section]
       let grey = text.with(size: 0.85em, fill: luma(110))
-      let head = (grey[Section], grey[No.], grey[Changes], grey(if printed [Page] else [PDF page]))
+      let head = (grey[Section], grey[No.], grey[Changes], grey(if printed or redline-only-changes [Page] else [PDF page]))
       // Columns are as wide as their content. Section names get their width
       // first, as long as the changes keep a third of what the numbers and
       // pages leave; neither gets less than its longest unbreakable part,

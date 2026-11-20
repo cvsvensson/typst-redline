@@ -52,6 +52,10 @@ Options:
                         side-by-side: changed pages of the old and the new
                         version next to each other (needs Typst 0.14 or later,
                         and an old version that compiles)
+  --only-changes        Keep only the pages with marks and the summary, with
+                        the page numbers of the full document (needs Typst
+                        0.12 or later; side-by-side shows only those pages
+                        anyway)
   --each-commit         Colour each change by the commit that made it, for at
                         most 6 commits between the two versions (one file
                         only)
@@ -102,6 +106,7 @@ struct Args {
     typst: String,
     keep: bool,
     side_by_side: bool,
+    only_changes: bool,
     steps: Option<StepArg>,
     mark_reviewed: bool,
     show_reviewed: bool,
@@ -176,6 +181,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         typst: "typst".into(),
         keep: false,
         side_by_side: false,
+        only_changes: false,
         steps: None,
         mark_reviewed: false,
         show_reviewed: false,
@@ -234,6 +240,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
                 };
                 a.styles.extend(keys.iter().map(|k| k.to_string()));
             }
+            "--only-changes" => a.only_changes = true,
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
                     "inline" => false,
@@ -717,11 +724,14 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     let version = typst_version(&a.typst);
     let deps = version.as_deref().is_some_and(|v| minor(v) >= (0, 14));
     let reads = reads.or_else(|| deps.then(Vec::new));
+    // The side-by-side layout shows only pages with changes anyway.
+    let only_changes = a.only_changes && !a.side_by_side;
     let preamble = match &a.preamble {
         Some(p) => {
             let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
             let needs = [
                 (a.side_by_side, "redline-side-by-side", "the side-by-side layout"),
+                (only_changes, "redline-marked", "--only-changes"),
                 (
                     a.steps.is_some(),
                     "redline-step-style",
@@ -750,6 +760,15 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     {
         return Err(format!(
             "the side-by-side layout needs Typst 0.14 or later, but {} is Typst {v}",
+            a.typst
+        ));
+    }
+    if only_changes
+        && let Some(v) = typst_version(&a.typst)
+        && minor(&v) < (0, 12)
+    {
+        return Err(format!(
+            "--only-changes needs Typst 0.12 or later, but {} is Typst {v}",
             a.typst
         ));
     }
@@ -883,6 +902,10 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         a.typst_args
             .extend(["--input".into(), format!("redline-fallback={}", fallbacks.join(","))]);
         a.typst_args.extend(style.iter().cloned());
+        if only_changes {
+            a.typst_args
+                .extend(["--input".into(), "redline-only-changes=true".into()]);
+        }
         let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
             let input = format!("redline-side={side}");
             let (entry, pdf) = (root.join(entry), dir.join(pdf));
@@ -976,6 +999,9 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 ];
                 let out = typst(&a, dir, "query", &args)?;
                 warn_unbarred(&ints(&out.stdout).unwrap_or_default(), &pdf.display().to_string());
+            }
+            if only_changes && let Err(e) = keep_marked_pages(&a, dir, &new.entry, &tmp) {
+                eprintln!("warning: the PDF has all pages, because --only-changes could not leave out the others: {e}");
             }
             let written = std::fs::copy(&tmp, &pdf);
             let _ = std::fs::remove_file(&tmp);
@@ -1689,12 +1715,17 @@ fn read_deps(dir: &Path) -> Option<Vec<String>> {
 }
 
 /// Run `typst <cmd>` on the project in `dir` with the user's arguments for
-/// typst, then `args`.
+/// typst, then `args`. A query gets only the arguments that set up the
+/// document's world, not those of the export.
 fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<Output, String> {
     Command::new(&a.typst)
         .args([cmd, "--root"])
         .arg(dir)
-        .args(&a.typst_args)
+        .args(if cmd == "query" {
+            world_args(&a.typst_args)
+        } else {
+            a.typst_args.clone()
+        })
         .args(args.iter().map(|a| a.as_ref()))
         .output()
         .map_err(|e| {
@@ -1703,6 +1734,35 @@ fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<
                 a.typst
             )
         })
+}
+
+/// The arguments among `args` for `typst compile` that `typst query` takes
+/// too, with their values.
+fn world_args(args: &[String]) -> Vec<String> {
+    const WITH_VALUE: [&str; 9] = [
+        "--input",
+        "--font-path",
+        "--package-path",
+        "--package-cache-path",
+        "--creation-timestamp",
+        "-j",
+        "--jobs",
+        "--features",
+        "--diagnostic-format",
+    ];
+    const FLAGS: [&str; 2] = ["--ignore-system-fonts", "--ignore-embedded-fonts"];
+    let mut kept = vec![];
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let name = arg.split('=').next().unwrap_or_default();
+        if FLAGS.contains(&name) || WITH_VALUE.contains(&name) {
+            kept.push(arg.clone());
+            if WITH_VALUE.contains(&name) && !arg.contains('=') {
+                kept.extend(it.next().cloned());
+            }
+        }
+    }
+    kept
 }
 
 /// Pair the pages of the two compiled sides, each given as (root, entry,
@@ -1883,6 +1943,37 @@ fn compose(
         ));
     }
     Ok(())
+}
+
+/// Compile the marked document in `dir` again to `to` with only the pages
+/// that the preamble lists as marked and the summary; `to` is left as it is
+/// if that fails.
+fn keep_marked_pages(a: &Args, dir: &Path, entry: &str, to: &Path) -> Result<(), String> {
+    let entry = dir.join(entry);
+    let args: [&dyn AsRef<OsStr>; 5] = [&entry, &"<redline-marked>", &"--field", &"key", &"--one"];
+    let out = typst(a, dir, "query", &args)?;
+    let ints = ints(&out.stdout);
+    let Some([summary, marked @ ..]) = ints.as_deref() else {
+        return Err(format!(
+            "cannot find the pages with marks, which --only-changes needs\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    };
+    let pages = marked
+        .iter()
+        .filter(|&&p| p < *summary)
+        .map(|p| format!("{p},"))
+        .collect::<String>()
+        + &format!("{summary}-");
+    let part = to.with_extension("pages.pdf");
+    let out = typst(a, dir, "compile", &[&entry, &part, &"--pages", &pages])?;
+    if !out.status.success() {
+        return Err(format!(
+            "typst compile --pages failed\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    std::fs::rename(&part, to).map_err(|e| e.to_string())
 }
 
 /// The number of pages of a PDF that typst wrote, if it has any.
