@@ -30,6 +30,12 @@ pub fn align(old: &Doc, new: &Doc) -> Vec<Step> {
             _ => region(&old.blocks, &new.blocks, op.old_range(), op.new_range(), &mut steps),
         }
     }
+    // Deleted blocks between two parts of one paragraph of the new version
+    // would break it: they go after the paragraph.
+    let joined = |s: &Step| matches!(*s, Step::Keep(_, n) | Step::Pair(_, n) | Step::Ins(n) if new.blocks[n].joined);
+    for run in steps.chunk_by_mut(|_, s| matches!(s, Step::Del(_)) || joined(s)) {
+        run[1..].sort_by_key(|s| matches!(s, Step::Del(_)));
+    }
     steps
 }
 
