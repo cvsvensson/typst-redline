@@ -4037,6 +4037,27 @@ fn a_project_style_file_applies_from_a_folder_above_before_style() {
 }
 
 #[test]
+fn the_example_style_files_apply() {
+    let dir = temp_dir("example-styles");
+    std::fs::write(dir.join("old.typ"), "Old words.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New words.").unwrap();
+    let styles = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/styles");
+    for f in std::fs::read_dir(styles).unwrap() {
+        let f = f.unwrap().path();
+        if f.extension().is_none_or(|e| e != "typ") {
+            continue;
+        }
+        let out = cli(&dir, &["old.typ", "new.typ", "--style", f.to_str().unwrap()]);
+        assert!(
+            out.status.success(),
+            "{}: {}",
+            f.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
 fn show_preamble_prints_the_preamble() {
     let out = cli(Path::new("."), &["--show-preamble"]);
     assert!(out.status.success());

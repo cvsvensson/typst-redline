@@ -19,6 +19,21 @@ A style file can also start from a latexdiff type, with the key `type`, such as 
 
 Two style files apply without an option, if they exist: the user's `typst-redline/style.typ` in `%APPDATA%` on Windows, and in `$XDG_CONFIG_HOME` or else `~/.config` on Linux and macOS; then a project's `.typst-redline.typ`, the first one found in the document's folder or a folder above it, up to `--root` or the git repository. `-t` and `--style` apply after them. An error in one of them is reported with its path.
 
+## Example style files
+
+[docs/styles](styles) holds a few to copy, shown here on the paper example:
+
+<table>
+<tr>
+<td><img src="styles/greyscale.png" width="260" alt="The paper page in greys: new words black on grey, deleted words grey and struck through"><br><a href="styles/greyscale.typ"><code>greyscale.typ</code></a>, for printing</td>
+<td><img src="styles/colour-blind.png" width="260" alt="The paper page with new content in blue and deleted content in orange"><br><a href="styles/colour-blind.typ"><code>colour-blind.typ</code></a>, blue and orange</td>
+</tr>
+<tr>
+<td><img src="styles/underline.png" width="260" alt="The paper page with new words underlined without highlight and no bars"><br><a href="styles/underline.typ"><code>underline.typ</code></a>, lines only</td>
+<td><img src="styles/journal.png" width="260" alt="The paper page with new text in dark blue, deleted content left out and black bars"><br><a href="styles/journal.typ"><code>journal.typ</code></a>, for a resubmission</td>
+</tr>
+</table>
+
 `-t UNDERLINE` gives latexdiff's default look; the [latexdiff types](#latexdiff-types) below lists the others. The page of the [gallery](gallery.md)'s paper example with each of them, and with `--style ins=purple --style ins-fill=none`:
 
 <table>
