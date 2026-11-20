@@ -85,6 +85,10 @@
   // at the baseline of its last line: the frame clears the descenders.
   ins-frame: 0.6pt,
   del-frame: (thickness: 0.6pt, dash: "dashed"),
+  // The two lines that cross out a deleted picture, on a white edge twice
+  // as thick, in the colour of `del` made lighter so that the picture
+  // stays legible; none tints a deleted picture as other blocks are.
+  cross: 0.75pt,
   outset: (x: 0.4em, top: 0.3em, bottom: 0.5em),
   // Whether deleted text, and deleted formulas, figures, tables, code
   // blocks and drawings, are shown; left out, they keep their bar and number.
@@ -137,8 +141,8 @@
 #let redline-aliases = ("0": "none", "off": "none", "1": "new-only", "2": "both")
 
 // Keys that hold a stroke, with the key of the colour it takes when it has
-// none of its own.
-#let redline-strokes = (underline: "ins", strike: "del", ins-frame: "ins", del-frame: "del", move-stroke: "move")
+// none of its own, or a function of the style that gives that colour.
+#let redline-strokes = (underline: "ins", strike: "del", ins-frame: "ins", del-frame: "del", move-stroke: "move", cross: st => st.del.transparentize(30%))
 
 // The types a key takes, where they are more than that of its default.
 #let redline-takes = (
@@ -196,7 +200,7 @@
   (left: at("left", "x"), top: at("top", "y"), right: at("right", "x"), bottom: at("bottom", "y"))
 }
 
-#let redline-resolve(st) = st + (outset: redline-sides(st.outset)) + redline-strokes.pairs().map(((k, c)) => (k, redline-stroke(st.at(k), redline-defaults.at(k), st.at(c)))).to-dict()
+#let redline-resolve(st) = st + (outset: redline-sides(st.outset)) + redline-strokes.pairs().map(((k, c)) => (k, redline-stroke(st.at(k), redline-defaults.at(k), if type(c) == function { c(st) } else { st.at(c) }))).to-dict()
 
 #let redline-style = redline-resolve(redline-given)
 
@@ -291,11 +295,11 @@
 // drawing such as an icon, which is framed at its own size.
 #let redline-drawing-box(c) = c.func() == box and c.at("body", default: none) != none and not redline-textual(c)
 
-// The two lines that cross out deleted content of size `w` by `h`, light
-// enough that the content stays legible, on a white edge that shows them
-// on a fill of their own colour.
-#let redline-cross(paint, w, h) = {
-  for s in (1.5pt + white.transparentize(45%), 0.75pt + paint.transparentize(30%)) {
+// The two lines in stroke `s` that cross out deleted content of size `w` by
+// `h`, on a white edge that shows them on a fill of their own colour.
+#let redline-cross(s, w, h) = if s != none {
+  let edge = redline-stroke((paint: white.transparentize(45%), thickness: 2 * s.thickness), s, none)
+  for s in (edge, s) {
     place(top + left, line(start: (0pt, 0pt), end: (w, h), stroke: s))
     place(top + left, line(start: (0pt, h), end: (w, 0pt), stroke: s))
   }
@@ -304,12 +308,12 @@
 // A frame around a block-level element, outside it so that nothing moves;
 // as wide as the element. It carries the mark's tags when the element
 // starts or ends the mark, so that the bar spans the frame. Deleted content
-// that is not struck is `cross`ed if it is a picture high enough for the
-// cross to stand clear, or else, like other such content, `tint`ed, so
-// that text in it stays legible.
+// that is not struck is `tint`ed, so that text in it stays legible, or
+// crossed out in stroke `cross` instead if it is a picture high enough for
+// the cross to stand clear.
 // A deleted element (`whole`) that fits on a page is not split across
 // pages, where the frame would hold only its last part.
-#let redline-frame(it, stroke, paint, cross: false, tint: false, whole: false, start: none, end: none, step: none, id: none) = layout(region => block(width: 100%, breakable: not whole or measure(block(width: region.width, it)).height > region.height, layout(size => {
+#let redline-frame(it, stroke, paint, cross: none, tint: false, whole: false, start: none, end: none, step: none, id: none) = layout(region => block(width: 100%, breakable: not whole or measure(block(width: region.width, it)).height > region.height, layout(size => {
   let st = redline-style
   let eq = it.func() == math.equation
   // Twice the width tells content that fills its width as unbounded room
@@ -341,15 +345,15 @@
   // The cross covers a figure's body and leaves its caption, which is
   // struck, alone.
   let (cw, ch) = if it.func() == figure { (body-w, measure(block(width: size.width, it.body)).height) } else { (w, h) }
-  let cross = cross and not empty and ch >= 0.3 * cw
-  let fill = if (cross or tint) and not cross { paint.transparentize(90%) }
+  let crossed = cross != none and not empty and ch >= 0.3 * cw
+  let fill = if tint and not crossed { paint.transparentize(90%) }
   place(top + a, box(width: w, height: h, {
     if not empty { place(rect(width: 100%, height: 100%, stroke: stroke, fill: fill, outset: st.outset)) }
-    if cross and it.func() == figure {
+    if crossed and it.func() == figure {
       let caption = it.at("caption", default: none)
       let above = caption != none and caption.at("position", default: figure.caption.position) == top
-      place(center, dy: if above { h - ch } else { 0pt }, box(width: cw, height: ch, redline-cross(paint, cw, ch)))
-    } else if cross { redline-cross(paint, w, h) }
+      place(center, dy: if above { h - ch } else { 0pt }, box(width: cw, height: ch, redline-cross(cross, cw, ch)))
+    } else if crossed { redline-cross(cross, w, h) }
     place(top + left, if start != none { redline-tag(start, -st.outset.top, step: step, id: id) })
     place(bottom + left, if end != none { redline-tag("end", st.outset.bottom, width: size.width) })
   }))
@@ -500,7 +504,7 @@
       // A strike reaches only the words of an equation.
       let eq = kind == "del" and c.func() == math.equation
       let tinted = kind == "del" and st.block-color
-      let f = redline-frame(c, stroke, paint, cross: tinted and picture, tint: tinted and (own or eq), whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
+      let f = redline-frame(c, stroke, paint, cross: if tinted and picture { st.cross }, tint: tinted and (own or eq), whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
       out.push(if not st.block-color { plain(f) } else if eq { plain(text(fill: paint, f)) } else if not own { frame-style(f) } else if c.func() == figure {
         show figure.caption: frame-style
         plain(f)
@@ -526,7 +530,7 @@
       let c = if redline-drawing-box(c) {
         box(stroke: stroke, outset: st.outset.top, {
           c
-          if kind == "del" and st.block-color { context { let s = measure(c); redline-cross(paint, s.width, s.height) } }
+          if kind == "del" and st.block-color { context { let s = measure(c); redline-cross(st.cross, s.width, s.height) } }
         })
       } else { c }
       run.push(if i == n - 1 and broken != none { broken } else if i == n - 1 and styled { redline-end-in(c, end-tag) } else { c })
@@ -1098,14 +1102,19 @@
 }
 
 // A change bar `len` long in `paint`, unless the style gives bars a colour.
-// A deletion bar is thinner and dashed, with whole dashes at its ends and at
-// least three, so that a short one does not read as a colon.
+// A deletion bar is dashed, with gaps as wide as the bar, dashes twice as
+// long, whole dashes at its ends and at least three, so that a short one
+// does not read as a colon.
 #let redline-bar(len, ins, paint, st) = {
   let paint = if st.bars != auto { st.bars } else { paint }
-  let k = calc.max(3, calc.round((len + 1.5pt) / 4.5pt))
-  let space = calc.min(1.5pt, len / (2 * k))
+  let w = st.del-bar-width.to-absolute()
+  let dash = if not ins and w > 0pt {
+    let k = calc.max(3, calc.round((len + w) / (3 * w)))
+    let space = calc.min(w, len / (2 * k))
+    ((len - (k - 1) * space) / k, space)
+  }
   line(angle: 90deg, length: len, stroke: if ins { st.bar-width + paint } else {
-    (paint: paint, thickness: st.del-bar-width, dash: ((len - (k - 1) * space) / k, space))
+    (paint: paint, thickness: st.del-bar-width, dash: dash)
   })
 }
 
