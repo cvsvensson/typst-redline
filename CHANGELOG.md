@@ -21,7 +21,7 @@ First release. `typst-redline` makes a PDF of the new version of a Typst documen
 - `--each-commit` and `--steps` colour each change by the commit or group of commits that made it.
 - `--mark-reviewed` and `--since reviewed` show what changed since a document was last read.
 - `--list-files` prints the files a document is made of.
-- Run without a file in a terminal, it asks for the file and the version to compare with.
+- Run without a file in a terminal, it asks for the file and the version to compare with, or several versions to colour as steps.
 - `--style` changes colours, strokes and other settings of the marks, `-t` starts from a latexdiff markup type, `--graphics-markup` shows changed formulas and figures as latexdiff's option does, and `-p`/`--preamble` replaces the styling whole; `--show-preamble` prints the built-in one.
 - Compiles with the `typst` on `PATH`. Tested with Typst 0.15.1 on Linux, macOS and Windows and with 0.14.2 on Linux; the tests also pass with 0.11.1. Typst 0.12 and 0.13 are not tested. Before 0.14, the side-by-side layout does not work and files read through a computed path are not checked.
 - A VS Code extension in `vscode/` runs the tool on the open file.
