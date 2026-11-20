@@ -1172,6 +1172,27 @@ fn inserted_text_has_its_colour_under_the_documents_text_colour() {
 }
 
 #[test]
+fn pointer_line_is_left_out_where_the_top_margin_has_no_room() {
+    // Grey glyphs near the top edge: the pointer line, as the change is lower.
+    let pointer = |name: &str, top: &str| {
+        let doc = |w: &str| format!("#set page(margin: (top: {top}, rest: 1cm))\nFirst.\n\nSecond.\n\nThird {w}.\n");
+        let r = redline_of(&doc("old"), &doc("new"));
+        let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+        let page = glyphs(name, &files)?.remove(0);
+        Some(
+            page.iter()
+                .filter(|g| g.y < 15. && g.fill.as_deref() == Some("#6e6e6e"))
+                .count(),
+        )
+    };
+    let Some(none) = pointer("pointer-no-margin", "0pt") else {
+        return;
+    };
+    assert_eq!(none, 0);
+    assert!(pointer("pointer-margin", "1cm").unwrap() > 0);
+}
+
+#[test]
 fn text_with_a_colour_of_its_own_keeps_it_in_a_mark() {
     let tag = "#let tag(t) = box(fill: navy, inset: 2pt, text(fill: white, t))\n";
     let r = redline_of(

@@ -73,7 +73,7 @@ The [gallery](docs/gallery.md) has a picture and the details of each. With the d
 
 ## The summary page
 
-The last page, or pages, list every change by its number, section by section, and say in words what is not marked on the pages, with its source. A line at the top of the first page says where the summary is and how many changes it lists that are not marked on the pages. The [gallery](docs/gallery.md#the-summary-page) describes each part.
+The last page, or pages, list every change by its number, section by section, and say in words what is not marked on the pages, with its source. A line at the top of the first page, where its top margin has room for it, says where the summary is and how many changes it lists that are not marked on the pages. The [gallery](docs/gallery.md#the-summary-page) describes each part.
 
 <img src="docs/report-summary.png" width="480" alt="The summary page: a sentence with the number of changes, a table of changed sections with the numbers of their changes, counts and pages, a changed title shown as old and new text, a new bibliography entry, the commits in the range, and the legend">
 
