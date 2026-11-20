@@ -23,6 +23,9 @@ picture() {
 run "$docs/paper" old.typ new.typ
 picture 1 paper
 
+run "$docs/paper" old.typ new.typ -t UNDERLINE
+picture 1 paper-underline
+
 run "$docs/moved" old.typ new.typ
 picture 1 moved
 
