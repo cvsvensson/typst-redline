@@ -127,7 +127,7 @@ typst-redline talk.typ --since HEAD~1 --layout side-by-side
 
 ## Known problems
 
-The ones you are most likely to meet; [docs/known-problems.md](docs/known-problems.md) has the full list, each tried with the current version.
+The ones you are most likely to meet; see [docs/known-problems.md](docs/known-problems.md) for more.
 
 - In the default layout, deleted content takes room on the page, so line and page breaks shift, and on a full slide the old and the new version of a figure each take a page of their own; use side by side for slides, or `--graphics-markup new-only`, which leaves the old figure out.
 - Some moved text shows as deleted at one place and inserted at the other, for example a sentence moved within or between paragraphs, or a passage rewritten so much that it keeps less than about 60% of its words.
