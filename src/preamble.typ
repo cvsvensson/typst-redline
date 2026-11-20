@@ -972,7 +972,11 @@
   let full = line[#lead · summary on #pages]
   let line = context if measure(full).width <= width { full } else { line[Summary on #pages] }
   let line = box(fill: white, outset: (x: 2pt, y: 1.5pt), radius: 1pt, line)
-  place(top + left, dx: x, dy: calc.max(2pt, margin / 4 - 3pt), block(width: width, align(end, link(at.first().location(), line))))
+  let dy = calc.max(2pt, margin / 4 - 3pt)
+  // Where the top margin has no room for it, it would cover the text.
+  context if dy + measure(line).height + 1.5pt <= margin {
+    place(top + left, dx: x, dy: dy, block(width: width, align(end, link(at.first().location(), line))))
+  }
 }
 
 // The bars of one page, drawn from the page foreground or background
