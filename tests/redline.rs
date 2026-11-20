@@ -3179,6 +3179,22 @@ fn only_changes_keeps_the_marked_pages_and_the_summary() {
     let out = cli(&dir, &["old.typ", "new.typ", "-o", "out.pdf", "--only-changes"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
+    // An argument of the export only is not passed to the query of the pages.
+    let out = cli(
+        &dir,
+        &[
+            "old.typ",
+            "new.typ",
+            "-o",
+            "out.pdf",
+            "--only-changes",
+            "--",
+            "--ppi",
+            "100",
+        ],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
 }
 
 #[test]

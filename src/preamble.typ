@@ -1859,20 +1859,24 @@
     if total == 0 [No changes found between the two versions.] else [#total #if total == 1 [change] else [changes]#if apart == total [, not marked on the pages but listed below] else if apart > 0 [, #apart of them not marked on the pages but listed below].]
 
     // Pages by their number in this PDF, which is the number printed on
-    // them unless a page prints another, or one without a number is left
-    // out of the output.
-    let printed = query(<redline-page>).all(m => redline-printed(m.location()) in (if redline-only-changes { () } else { (none,) }) + (str(m.location().page()),))
+    // them unless a page prints another. Where pages are left out of the
+    // output, by the names that the margin uses.
+    let printed = query(<redline-page>).all(m => redline-printed(m.location()) in (none, str(m.location().page())))
+    let page-at = (:)
+    for m in query(<redline-page>) { page-at.insert(str(m.location().page()), m.location()) }
     let rows = redline-section-rows(info, lost, nums)
     let min-level = calc.min(..rows.map(r => r.level), 9)
     let rows = rows.map(r => {
-      let pages = if r.pages.len() > 0 { redline-pages(r.pages) }
+      let pages = if r.pages.len() == 0 { none } else if redline-only-changes {
+        redline-page-names(r.pages.map(p => page-at.at(str(p), default: none)).filter(l => l != none), prefix: false)
+      } else { redline-pages(r.pages) }
       let (name, pages) = if r.heading == none { (r.name, pages) } else { (link(r.heading, r.name), link(r.heading, pages)) }
       (pad(left: (r.level - min-level) * 1.2em, name), if r.ns.len() > 0 { redline-number(r.ns) }, r.what, pages)
     }).flatten()
     if rows.len() > 0 {
       redline-head[Changes by section]
       let grey = text.with(size: 0.85em, fill: luma(110))
-      let head = (grey[Section], grey[No.], grey[Changes], grey(if printed [Page] else if redline-only-changes [Page of the full PDF] else [PDF page]))
+      let head = (grey[Section], grey[No.], grey[Changes], grey(if printed or redline-only-changes [Page] else [PDF page]))
       // Columns are as wide as their content. Section names get their width
       // first, as long as the changes keep a third of what the numbers and
       // pages leave; neither gets less than its longest unbreakable part,

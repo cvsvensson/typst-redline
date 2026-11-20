@@ -39,7 +39,7 @@ suite("Typst Redline commands", () => {
   };
   const spawn = cp.spawn;
   const config = vscode.workspace.getConfiguration("typstRedline");
-  const settings = ["executable", "typst", "extraArgs", "openPdf", "root", "onlyChanges"];
+  const settings = ["executable", "typst", "extraArgs", "openPdf", "root"];
   let tmp: string;
   let file: string;
   // The labels to pick in the lists shown, in order: "" accepts the active item, a missing
@@ -268,16 +268,6 @@ suite("Typst Redline commands", () => {
       assertOpenedPdf();
       assert.deepStrictEqual(runs[0].slice(5), args, view.join(" "));
     }
-  });
-
-  test("onlyChanges passes --only-changes", async () => {
-    await config.update("onlyChanges", true, vscode.ConfigurationTarget.Global);
-    await setView("Marked");
-    picks = ["second"];
-    runs = [];
-    await show();
-    assertOpenedPdf();
-    assert.deepStrictEqual(runs[0].slice(5), ["--only-changes"]);
   });
 
   test("more commits than colours are coloured in six steps", async () => {

@@ -79,7 +79,7 @@ The last page, or pages, list every change by its number, section by section, an
 
 ## Only the changed pages
 
-`--only-changes` leaves out the pages without a mark and keeps the summary, for a long document with a few changes. The pages keep the numbers printed on them; a page without a printed number is named by its place in the full PDF, such as *page 8 of the full PDF*. It needs Typst 0.12 or later.
+`--only-changes` leaves out the pages without a mark and keeps the summary, for a long document with a few changes. The pages keep the numbers printed on them, and the summary and margin notes name pages by those numbers; a page without a printed number is named by its place in the full PDF, such as *page 8 of the full PDF*. It needs Typst 0.12 or later.
 
 ```
 typst-redline thesis.typ --since sent-to-anna --only-changes

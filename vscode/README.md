@@ -38,5 +38,4 @@ Settings, with their defaults:
 - `typstRedline.root`: empty, for the workspace folder, or the git repository if the workspace folder contains it.
 - `typstRedline.contextMenu`: `true`; `false` removes the right-click entries in the Explorer.
 - `typstRedline.openPdf`: `auto`; `editor` or `external` choose one place.
-- `typstRedline.onlyChanges`: `false`; `true` keeps only the pages with marks and the summary in the marked view.
 - `typstRedline.extraArgs`: empty; further arguments, such as `["--no-moves"]` or `["--", "--font-path", "fonts"]`. The command sets `--since`, `--to`, `--layout`, `--each-commit` and `--steps` itself and refuses to run if this setting holds one of them.

@@ -905,8 +905,8 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 let out = typst(&a, dir, "query", &args)?;
                 warn_unbarred(&ints(&out.stdout).unwrap_or_default(), &pdf.display().to_string());
             }
-            if only_changes {
-                keep_marked_pages(&a, dir, &new.entry, &tmp)?;
+            if only_changes && let Err(e) = keep_marked_pages(&a, dir, &new.entry, &tmp) {
+                eprintln!("warning: the PDF has all pages, because --only-changes could not leave out the others: {e}");
             }
             let written = std::fs::copy(&tmp, &pdf);
             let _ = std::fs::remove_file(&tmp);
@@ -1559,12 +1559,17 @@ fn read_deps(dir: &Path) -> Option<Vec<String>> {
 }
 
 /// Run `typst <cmd>` on the project in `dir` with the user's arguments for
-/// typst, then `args`.
+/// typst, then `args`. A query gets only the arguments that set up the
+/// document's world, not those of the export.
 fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<Output, String> {
     Command::new(&a.typst)
         .args([cmd, "--root"])
         .arg(dir)
-        .args(&a.typst_args)
+        .args(if cmd == "query" {
+            world_args(&a.typst_args)
+        } else {
+            a.typst_args.clone()
+        })
         .args(args.iter().map(|a| a.as_ref()))
         .output()
         .map_err(|e| {
@@ -1573,6 +1578,35 @@ fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<
                 a.typst
             )
         })
+}
+
+/// The arguments among `args` for `typst compile` that `typst query` takes
+/// too, with their values.
+fn world_args(args: &[String]) -> Vec<String> {
+    const WITH_VALUE: [&str; 9] = [
+        "--input",
+        "--font-path",
+        "--package-path",
+        "--package-cache-path",
+        "--creation-timestamp",
+        "-j",
+        "--jobs",
+        "--features",
+        "--diagnostic-format",
+    ];
+    const FLAGS: [&str; 2] = ["--ignore-system-fonts", "--ignore-embedded-fonts"];
+    let mut kept = vec![];
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let name = arg.split('=').next().unwrap_or_default();
+        if FLAGS.contains(&name) || WITH_VALUE.contains(&name) {
+            kept.push(arg.clone());
+            if WITH_VALUE.contains(&name) && !arg.contains('=') {
+                kept.extend(it.next().cloned());
+            }
+        }
+    }
+    kept
 }
 
 /// Pair the pages of the two compiled sides, each given as (root, entry,
@@ -1756,7 +1790,8 @@ fn compose(
 }
 
 /// Compile the marked document in `dir` again to `to` with only the pages
-/// that the preamble lists as marked and the summary.
+/// that the preamble lists as marked and the summary; `to` is left as it is
+/// if that fails.
 fn keep_marked_pages(a: &Args, dir: &Path, entry: &str, to: &Path) -> Result<(), String> {
     let entry = dir.join(entry);
     let args: [&dyn AsRef<OsStr>; 5] = [&entry, &"<redline-marked>", &"--field", &"key", &"--one"];
@@ -1774,14 +1809,15 @@ fn keep_marked_pages(a: &Args, dir: &Path, entry: &str, to: &Path) -> Result<(),
         .map(|p| format!("{p},"))
         .collect::<String>()
         + &format!("{summary}-");
-    let out = typst(a, dir, "compile", &[&entry, &to, &"--pages", &pages])?;
+    let part = to.with_extension("pages.pdf");
+    let out = typst(a, dir, "compile", &[&entry, &part, &"--pages", &pages])?;
     if !out.status.success() {
         return Err(format!(
             "typst compile --pages failed\n{}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    Ok(())
+    std::fs::rename(&part, to).map_err(|e| e.to_string())
 }
 
 /// The number of pages of a PDF that typst wrote, if it has any.

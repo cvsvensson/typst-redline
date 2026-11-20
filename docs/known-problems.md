@@ -49,6 +49,7 @@ Each of these was tried with the current version. Within each group, the ones a 
 
 - Package files are not checked for changes.
 - `--only-changes` leaves out a page whose only change is listed on the summary, such as a page that a changed `#set` rule or a reflow redraws.
+- With `--only-changes`, links on the summary and cross-references in the text that lead to a page left out lead nowhere, and with Typst 0.15 the PDF has no tags for accessibility, as with `typst compile --pages`.
 - Two plain files whose projects need different roots, such as two copies of a project that use paths starting with `/`, cannot be compared, because `--root` is one folder for both; comparing git revisions of the project works.
 
 ## Typst versions

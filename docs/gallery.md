@@ -87,7 +87,7 @@ The summary is set in the document's font, without its template, header, footer,
 
 ## Only the changed pages
 
-With `--only-changes`, the PDF has only the pages that carry a mark, including the old place of moved text, and the summary. A page whose only change is listed on the summary, such as one that a changed `#set` rule redraws, is left out. The pointer line on the first page, if that page is kept, says that the summary is at the end, and pages without a printed number are named by their place in the full PDF.
+With `--only-changes`, the PDF has only the pages that carry a mark, including the old place of moved text, and the summary. A page whose only change is listed on the summary, such as one that a changed `#set` rule redraws, is left out. The pointer line on the first page, if that page is kept, says that the summary is at the end, and the summary and margin notes name pages by the numbers printed on them, or by their place in the full PDF where a page has none.
 
 ## Who changed what
 
