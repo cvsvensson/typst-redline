@@ -46,6 +46,9 @@ pub struct Options {
     /// Diff inside the content blocks of code expressions that differ only
     /// there; otherwise such expressions are compared whole.
     pub content_blocks: bool,
+    /// Mark the changed parts of a changed formula; otherwise the formula is
+    /// compared whole.
+    pub fine_math: bool,
 }
 
 /// A commit as the summary lists it.

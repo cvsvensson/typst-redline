@@ -9,12 +9,14 @@ use typst_redline::{
 const FULL: Options = Options {
     eval_deleted: true,
     content_blocks: true,
+    fine_math: true,
 };
 
 /// Deleted code shown by name instead of evaluated.
 const BY_NAME: Options = Options {
     eval_deleted: false,
     content_blocks: true,
+    fine_math: true,
 };
 
 fn fixtures() -> impl Iterator<Item = String> {
@@ -169,11 +171,145 @@ fn changed_spacing_in_raw_text_is_marked() {
     assert!(out.contains("#redline-ins()[`a  b`]"), "{out}");
 }
 
+/// Assert that the redline of fixture `name` holds each of `marks`.
+fn assert_marks(name: &str, marks: &[&str]) {
+    let out = body(name);
+    for m in marks {
+        assert!(out.contains(m), "{m}\n{out}");
+    }
+}
+
 #[test]
-fn inline_math_is_atomic() {
-    let out = body("inline-math");
-    assert!(out.contains("[$T_R^((N))$]"), "{out}");
-    assert!(out.contains("[$T_R^((N,k))$]"), "{out}");
+fn changed_exponent_is_marked_inside_the_formula() {
+    assert_marks(
+        "math-exponent",
+        &[
+            "redline-del(math: true, gap: true)[$2$]",
+            "redline-ins(math: true)[$3$]",
+        ],
+    );
+}
+
+#[test]
+fn new_term_is_marked_inside_the_formula() {
+    assert_marks("math-term", &["redline-ins(math: true)[$+ lambda x^4$]"]);
+}
+
+#[test]
+fn changed_part_of_a_fraction_is_marked_inside_it() {
+    assert_marks(
+        "math-fraction",
+        &[
+            "redline-del(math: true, gap: true)[$E$]",
+            "redline-ins(math: true)[$(E - mu)$]",
+        ],
+    );
+}
+
+#[test]
+fn changed_matrix_cell_is_marked_inside_the_matrix() {
+    assert_marks(
+        "math-matrix",
+        &[
+            "redline-del(math: true, gap: true)[$4$]",
+            "redline-ins(math: true)[$5$]",
+        ],
+    );
+}
+
+#[test]
+fn embedded_code_in_a_formula_is_marked_with_its_hash() {
+    assert_marks(
+        "math-code",
+        &[
+            "redline-del(math: true, gap: true)[$#x$]",
+            "redline-ins(math: true)[$#y$]",
+        ],
+    );
+}
+
+#[test]
+fn deleted_part_before_a_sign_is_marked_alone() {
+    assert_marks("math-sign-after-deletion", &["redline-del(math: true)[$b$]"]);
+}
+
+#[test]
+fn replaced_operator_is_marked_inside_the_formula() {
+    assert_marks(
+        "math-operator",
+        &[
+            "redline-del(math: true, gap: true)[$+$]",
+            "redline-ins(math: true)[$-$]",
+        ],
+    );
+}
+
+#[test]
+fn changes_apart_by_a_short_part_are_one_change() {
+    assert_marks(
+        "math-phrase",
+        &[
+            "redline-del(math: true, gap: true)[$b c d$]",
+            "redline-ins(math: true)[$x c y$]",
+        ],
+    );
+}
+
+#[test]
+fn inserted_line_of_a_formula_is_marked_whole() {
+    assert_marks("math-line-inserted", &["redline-ins(math: true)[$\\\n  &= e$]"]);
+}
+
+#[test]
+fn deleted_line_of_a_formula_is_marked_whole() {
+    assert_marks("math-line-deleted", &["redline-del(math: true)[$\\\n  &= r $]"]);
+}
+
+#[test]
+fn rewritten_formula_is_marked_whole() {
+    assert_marks(
+        "math-rewrite",
+        &["redline-ins(block: true)[$ sum_(n=0)^infinity a_n = lim_(N -> infinity) S_N $]"],
+    );
+}
+
+#[test]
+fn formula_with_joined_lines_is_marked_whole() {
+    assert_marks("math-lines-joined", &["redline-ins(block: true)[$ x &= y + z $]"]);
+}
+
+#[test]
+fn side_by_side_pairs_a_line_inserted_in_an_aligned_formula() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-aligned-line");
+    for side in ["old", "new"] {
+        let src = read_fixture("math-line-inserted", side, "main.typ").unwrap();
+        std::fs::write(dir.join(format!("{side}.typ")), src).unwrap();
+    }
+    assert_eq!(shown_pairs(&dir), ["(1,), new: (1,)"]);
+}
+
+/// The summary's legend for the redline of fixture `name`, as `repr` shows
+/// it without white space.
+fn legend(name: &str) -> Option<String> {
+    let body = body(name);
+    let info = body.split_once("redline-summary(")?.1.split_once("\n)) }")?.0;
+    let probe = format!(
+        "#import \"/{PREAMBLE_PATH}\": redline-marks-legend\n#metadata(repr(redline-marks-legend({info}))))<probe>\n"
+    );
+    let files = [(PREAMBLE_PATH.into(), PREAMBLE.into()), ("main.typ".into(), probe)];
+    Some(query(&compile(&format!("{name}-legend"), &files)?, "<probe>"))
+}
+
+#[test]
+fn legend_shows_marks_inside_formulas_where_there_are_some() {
+    let (Some(fine), Some(whole)) = (legend("math-term"), legend("math-rewrite")) else {
+        return;
+    };
+    assert!(fine.contains("insertedinaformula"), "{fine}");
+    assert!(!whole.contains("inaformula"), "{whole}");
 }
 
 #[test]
@@ -861,8 +997,15 @@ fn query(dir: &Path, label: &str) -> String {
 /// The `field` of the elements that `selector` finds in the compiled project
 /// in `dir`.
 fn query_field(dir: &Path, selector: &str, field: &str) -> String {
+    query_with(dir, &[], selector, field)
+}
+
+/// `query_field` with `--input` arguments such as `redline-style=...`.
+fn query_with(dir: &Path, inputs: &[&str], selector: &str, field: &str) -> String {
     let out = Command::new("typst")
-        .args(["query", "--root"])
+        .arg("query")
+        .args(inputs.iter().flat_map(|i| ["--input", i]))
+        .arg("--root")
         .arg(dir)
         .arg(dir.join("main.typ"))
         .args([selector, "--field", field])
@@ -1550,11 +1693,7 @@ fn keeps_the_contract(name: &str) {
             "--layout".as_ref(),
             layout.as_ref(),
         ];
-        let run = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
-            .current_dir(&*out)
-            .args(args)
-            .output()
-            .unwrap();
+        let run = bin().current_dir(&*out).args(args).output().unwrap();
         let stderr = String::from_utf8_lossy(&run.stderr);
         assert!(
             run.status.success() && pdf_pages(&pdf) > 0 && !stderr.contains("did not converge"),
@@ -2157,12 +2296,16 @@ fn a_call_that_reads_a_changed_file_is_a_change_where_it_stands() {
 
 // CLI
 
+/// The binary, without the user's own style file.
+fn bin() -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_typst-redline"));
+    let none = std::env::temp_dir().join("typst-redline-no-settings");
+    c.env("APPDATA", &none).env("XDG_CONFIG_HOME", &none);
+    c
+}
+
 fn cli(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_typst-redline"))
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .unwrap()
+    bin().current_dir(dir).args(args).output().unwrap()
 }
 
 /// The generated entry file of a successful run with `--keep-typ`.
@@ -2650,6 +2793,82 @@ fn to_with_a_range_is_a_usage_error() {
     let dir = temp_dir("to-range");
     let out = cli(&dir, &["main.typ", "--since", "a..b", "--to", "c"]);
     assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn r_once_is_since() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("r-once", &["alpha"]);
+    std::fs::write(dir.join("doc/main.typ"), doc("beta")).unwrap();
+    let src = marked(&dir, &["doc/main.typ", "-r", "c-alpha"], "main.typ");
+    assert_compared(&src, "alpha", "beta");
+}
+
+#[test]
+fn r_twice_is_since_and_to() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("r-twice", &["alpha", "beta", "gamma"]);
+    let r = marked(&dir, &["doc/main.typ", "-r", "c-alpha", "-r", "c-beta"], "main.typ");
+    let since = marked(
+        &dir,
+        &["doc/main.typ", "--since", "c-alpha", "--to", "c-beta"],
+        "main.typ",
+    );
+    assert_eq!(r, since);
+}
+
+#[test]
+fn r_with_since_is_a_usage_error() {
+    let dir = temp_dir("r-since");
+    let out = cli(&dir, &["main.typ", "-r", "a", "--since", "b"]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn labels_name_the_versions_on_the_summary() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("labels");
+    std::fs::write(dir.join("old.typ"), "Old.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New.").unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-L", "Sent", "--label", "Draft", "--keep-typ"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let kept = Path::new(stderr.lines().find_map(|l| l.strip_prefix("kept ")).unwrap());
+    // The summary shows each label as text of its own.
+    let show = r#"#show regex("Sent|Draft"): it => [#metadata(it.text)<probe>#it]"#;
+    let src = std::fs::read_to_string(kept.join("new.typ")).unwrap();
+    std::fs::write(kept.join("main.typ"), format!("{show}\n{src}")).unwrap();
+    let shown = query(kept, "<probe>");
+    std::fs::remove_dir_all(kept).unwrap();
+    assert!(shown.contains("Sent") && shown.contains("Draft"), "{shown}");
+}
+
+#[test]
+fn labels_leave_diagnostics_naming_the_revisions() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("labels-diagnostics", &["alpha"]);
+    let out = cli(&dir, &["doc/main.typ", "--since", "c-alpha", "-L", "Sent"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no changes found between c-alpha and"), "{stderr}");
+}
+
+#[test]
+fn a_latexdiff_option_names_what_takes_its_place() {
+    let dir = temp_dir("latexdiff-pdf");
+    let out = cli(&dir, &["old.typ", "new.typ", "--pdf"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("always writes a PDF"));
 }
 
 #[test]
@@ -3170,6 +3389,41 @@ fn side_by_side_shows_a_pure_move() {
 }
 
 #[test]
+fn only_changes_keeps_the_marked_pages_and_the_summary() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("only-changes");
+    let doc = |word: &str| {
+        let pages: Vec<String> = (1..=5)
+            .map(|i| format!("Page {i} {}.", if i == 3 { word } else { "stays" }))
+            .collect();
+        format!("#set page(height: 6cm)\n{}\n", pages.join("\n#pagebreak()\n"))
+    };
+    std::fs::write(dir.join("old.typ"), doc("before")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc("after")).unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ", "-o", "out.pdf", "--only-changes"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
+    // An argument of the export only is not passed to the query of the pages.
+    let out = cli(
+        &dir,
+        &[
+            "old.typ",
+            "new.typ",
+            "-o",
+            "out.pdf",
+            "--only-changes",
+            "--",
+            "--ppi",
+            "100",
+        ],
+    );
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
+}
+
+#[test]
 fn side_by_side_shows_a_moved_slide_next_to_its_old_page() {
     if !typst_available() || typst_before_0_14() {
         return;
@@ -3221,7 +3475,7 @@ fn side_by_side_needs_the_preamble_function() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        out.status.code() == Some(1) && stderr.contains("does not define redline-side-by-side"),
+        out.status.code() == Some(1) && stderr.contains("does not use redline-side-by-side"),
         "{stderr}"
     );
 }
@@ -3318,7 +3572,7 @@ fn typst_root_sets_the_root() {
     std::fs::write(dir.join("shared.typ"), "Shared.\n").unwrap();
     std::fs::write(dir.join("doc/old.typ"), "#include \"/shared.typ\"\nOld.\n").unwrap();
     std::fs::write(dir.join("doc/new.typ"), "#include \"/shared.typ\"\nNew.\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+    let out = bin()
         .current_dir(dir.join("doc"))
         .env("TYPST_ROOT", &*dir)
         .args(["old.typ", "new.typ"])
@@ -3333,7 +3587,7 @@ fn root_from_typst_root_is_named_in_errors() {
     std::fs::create_dir(dir.join("root")).unwrap();
     std::fs::write(dir.join("old.typ"), "Old.").unwrap();
     std::fs::write(dir.join("new.typ"), "New.").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+    let out = bin()
         .current_dir(&*dir)
         .env("TYPST_ROOT", dir.join("root"))
         .args(["old.typ", "new.typ"])
@@ -3358,7 +3612,7 @@ fn file_outside_the_root_suggests_the_repository_as_root() {
         format!("#include \"../shared.typ\"\n{}", doc("beta")),
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+    let out = bin()
         .current_dir(&*dir)
         .env_remove("TYPST_ROOT")
         .args(["doc/main.typ"])
@@ -3608,7 +3862,7 @@ fn each_commit_needs_the_preamble_function() {
         ],
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("does not define redline-step-style"), "{stderr}");
+    assert!(stderr.contains("does not use redline-step-style"), "{stderr}");
 }
 
 /// A repository whose `doc/main.typ` gains a paragraph per commit: `lines`
@@ -3833,6 +4087,224 @@ fn set_rule_of_a_show_rule_is_listed_with_it() {
     );
     let texts: Vec<&str> = r.changes.iter().map(|c| c.text.as_str()).collect();
     assert_eq!(texts, ["show emph: set text(fill: blue)"]);
+}
+
+#[test]
+fn a_style_colours_the_strike_through_too() {
+    let r = redline_of("Old words.\n", "New words.\n");
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let Some(dir) = compile("style-input", &files) else {
+        return;
+    };
+    let out = Command::new("typst")
+        .args(["compile", "--root"])
+        .arg(&*dir)
+        .args(["--input", r##"redline-style=(("test", (del: rgb("#00c000"))),)"##])
+        .arg(dir.join("main.typ"))
+        .arg(dir.join("page-{n}.svg"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let svg = std::fs::read_to_string(dir.join("page-1.svg")).unwrap();
+    assert!(svg.contains(r##"stroke="#00c000""##));
+}
+
+#[test]
+fn an_unknown_style_key_or_a_value_of_another_type_is_an_error() {
+    let dir = temp_dir("style-unknown-key");
+    std::fs::write(dir.join("old.typ"), "Old.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New.").unwrap();
+    for (args, error) in [
+        (["--style", "dell=green"], "error: --style dell=green: no key dell"),
+        (
+            ["--style", "bars=1"],
+            "error: --style bars=1: bars takes auto, color or none",
+        ),
+        (["-t", "wavy"], "error: --type wavy: no type wavy"),
+        (
+            ["--graphics-markup", "all"],
+            "error: --graphics-markup all: no graphics-markup all",
+        ),
+    ] {
+        let out = cli(&dir, &[&["old.typ", "new.typ"], &args[..]].concat());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.code() == Some(2) && stderr.contains(error), "{stderr}");
+        assert!(!stderr.contains("note:") && !stderr.contains("redline.typ"), "{stderr}");
+    }
+}
+
+#[test]
+fn a_latexdiff_type_and_a_style_file_apply() {
+    let dir = temp_dir("style-type");
+    std::fs::write(dir.join("old.typ"), "Old words.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New words.").unwrap();
+    std::fs::write(dir.join("s.typ"), "(bars: rgb(\"#00c000\")) // mine").unwrap();
+    let args = [
+        "-t",
+        "CChangeBar",
+        "--style",
+        "s.typ",
+        "-o",
+        "out.pdf",
+        "--",
+        "--format",
+        "svg",
+        "--pages",
+        "1",
+    ];
+    let out = cli(&dir, &[&["old.typ", "new.typ"], &args[..]].concat());
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let svg = std::fs::read_to_string(dir.join("out.pdf")).unwrap();
+    // The type's blue for new text, the file's colour for the bars.
+    assert!(svg.contains(r##"fill="#0000ff""##) && svg.contains(r##"stroke="#00c000""##));
+}
+
+#[test]
+fn a_project_style_file_applies_from_a_folder_above_before_style() {
+    let dir = temp_dir("project-style");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("sub/old.typ"), "Old words.").unwrap();
+    std::fs::write(dir.join("sub/new.typ"), "New words.").unwrap();
+    std::fs::write(
+        dir.join(".typst-redline.typ"),
+        r##"(ins: rgb("#00a000"), bars: rgb("#00c000"))"##,
+    )
+    .unwrap();
+    let page = |style: &[&str]| {
+        let args = ["sub/old.typ", "sub/new.typ", "--root", ".", "-o", "out.pdf"];
+        let svg = ["--", "--format", "svg", "--pages", "1"];
+        let out = cli(&dir, &[&args[..], style, &svg[..]].concat());
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        std::fs::read_to_string(dir.join("out.pdf")).unwrap()
+    };
+    let svg = page(&[]);
+    assert!(svg.contains(r##"fill="#00a000""##) && svg.contains(r##"stroke="#00c000""##));
+    let svg = page(&["--style", "bars=none"]);
+    assert!(svg.contains(r##"fill="#00a000""##) && !svg.contains(r##"stroke="#00c000""##));
+}
+
+#[test]
+fn the_example_style_files_apply() {
+    let dir = temp_dir("example-styles");
+    std::fs::write(dir.join("old.typ"), "Old words.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New words.").unwrap();
+    let styles = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/styles");
+    for f in std::fs::read_dir(styles).unwrap() {
+        let f = f.unwrap().path();
+        if f.extension().is_none_or(|e| e != "typ") {
+            continue;
+        }
+        let out = cli(&dir, &["old.typ", "new.typ", "--style", f.to_str().unwrap()]);
+        assert!(
+            out.status.success(),
+            "{}: {}",
+            f.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn show_preamble_prints_the_preamble() {
+    let out = cli(Path::new("."), &["--show-preamble"]);
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), PREAMBLE);
+}
+
+/// With the style `style`, the `<probe>` values of the marked document, the
+/// ids of its marks not laid out, and the `<probe>` values of the new
+/// version.
+fn styled_probes(name: &str, style: &str, old: &str, new: &str) -> Option<[String; 3]> {
+    let plain = compile(&format!("{name}-new"), &[("main.typ".into(), new.into())])?;
+    let r = redline_of(old, new);
+    let dir = compile(name, &[r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat())?;
+    let input = format!("redline-style=((\"test\", {style}),)");
+    Some([
+        query_with(&dir, &[&input], "<probe>", "value"),
+        query_with(&dir, &[&input], "<redline-lost>", "key"),
+        query(&plain, "<probe>"),
+    ])
+}
+
+#[test]
+fn deleted_content_left_out_keeps_its_mark() {
+    let show = "#show rect: it => [#metadata(it.width)<probe>#it]
+";
+    let old = format!(
+        "{show}Some old words.
+
+A paragraph #rect(width: 1cm) that goes.
+
+End.
+"
+    );
+    let new = format!(
+        "{show}Some new words.
+
+End.
+"
+    );
+    if let Some([marked, lost, new]) = styled_probes("deleted-out", "(del-text: false, del-blocks: false)", &old, &new)
+    {
+        assert_eq!((marked, lost), (new, "[]".into()));
+    }
+}
+
+#[test]
+fn old_blocks_left_out_keep_their_mark() {
+    let doc = |w: &str| {
+        format!(
+            "#show rect.where(height: 1cm): it => [#metadata(it.width)<probe>#it]
+Text.
+
+#figure(rect(width: {w}, height: 1cm), caption: [A shape.])
+"
+        )
+    };
+    if let Some([marked, lost, new]) = styled_probes("del-blocks", "(del-blocks: false)", &doc("1cm"), &doc("2cm")) {
+        assert_eq!((marked, lost), (new, "[]".into()));
+    }
+}
+
+#[test]
+fn graphics_markup_none_draws_no_frame() {
+    let dir = temp_dir("graphics-markup-none");
+    std::fs::write(
+        dir.join("old.typ"),
+        "Old.
+
+$ x $
+
+#box(rect(width: 1cm))",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("new.typ"),
+        "New.
+
+$ y $
+
+#box(rect(width: 2cm))",
+    )
+    .unwrap();
+    // Frames are the only strokes 0.6pt wide.
+    for (markup, framed) in [("both", true), ("none", false)] {
+        let args = [
+            "--graphics-markup",
+            markup,
+            "-o",
+            "out.pdf",
+            "--",
+            "--format",
+            "svg",
+            "--pages",
+            "1",
+        ];
+        let out = cli(&dir, &[&["old.typ", "new.typ"], &args[..]].concat());
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let svg = std::fs::read_to_string(dir.join("out.pdf")).unwrap();
+        assert_eq!(svg.contains(r#"stroke-width="0.6""#), framed, "{markup}");
+    }
 }
 
 #[test]

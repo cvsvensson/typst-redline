@@ -32,15 +32,19 @@ tag or other revision, which then takes its place. --show-reviewed prints the
 hash of the commit that --since reviewed compares with, or nothing if there is
 none; outside a git repository it is an error.
 
-Options:
-  -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
+Versions:
+  --since <rev>, --to <rev>
+                        The old and the new version of one file (see above)
+  -r <rev>              As in latexdiff-vc: -r A is --since A, and
+                        -r A -r B is --since A --to B
+  -L, --label <text>    Name the old version in the PDF; given twice, the old
+                        and then the new version
   --root <dir>          Project root (default: TYPST_ROOT, else the directory
                         of each file)
-  --preamble <file>     Replace the built-in change styling
-  --layout <layout>     inline (default): the new version with changes marked;
-                        side-by-side: changed pages of the old and the new
-                        version next to each other (needs Typst 0.14 or later,
-                        and an old version that compiles)
+
+What to mark:
+  --no-moves            Show moved text as deleted at its old place and
+                        inserted at its new place
   --each-commit         Colour each change by the commit that made it, for at
                         most 6 commits between the two versions (one file
                         only)
@@ -50,17 +54,52 @@ Options:
                         tool splits the commits, and then the uncommitted
                         changes, into n steps that change about the same
                         amount of the document (one file only)
-  --no-moves            Show moved text as deleted at its old place and
-                        inserted at its new place
+  --math-markup <mode>  fine (default): mark the changed parts of a formula,
+                        or the formula whole where most of it changed; whole:
+                        mark every changed formula whole
+
+How marks look:
+  -t, --type <name>     Start from a latexdiff markup type: UNDERLINE, COLOR,
+                        CULINECHBAR, CCHANGEBAR or CHANGEBAR
+  --style <key=value|file.typ>
+                        Change one setting, such as --style del=green or
+                        --style strike=none, or several from a file holding a
+                        dictionary such as (del: green, bars: none).
+                        Repeatable; later values win. The keys are in
+                        docs/styling.md and at the top of --show-preamble.
+                        .typst-redline.typ in the document's folder or above
+                        and typst-redline/style.typ in the user's settings
+                        apply first
+  --graphics-markup <both|new-only|none>
+                        A changed formula, figure, table, code block or
+                        drawing, as in latexdiff: both (default) shows the
+                        old one and the new one framed, new-only only the new
+                        one, none only the new one without frame or colour
+  -p, --preamble <file> Replace the built-in styling whole
+  --show-preamble       Print the built-in preamble, to start one of your own
+
+Output:
+  -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
+  --layout <layout>     inline (default): the new version with changes marked;
+                        side-by-side: changed pages of the old and the new
+                        version next to each other (needs Typst 0.14 or later,
+                        and an old version that compiles)
+  --only-changes        Keep only the pages with marks and the summary, with
+                        the page numbers of the full document (needs Typst
+                        0.12 or later; side-by-side shows only those pages
+                        anyway)
+  --keep-typ            Keep the generated project and print its path on stderr;
+                        the marked source is at the new file's path inside it
   --typst <path>        typst executable (default: typst)
+
+Without a PDF:
   --mark-reviewed       Record HEAD as reviewed for the file (see above)
   --show-reviewed       Print the commit --since reviewed uses (see above)
   --list-files          Print the files the document is made of, one path per
-                        line, and make no PDF
-  --keep-typ            Keep the generated project and print its path on stderr;
-                        the marked source is at the new file's path inside it
+                        line
   -V, --version         Print the version
   -h, --help            Print this help
+
 Arguments after -- are passed to `typst compile`.
 ";
 
@@ -73,14 +112,23 @@ struct Args {
     /// The root comes from `TYPST_ROOT`.
     root_env: bool,
     preamble: Option<PathBuf>,
+    /// The values of --style, in order.
+    styles: Vec<String>,
+    style_type: Option<String>,
+    graphics_markup: Option<String>,
     typst: String,
     keep: bool,
     side_by_side: bool,
+    only_changes: bool,
     steps: Option<StepArg>,
     mark_reviewed: bool,
     show_reviewed: bool,
     list_files: bool,
     no_moves: bool,
+    /// Labels of the old and the new version given with `-L`.
+    labels: Vec<String>,
+    /// Mark the changed parts of a formula rather than the formula whole.
+    fine_math: bool,
     typst_args: Vec<String>,
 }
 
@@ -143,16 +191,23 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         root: None,
         root_env: false,
         preamble: None,
+        styles: vec![],
+        style_type: None,
+        graphics_markup: None,
         typst: "typst".into(),
         keep: false,
         side_by_side: false,
+        only_changes: false,
         steps: None,
         mark_reviewed: false,
         show_reviewed: false,
         list_files: false,
         no_moves: false,
+        labels: vec![],
+        fine_math: true,
         typst_args: vec![],
     };
+    let mut revs = vec![];
     let mut it = argv.iter().cloned();
     while let Some(arg) = it.next() {
         let mut val = || it.next().ok_or(format!("{arg} needs a value"));
@@ -164,9 +219,14 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             }
             "--since" => a.since = Some(val()?),
             "--to" => a.to = Some(val()?),
+            "-r" => revs.push(val()?),
+            "-L" | "--label" => a.labels.push(val()?),
             "-o" | "--output" => a.output = Some(val()?.into()),
             "--root" => a.root = Some(val()?.into()),
-            "--preamble" => a.preamble = Some(val()?.into()),
+            "-p" | "--preamble" => a.preamble = Some(val()?.into()),
+            "--style" => a.styles.push(val()?),
+            "-t" | "--type" => a.style_type = Some(val()?),
+            "--show-preamble" => return Ok(Parsed::Print(PREAMBLE.into())),
             "--typst" => a.typst = val()?,
             "--keep-typ" => a.keep = true,
             "--each-commit" | "--steps" => {
@@ -182,6 +242,15 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             "--show-reviewed" => a.show_reviewed = true,
             "--list-files" => a.list_files = true,
             "--no-moves" => a.no_moves = true,
+            "--graphics-markup" => a.graphics_markup = Some(val()?),
+            "--only-changes" => a.only_changes = true,
+            "--math-markup" => {
+                a.fine_math = match val()?.as_str() {
+                    "fine" => true,
+                    "whole" => false,
+                    m => return Err(format!("unknown math markup {m}; give fine or whole")),
+                }
+            }
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
                     "inline" => false,
@@ -190,9 +259,19 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
                 }
             }
             "--" => a.typst_args.extend(it.by_ref()),
-            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s if s.starts_with('-') => return Err(unknown_option(s)),
             _ => a.files.push(arg),
         }
+    }
+    if !revs.is_empty() {
+        if revs.len() > 2 || a.since.is_some() || a.to.is_some() {
+            return Err("give -r once or twice, and not with --since or --to".into());
+        }
+        a.to = revs.get(1).cloned();
+        a.since = revs.into_iter().next();
+    }
+    if a.labels.len() > 2 {
+        return Err("give -L once for the old version, or twice for the old and the new".into());
     }
     if a.root.is_none() {
         a.root = std::env::var_os("TYPST_ROOT")
@@ -222,7 +301,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         ));
     }
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
-        return Err("--to cannot be combined with a range in --since".into());
+        return Err("--to (or a second -r) cannot be combined with a range in --since (or -r)".into());
     }
     if [a.mark_reviewed, a.show_reviewed, a.list_files]
         .iter()
@@ -238,7 +317,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         (a.list_files, "--list-files"),
     ] {
         if set && (a.files.len() != 1 || a.since.is_some() || a.to.is_some()) {
-            return Err(format!("{opt} takes one file and no --since or --to"));
+            return Err(format!("{opt} takes one file and no --since/--to (or -r)"));
         }
         if let Some(s) = &a.steps
             && set
@@ -253,8 +332,21 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
     }
     match (a.files.len(), &a.since, &a.to) {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(Box::new(a))),
-        _ => Err("give one file, or two files without --since and --to".into()),
+        _ => Err("give one file, or two files without --since/--to (or -r)".into()),
     }
+}
+
+/// The usage error for an unknown option, which for an option of latexdiff
+/// says what takes its place.
+fn unknown_option(s: &str) -> String {
+    let hint = match s {
+        "--pdf" | "--ps" | "--postscript" => "typst-redline always writes a PDF",
+        "--flatten" => "included files are always compared",
+        "--git" => "revisions are read with git; give them with --since and --to, or -r",
+        "--force" => "an existing output file is overwritten",
+        _ => return format!("unknown option {s}"),
+    };
+    format!("unknown option {s}: {hint}")
 }
 
 /// One side of the comparison: `entry` in `tree`, whose working-tree
@@ -598,10 +690,11 @@ const LADDER: [&[&str]; 6] = [
     &["frames", "names", "whole"],
 ];
 
-fn fallback_options(fallbacks: &[&str]) -> Options {
+fn fallback_options(fallbacks: &[&str], fine_math: bool) -> Options {
     Options {
         eval_deleted: !fallbacks.contains(&"names"),
         content_blocks: !fallbacks.contains(&"whole"),
+        fine_math: fine_math && !fallbacks.contains(&"whole"),
     }
 }
 
@@ -613,7 +706,7 @@ fn fallback_note(fallbacks: &[&str]) -> String {
             "states" => "state and counter updates in deleted content are kept",
             "frames" => "changed content computed at layout is not framed",
             "names" => "deleted code is shown by name",
-            _ => "changed code is marked whole",
+            _ => "changed code and formulas are marked whole",
         })
         .collect();
     match parts.split_last() {
@@ -627,39 +720,6 @@ fn fallback_note(fallbacks: &[&str]) -> String {
 /// tell which files a compile read; if the proof read a file that the
 /// comparison did not check, it is made again with those files.
 fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<PathBuf, String> {
-    let version = typst_version(&a.typst);
-    let deps = version.as_deref().is_some_and(|v| minor(v) >= (0, 14));
-    let reads = reads.or_else(|| deps.then(Vec::new));
-    let preamble = match &a.preamble {
-        Some(p) => {
-            let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
-            let needs = [
-                (a.side_by_side, "redline-side-by-side", "the side-by-side layout"),
-                (
-                    a.steps.is_some(),
-                    "redline-step-style",
-                    a.steps.as_ref().map_or("", StepArg::option),
-                ),
-            ];
-            if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
-                return Err(format!(
-                    "the preamble {} does not define {name}, which {what} needs",
-                    p.display()
-                ));
-            }
-            text
-        }
-        None => PREAMBLE.to_string(),
-    };
-    if a.side_by_side
-        && let Some(v) = version
-        && minor(&v) < (0, 14)
-    {
-        return Err(format!(
-            "the side-by-side layout needs Typst 0.14 or later, but {} is Typst {v}",
-            a.typst
-        ));
-    }
     let (old, new) = specs(&a, reviewed).map_err(|e| {
         if a.root_env && e.contains("the root") {
             format!("{e} (set by TYPST_ROOT)")
@@ -669,6 +729,51 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             e
         }
     })?;
+    let style = style_inputs(&a, &style_files(&a, &new))?;
+    let version = typst_version(&a.typst);
+    let deps = version.as_deref().is_some_and(|v| minor(v) >= (0, 14));
+    let reads = reads.or_else(|| deps.then(Vec::new));
+    // The side-by-side layout shows only pages with changes anyway.
+    let only_changes = a.only_changes && !a.side_by_side;
+    let preamble = match &a.preamble {
+        Some(p) => {
+            let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            let needs = [
+                (a.side_by_side, "redline-side-by-side", "the side-by-side layout"),
+                (only_changes, "redline-marked", "--only-changes"),
+                (
+                    a.steps.is_some(),
+                    "redline-step-style",
+                    a.steps.as_ref().map_or("", StepArg::option),
+                ),
+                (
+                    !style.is_empty(),
+                    "\"redline-style\"",
+                    "a style file, --style, --type or --graphics-markup",
+                ),
+            ];
+            if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
+                return Err(format!(
+                    "the preamble {} does not use {name}, which {what} needs",
+                    p.display()
+                ));
+            }
+            text
+        }
+        None => PREAMBLE.to_string(),
+    };
+    let needs = [
+        (a.side_by_side, (0, 14), "the side-by-side layout"),
+        (only_changes, (0, 12), "--only-changes"),
+    ];
+    if let Some(v) = &version
+        && let Some((_, at, what)) = needs.iter().find(|(on, at, _)| *on && minor(v) < *at)
+    {
+        return Err(format!(
+            "{what} needs Typst {}.{} or later, but {} is Typst {v}",
+            at.0, at.1, a.typst
+        ));
+    }
     if new.tree.read(&new.entry).is_none() {
         return Err(match new.tree {
             Tree::Dir(_) => format!("{} does not exist", new.file.display()),
@@ -677,12 +782,13 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     }
     let pdf = output_path(&a, &old, &new)?;
     let (read_old, read_new) = (|p: &str| old.tree.read(p), |p: &str| new.tree.read(p));
-    let version = |spec: &Spec, read| Version {
-        label: spec.label.clone(),
+    // -L changes only the names the PDF shows; diagnostics name the revisions.
+    let version = |spec: &Spec, read, i: usize| Version {
+        label: a.labels.get(i).unwrap_or(&spec.label).clone(),
         entry: spec.entry.clone(),
         read,
     };
-    let (old_v, new_v) = (version(&old, &read_old), version(&new, &read_new));
+    let (old_v, new_v) = (version(&old, &read_old, 0), version(&new, &read_new, 1));
     let files = [
         project_files(&old_v, reads.as_deref()),
         project_files(&new_v, reads.as_deref()),
@@ -741,7 +847,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     let mut result = redline(
         &old_v,
         &new_v,
-        fallback_options(LADDER[0]),
+        fallback_options(LADDER[0], a.fine_math),
         &history,
         moves,
         reads.as_deref(),
@@ -781,13 +887,18 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         if fallbacks.contains(&"states") && a.side_by_side {
             continue;
         }
-        let opts = fallback_options(fallbacks);
+        let opts = fallback_options(fallbacks, a.fine_math);
         if i > 0 {
             result = redline(&old_v, &new_v, opts, &history, moves, reads.as_deref());
         }
         a.typst_args = typst_args.clone();
         a.typst_args
             .extend(["--input".into(), format!("redline-fallback={}", fallbacks.join(","))]);
+        a.typst_args.extend(style.iter().cloned());
+        if only_changes {
+            a.typst_args
+                .extend(["--input".into(), "redline-only-changes=true".into()]);
+        }
         let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
             let input = format!("redline-side={side}");
             let (entry, pdf) = (root.join(entry), dir.join(pdf));
@@ -860,7 +971,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                     &a,
                     dir,
                     sides,
-                    (&old.label, &new.label),
+                    (&old_v.label, &new_v.label),
                     [back, &result],
                     &history,
                     &tmp,
@@ -882,6 +993,9 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 let out = typst(&a, dir, "query", &args)?;
                 warn_unbarred(&ints(&out.stdout).unwrap_or_default(), &pdf.display().to_string());
             }
+            if only_changes && let Err(e) = keep_marked_pages(&a, dir, &new.entry, &tmp) {
+                eprintln!("warning: the PDF has all pages, because --only-changes could not leave out the others: {e}");
+            }
             let written = std::fs::copy(&tmp, &pdf);
             let _ = std::fs::remove_file(&tmp);
             written.map_err(|e| {
@@ -893,6 +1007,15 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 format!("cannot write {}: {e}{open}", pdf.display())
             })?;
             return Ok(pdf);
+        }
+        // The preamble's messages about the style start with where it came from.
+        if let Some(e) = stderr
+            .lines()
+            .filter_map(|l| l.strip_prefix("error: "))
+            .map(|e| e.strip_prefix("assertion failed: ").unwrap_or(e))
+            .find(|e| style_error(e))
+        {
+            return Err(e.to_string());
         }
         if first_error.is_empty() {
             // A Typst that panics, as 0.11 does on some marks, prints no error line.
@@ -949,6 +1072,103 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         " (rerun with --keep-typ to inspect the generated source)"
     };
     Err(format!("typst compile failed{hint}"))
+}
+
+/// The style file of a project, in the folder of the document or above.
+const PROJECT_STYLE: &str = ".typst-redline.typ";
+
+/// The style file of the user, `typst-redline/style.typ` in the folder for
+/// settings: `%APPDATA%` on Windows, else `$XDG_CONFIG_HOME` or `~/.config`.
+fn user_style(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let var = |v: &str| var(v).filter(|d| !d.is_empty()).map(PathBuf::from);
+    let dir = if cfg!(windows) {
+        var("APPDATA")
+    } else {
+        var("XDG_CONFIG_HOME").or_else(|| Some(var("HOME")?.join(".config")))
+    };
+    Some(dir?.join("typst-redline").join("style.typ"))
+}
+
+/// The style files that apply to `new`, in the order they apply: the user's,
+/// then the nearest project file from the document's folder up to the root
+/// or the repository.
+fn style_files(a: &Args, new: &Spec) -> Vec<PathBuf> {
+    let top = a.root.clone().or_else(|| repository(new));
+    let top = top.and_then(|t| std::path::absolute(t).ok());
+    let start = std::path::absolute(&new.file).ok();
+    let project = start.iter().flat_map(|f| f.ancestors().skip(1)).find_map(|d| {
+        let f = d.join(PROJECT_STYLE);
+        // Without a root or repository, only the document's folder.
+        let last = top.as_deref().is_none_or(|t| !d.starts_with(t) || d == t);
+        (f.is_file() || last).then_some(f)
+    });
+    [user_style(|v| std::env::var_os(v)), project]
+        .into_iter()
+        .flatten()
+        .filter(|f| f.is_file())
+        .collect()
+}
+
+/// Where the parts of the style come from, in the order they apply: style
+/// files, --type, --graphics-markup and --style. Each part has a label that
+/// starts with one of these, and so does each message about it.
+const STYLE_LABELS: [&str; 4] = ["style file", "--type", "--graphics-markup", "--style"];
+
+/// Whether an error is about a value of the style.
+fn style_error(e: &str) -> bool {
+    STYLE_LABELS.iter().any(|p| e.starts_with(p))
+}
+
+/// The `--input` argument that passes the style `files`, the name of --type
+/// and the values of --style to the preamble, in the order they apply, each
+/// with a label that names where it came from.
+fn style_inputs(a: &Args, files: &[PathBuf]) -> Result<Vec<String>, String> {
+    let read = |f: &Path, label: String| {
+        std::fs::read_to_string(f)
+            .map(|code| (label, code))
+            .map_err(|e| e.to_string())
+    };
+    let [file, type_, graphics, style] = STYLE_LABELS;
+    let mut parts = vec![];
+    for f in files {
+        let label = format!("{file} {}", f.display());
+        parts.push(read(f, label.clone()).map_err(|e| format!("{label}: {e}"))?);
+    }
+    for (option, key, value) in [
+        (type_, "type", &a.style_type),
+        (graphics, "graphics-markup", &a.graphics_markup),
+    ] {
+        parts.extend(
+            value
+                .iter()
+                .map(|v| (format!("{option} {v}"), format!("({key}: {v:?})"))),
+        );
+    }
+    for s in &a.styles {
+        let label = format!("{style} {s}");
+        parts.push(match s.split_once('=') {
+            Some((key, value)) if !key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '-') => {
+                (label, format!("({key}: {value})"))
+            }
+            _ => read(Path::new(s), label).map_err(|e| {
+                format!("{style} {s}: {e}; give key=value, such as del=green, or a file that holds a dictionary")
+            })?,
+        });
+    }
+    for (label, code) in &parts {
+        if let Some(e) = typst_syntax::parse_code(code).errors_and_warnings().0.first() {
+            return Err(format!("{label}: {}", e.message));
+        }
+    }
+    if parts.is_empty() {
+        return Ok(vec![]);
+    }
+    // A file can end in a line comment.
+    let parts: String = parts
+        .iter()
+        .map(|(label, code)| format!("({label:?}, {code}\n),"))
+        .collect();
+    Ok(vec!["--input".into(), format!("redline-style=({parts})")])
 }
 
 /// The errors of compiling a version as it is, if it fails: in place for a
@@ -1533,12 +1753,16 @@ fn read_deps(dir: &Path) -> Option<Vec<String>> {
 }
 
 /// Run `typst <cmd>` on the project in `dir` with the user's arguments for
-/// typst, then `args`.
+/// typst, then `args`. A query gets them without those of the export.
 fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<Output, String> {
     Command::new(&a.typst)
         .args([cmd, "--root"])
         .arg(dir)
-        .args(&a.typst_args)
+        .args(if cmd == "query" {
+            without_export_args(&a.typst_args)
+        } else {
+            a.typst_args.clone()
+        })
         .args(args.iter().map(|a| a.as_ref()))
         .output()
         .map_err(|e| {
@@ -1547,6 +1771,41 @@ fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<
                 a.typst
             )
         })
+}
+
+/// `args` for `typst compile` without those that only `compile` takes, which
+/// `typst query` rejects or reads otherwise. Any other goes through, because
+/// a query without an argument that sets up the document could silently read
+/// another document than the compile.
+fn without_export_args(args: &[String]) -> Vec<String> {
+    const WITH_VALUE: [&str; 7] = [
+        "-f",
+        "--format",
+        "--pages",
+        "--pdf-standard",
+        "--ppi",
+        "--deps",
+        "--deps-format",
+    ];
+    const OPTIONAL_VALUE: [&str; 2] = ["--open", "--timings"];
+    const FLAGS: [&str; 2] = ["--no-pdf-tags", "--pretty"];
+    let mut kept = vec![];
+    let mut it = args.iter().peekable();
+    while let Some(arg) = it.next() {
+        let (name, inline) = arg.split_once('=').map_or((arg.as_str(), false), |(n, _)| (n, true));
+        if WITH_VALUE.contains(&name) {
+            if !inline {
+                it.next();
+            }
+        } else if OPTIONAL_VALUE.contains(&name) {
+            if !inline {
+                it.next_if(|v| !v.starts_with('-'));
+            }
+        } else if !FLAGS.contains(&name) {
+            kept.push(arg.clone());
+        }
+    }
+    kept
 }
 
 /// Pair the pages of the two compiled sides, each given as (root, entry,
@@ -1729,6 +1988,37 @@ fn compose(
     Ok(())
 }
 
+/// Compile the marked document in `dir` again to `to` with only the pages
+/// that the preamble lists as marked and the summary; `to` is left as it is
+/// if that fails.
+fn keep_marked_pages(a: &Args, dir: &Path, entry: &str, to: &Path) -> Result<(), String> {
+    let entry = dir.join(entry);
+    let args: [&dyn AsRef<OsStr>; 5] = [&entry, &"<redline-marked>", &"--field", &"key", &"--one"];
+    let out = typst(a, dir, "query", &args)?;
+    let ints = ints(&out.stdout);
+    let Some([summary, marked @ ..]) = ints.as_deref() else {
+        return Err(format!(
+            "cannot find the pages with marks, which --only-changes needs\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    };
+    let pages = marked
+        .iter()
+        .filter(|&&p| p < *summary)
+        .map(|p| format!("{p},"))
+        .collect::<String>()
+        + &format!("{summary}-");
+    let part = to.with_extension("pages.pdf");
+    let out = typst(a, dir, "compile", &[&entry, &part, &"--pages", &pages])?;
+    if !out.status.success() {
+        return Err(format!(
+            "typst compile --pages failed\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    std::fs::rename(&part, to).map_err(|e| e.to_string())
+}
+
 /// The number of pages of a PDF that typst wrote, if it has any.
 fn pdf_pages(path: &Path) -> Option<usize> {
     let pdf = std::fs::read(path).ok()?;
@@ -1817,6 +2107,7 @@ fn pick(
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("typ")))
         .filter_map(|p| Some(p.file_name()?.to_str()?.to_string()))
+        .filter(|f| f != PROJECT_STYLE)
         .collect();
     files.sort();
     if files.is_empty() {
@@ -2011,7 +2302,8 @@ fn main() -> ExitCode {
     let args = match parsed {
         Ok(Parsed::Run(a)) => a,
         Ok(Parsed::Print(text)) => {
-            print!("{text}");
+            // A reader such as `head` may close the pipe early.
+            let _ = std::io::stdout().write_all(text.as_bytes());
             return ExitCode::SUCCESS;
         }
         Ok(Parsed::Pick { .. }) => unreachable!(),
@@ -2050,6 +2342,11 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        // A value that a style file, --type or --style gave is a usage error.
+        Err(e) if style_error(&e) => {
+            eprintln!("error: {e}\nsee typst-redline --help");
+            ExitCode::from(2)
+        }
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::FAILURE
@@ -2059,7 +2356,9 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{balanced_cuts, pdf_pages, pick, reviewed_ref};
+    use super::{balanced_cuts, pdf_pages, pick, reviewed_ref, user_style, without_export_args};
+    use std::ffi::OsString;
+    use std::path::PathBuf;
 
     #[test]
     fn page_count_ignores_page_labels_and_the_page_tree() {
@@ -2153,5 +2452,34 @@ mod tests {
         }
         let distinct: std::collections::HashSet<_> = names.iter().collect();
         assert_eq!(distinct.len(), names.len());
+    }
+
+    #[test]
+    fn a_query_gets_every_argument_but_those_of_the_export() {
+        let args = "--ppi 100 --font-path f --open --no-pdf-tags --pages=2 --future x --input a=b --open viewer";
+        let args: Vec<String> = args.split(' ').map(String::from).collect();
+        assert_eq!(
+            without_export_args(&args),
+            ["--font-path", "f", "--future", "x", "--input", "a=b"]
+        );
+    }
+
+    #[test]
+    fn the_users_style_file_is_in_the_folder_for_settings() {
+        let env = |vars: &'static [(&str, &str)]| {
+            move |v: &str| vars.iter().find(|(k, _)| *k == v).map(|(_, x)| OsString::from(x))
+        };
+        let at = |p: &str| Some(PathBuf::from(p).join("typst-redline").join("style.typ"));
+        if cfg!(windows) {
+            assert_eq!(user_style(env(&[("APPDATA", "C:/a")])), at("C:/a"));
+            assert_eq!(user_style(env(&[])), None);
+        } else {
+            let both = &[("XDG_CONFIG_HOME", "/x"), ("HOME", "/h")];
+            assert_eq!(user_style(env(both)), at("/x"));
+            assert_eq!(
+                user_style(env(&[("XDG_CONFIG_HOME", ""), ("HOME", "/h")])),
+                at("/h/.config")
+            );
+        }
     }
 }

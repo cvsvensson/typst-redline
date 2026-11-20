@@ -1,4 +1,5 @@
-// typst-redline: how changes look. To restyle, pass a file of your own with
+// typst-redline: how changes look. --style and --type change the values in
+// `redline-defaults`; to restyle otherwise, pass a file of your own with
 // --preamble. The marked files import four names from it:
 // - redline-ins(body, block: false): inserted content; `block` when it is a
 //   whole paragraph, item, heading or code expression.
@@ -59,54 +60,159 @@
 // the old version has. The composite of both calls
 // redline-side-by-side(info) (see there).
 
-#let redline-style = {
-  let (ins, del) = (rgb("#1565c0"), rgb("#c62828"))
-  (
-    ins: ins,
-    ins-fill: rgb("#d8eaff"),
-    del: del,
-    // Behind deleted text on a dark background.
-    del-fill: rgb("#fde4e4"),
-    // As thick as the text is large, so that it does not cover small text.
-    strike: 0.065em + del,
-    // Frames of block-level elements, this far outside them. A block ends
-    // at the baseline of its last line: the frame clears the descenders.
-    ins-frame: 0.6pt + ins,
-    del-frame: (paint: del, thickness: 0.6pt, dash: "dashed"),
-    outset: (x: 0.4em, top: 0.3em, bottom: 0.5em),
-    // Change bars sit this far outside the text area, at most half the
-    // margin; deletion bars one lane further out, so that the two never
-    // touch.
-    bar-gap: 0.5cm,
-    bar-width: 2pt,
-    del-bar-width: 1.5pt,
-    lane: 3.5pt,
-    // Brackets and lines of moved text.
-    move: luma(110),
-    move-stroke: 0.8pt,
-    // The numbers of changes, in the margin and on the summary.
-    number: luma(110),
-    // With --each-commit, the colour of each commit: Okabe–Ito hues, darkened
-    // where needed to read as text on white.
-    steps: (rgb("#0072b2"), rgb("#d55e00"), rgb("#007a5a"), rgb("#a8508a"), rgb("#9a6800"), rgb("#2f8fce")),
+// The defaults of the style. The binary passes style files, --type,
+// --graphics-markup and --style as `--input redline-style=((label, part),
+// ...)`, where a part is a dictionary of keys, some of which can name a set
+// of others (`redline-presets`); their keys replace these in order. A stroke takes the
+// fields it leaves out from its default, and its paint from the colour that
+// `redline-strokes` names, so that `del: green` also colours the
+// strike-through.
+#let redline-defaults = (
+  ins: rgb("#1565c0"),
+  // Behind inserted text: `none` for no highlight.
+  ins-fill: rgb("#d8eaff"),
+  del: rgb("#c62828"),
+  // Behind deleted text on a dark background.
+  del-fill: rgb("#fde4e4"),
+  // Under inserted text, or none.
+  underline: 0.5pt,
+  // Through deleted text, or none; as thick as the text is large, so that
+  // it does not cover small text.
+  strike: 0.065em,
+  // Between deleted content and the new content that replaces it.
+  gap: 0.25em,
+  // Frames of block-level elements, this far outside them. A block ends
+  // at the baseline of its last line: the frame clears the descenders.
+  ins-frame: 0.6pt,
+  del-frame: (thickness: 0.6pt, dash: "dashed"),
+  outset: (x: 0.4em, top: 0.3em, bottom: 0.5em),
+  // Whether deleted text, and deleted formulas, figures, tables, code
+  // blocks and drawings, are shown; left out, they keep their bar and number.
+  del-text: true,
+  del-blocks: true,
+  // Whether changed blocks take the colour of their mark: new ones
+  // coloured, old ones tinted or crossed out.
+  block-color: true,
+  // Change bars: auto in the colour of their mark, a colour for all, or
+  // none. They sit this far outside the text area, at most half the margin;
+  // deletion bars one lane further out, so that the two never touch.
+  bars: auto,
+  bar-gap: 0.5cm,
+  bar-width: 2pt,
+  del-bar-width: 1.5pt,
+  lane: 3.5pt,
+  // Brackets and lines of moved text.
+  move: luma(110),
+  move-stroke: 0.8pt,
+  // The numbers of changes, in the margin and on the summary.
+  number: luma(110),
+  // With --each-commit, the colour of each commit: Okabe–Ito hues, darkened
+  // where needed to read as text on white.
+  steps: (rgb("#0072b2"), rgb("#d55e00"), rgb("#007a5a"), rgb("#a8508a"), rgb("#9a6800"), rgb("#2f8fce")),
+)
+
+// The markup styles of latexdiff's --type that keep the layout of the new
+// version: its colours, ulem's line through deleted text, and the black bars
+// of the changebar package. Typst has no wavy underline.
+#let redline-latexdiff = (ins: rgb(0, 0, 255), del: rgb(255, 0, 0), ins-fill: none, strike: 0.4pt)
+#let redline-types = (
+  underline: redline-latexdiff + (bars: none),
+  culinechbar: redline-latexdiff + (bars: black),
+  color: redline-latexdiff + (underline: none, bars: none),
+  cchangebar: redline-latexdiff + (underline: none, strike: none, bars: black),
+  changebar: (ins: black, del: black, ins-fill: none, underline: none, del-text: false, del-blocks: false),
+)
+
+// latexdiff's --graphics-markup for changed formulas, figures, tables, code
+// blocks and drawings.
+#let redline-graphics = (
+  both: (:),
+  new-only: (del-blocks: false),
+  "none": (del-blocks: false, block-color: false, ins-frame: none, del-frame: none),
+)
+
+// Keys that name a set of other keys, which apply first, in any case and
+// also in latexdiff's other spellings.
+#let redline-presets = (type: redline-types, graphics-markup: redline-graphics)
+#let redline-aliases = ("0": "none", "off": "none", "1": "new-only", "2": "both")
+
+// Keys that hold a stroke, with the key of the colour it takes when it has
+// none of its own.
+#let redline-strokes = (underline: "ins", strike: "del", ins-frame: "ins", del-frame: "del", move-stroke: "move")
+
+// The types a key takes, where they are more than that of its default.
+#let redline-takes = (
+  ins-fill: (color, type(none)),
+  del-fill: (color, type(none)),
+  bars: (type(auto), color, type(none)),
+  outset: (length, dictionary),
+  ..redline-strokes.keys().map(k => (k, (length, color, stroke, dictionary, type(none)))).to-dict(),
+)
+
+// The style as given, before strokes are completed. Every message starts
+// with the label of its part, which names the option or file that gave it.
+#let redline-given = {
+  let st = redline-defaults
+  let given = sys.inputs.at("redline-style", default: none)
+  let parts = if given != none { eval(given) } else { () }
+  for (label, part) in parts {
+    assert(type(part) == dictionary, message: label + ": " + repr(part) + " is not a dictionary such as (del: green)")
+    let (part, sets) = (part, ())
+    for k in redline-presets.keys().filter(k => k in part) {
+      let named = redline-presets.at(k)
+      let name = lower(str(part.remove(k)))
+      let name = redline-aliases.at(name, default: name)
+      assert(name in named, message: label + ": no " + k + " " + name + "; give " + named.keys().join(", ", last: " or "))
+      sets.push(named.at(name))
+    }
+    for (k, v) in (..sets, part).join() {
+      assert(k in st, message: label + ": no key " + k + "; the keys are " + st.keys().join(", "))
+      let takes = redline-takes.at(k, default: (type(st.at(k)),))
+      assert(type(v) in takes, message: label + ": " + k + " takes " + takes.map(str).join(", ", last: " or ") + ", not " + repr(v))
+      st.insert(k, v)
+    }
+  }
+  st
+}
+
+// Stroke `s` with the fields it leaves out from stroke `d` and, without a
+// paint, in colour `c`.
+#let redline-stroke(s, d, c) = if s == none { none } else {
+  let (s, d) = (stroke(s), stroke(d))
+  let pick(a, b) = if a != auto { a } else { b }
+  stroke(
+    paint: pick(s.paint, c),
+    thickness: pick(s.thickness, d.thickness),
+    cap: pick(s.cap, d.cap),
+    join: pick(s.join, d.join),
+    dash: pick(s.dash, d.dash),
+    miter-limit: pick(s.miter-limit, d.miter-limit),
   )
 }
 
-// The colours of marks in one colour.
-#let redline-colours(c) = (
+// An outset as `rect` takes it, as its four sides.
+#let redline-sides(o) = if type(o) == length { (left: o, top: o, right: o, bottom: o) } else {
+  let at(k, axis) = o.at(k, default: o.at(axis, default: o.at("rest", default: 0pt)))
+  (left: at("left", "x"), top: at("top", "y"), right: at("right", "x"), bottom: at("bottom", "y"))
+}
+
+#let redline-resolve(st) = st + (outset: redline-sides(st.outset)) + redline-strokes.pairs().map(((k, c)) => (k, redline-stroke(st.at(k), redline-defaults.at(k), st.at(c)))).to-dict()
+
+#let redline-style = redline-resolve(redline-given)
+
+// The style with marks in one colour.
+#let redline-colours(c) = redline-resolve(redline-given + (
   ins: c,
-  ins-fill: c.lighten(80%),
+  ins-fill: if redline-given.ins-fill != none { c.lighten(80%) },
   del: c,
-  del-fill: c.lighten(85%),
-  strike: 0.065em + c,
-  ins-frame: 0.6pt + c,
-  del-frame: (paint: c, thickness: 0.6pt, dash: "dashed"),
-)
+  del-fill: if redline-given.del-fill != none { c.lighten(85%) },
+))
 
 // The style of the marks of a step, or the plain style for none.
 #let redline-step-style(step) = if step == none { redline-style } else {
   let cs = redline-style.steps
-  redline-style + redline-colours(cs.at(calc.rem(step - 1, cs.len())))
+  assert(step <= cs.len(), message: "--style steps: " + str(cs.len()) + " colours for " + str(step) + " steps; give as many colours as steps")
+  redline-colours(cs.at(step - 1))
 }
 
 // The tool's own bookkeeping: an update of the state "redline", which the
@@ -163,7 +269,7 @@
     states: [Numbers after deleted content can differ from the new version, because counters that it changes are not set back.],
     frames: [Changed drawings, and other content that the document lays out by code, have no frame; the bar in the margin still marks them.],
     names: [Deleted code is shown by its name instead of as it looked.],
-    whole: [A changed call is marked whole, the old call deleted and the new one inserted, even where only text inside it changed.],
+    whole: [A changed call or formula is marked whole, the old one deleted and the new one inserted, even where only a part of it changed.],
   )
   let lines = redline-fallback.filter(f => f in says).map(f => says.at(f))
   if lines.len() > 0 [Some changes are marked more coarsely, because the document did not compile with every change marked in full. #lines.join[ ]]
@@ -181,11 +287,15 @@
     or sole and repr(c.func()) in ("context", "layout") and "frames" not in redline-fallback
 )
 
+// Whether a part of a mark is a box in the text that shows no text, a
+// drawing such as an icon, which is framed at its own size.
+#let redline-drawing-box(c) = c.func() == box and c.at("body", default: none) != none and not redline-textual(c)
+
 // The two lines that cross out deleted content of size `w` by `h`, light
 // enough that the content stays legible, on a white edge that shows them
 // on a fill of their own colour.
-#let redline-cross(stroke, w, h) = {
-  for s in (1.5pt + white.transparentize(45%), 0.75pt + stroke.paint.transparentize(30%)) {
+#let redline-cross(paint, w, h) = {
+  for s in (1.5pt + white.transparentize(45%), 0.75pt + paint.transparentize(30%)) {
     place(top + left, line(start: (0pt, 0pt), end: (w, h), stroke: s))
     place(top + left, line(start: (0pt, h), end: (w, 0pt), stroke: s))
   }
@@ -199,7 +309,7 @@
 // that text in it stays legible.
 // A deleted element (`whole`) that fits on a page is not split across
 // pages, where the frame would hold only its last part.
-#let redline-frame(it, stroke, cross: false, tint: false, whole: false, start: none, end: none, step: none, id: none) = layout(region => block(width: 100%, breakable: not whole or measure(block(width: region.width, it)).height > region.height, layout(size => {
+#let redline-frame(it, stroke, paint, cross: false, tint: false, whole: false, start: none, end: none, step: none, id: none) = layout(region => block(width: 100%, breakable: not whole or measure(block(width: region.width, it)).height > region.height, layout(size => {
   let st = redline-style
   let eq = it.func() == math.equation
   // Twice the width tells content that fills its width as unbounded room
@@ -232,14 +342,14 @@
   // struck, alone.
   let (cw, ch) = if it.func() == figure { (body-w, measure(block(width: size.width, it.body)).height) } else { (w, h) }
   let cross = cross and not empty and ch >= 0.3 * cw
-  let fill = if (cross or tint) and not cross { stroke.paint.transparentize(90%) }
+  let fill = if (cross or tint) and not cross { paint.transparentize(90%) }
   place(top + a, box(width: w, height: h, {
     if not empty { place(rect(width: 100%, height: 100%, stroke: stroke, fill: fill, outset: st.outset)) }
     if cross and it.func() == figure {
       let caption = it.at("caption", default: none)
       let above = caption != none and caption.at("position", default: figure.caption.position) == top
-      place(center, dy: if above { h - ch } else { 0pt }, box(width: cw, height: ch, redline-cross(stroke, cw, ch)))
-    } else if cross { redline-cross(stroke, w, h) }
+      place(center, dy: if above { h - ch } else { 0pt }, box(width: cw, height: ch, redline-cross(paint, cw, ch)))
+    } else if cross { redline-cross(paint, w, h) }
     place(top + left, if start != none { redline-tag(start, -st.outset.top, step: step, id: id) })
     place(bottom + left, if end != none { redline-tag("end", st.outset.bottom, width: size.width) })
   }))
@@ -342,6 +452,8 @@
 // start tag can fall on the line before, and a bare end tag does not know
 // its container.
 #let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, whole: false, bare: none, step: none, id: none) = {
+  let st = redline-step-style(step)
+  let paint = if kind == "ins" { st.ins } else { st.del }
   let bare-start = not block and bare in ("start", "both")
   let bare-end = not block and bare in ("end", "both")
   let end-tag = if bare-end { context redline-tag("end", 0.3em, width: 0pt) } else { redline-tag("end", 0.3em) }
@@ -387,8 +499,9 @@
       let own = picture or redline-own-colours(b)
       // A strike reaches only the words of an equation.
       let eq = kind == "del" and c.func() == math.equation
-      let f = redline-frame(c, stroke, cross: kind == "del" and picture, tint: kind == "del" and (own or eq), whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
-      out.push(if eq { plain(text(fill: stroke.paint, f)) } else if not own { frame-style(f) } else if c.func() == figure {
+      let tinted = kind == "del" and st.block-color
+      let f = redline-frame(c, stroke, paint, cross: tinted and picture, tint: tinted and (own or eq), whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
+      out.push(if not st.block-color { plain(f) } else if eq { plain(text(fill: paint, f)) } else if not own { frame-style(f) } else if c.func() == figure {
         show figure.caption: frame-style
         plain(f)
       } else { plain(f) })
@@ -410,10 +523,10 @@
         if i == 0 and not (between or bare-start) { out.push[#box(redline-tag(kind, -0.8em, step: step, id: id))\u{2060}] }
         c
       }
-      let c = if c.func() == box and c.at("body", default: none) != none and not redline-textual(c) {
-        box(stroke: stroke, outset: redline-style.outset.top, {
+      let c = if redline-drawing-box(c) {
+        box(stroke: stroke, outset: st.outset.top, {
           c
-          if kind == "del" { context { let s = measure(c); redline-cross(stroke, s.width, s.height) } }
+          if kind == "del" and st.block-color { context { let s = measure(c); redline-cross(paint, s.width, s.height) } }
         })
       } else { c }
       run.push(if i == n - 1 and broken != none { broken } else if i == n - 1 and styled { redline-end-in(c, end-tag) } else { c })
@@ -463,7 +576,7 @@
 #let redline-ins-rules(body, block, st: redline-style) = {
   if block { return context redline-fill(if redline-light-text() { st.ins.lighten(60%) } else { st.ins }, body) }
   show: redline-fill.with(st.ins)
-  let stroke = (bottom: 0.5pt + st.ins)
+  let stroke = (bottom: st.underline)
   // A box keeps a fill behind math but stops it from breaking across lines.
   // It reaches as far up and down as the highlight of the text around it,
   // from the ascender to the descender of the text's font, which inside
@@ -646,10 +759,10 @@
     let s = measure(it)
     box({
       it
-      place(top + left, dy: s.height / 2, line(length: s.width, stroke: st.strike))
+      if st.strike != none { place(top + left, dy: s.height / 2, line(length: s.width, stroke: st.strike)) }
     })
   }
-  let struck = redline-fill(st.del, strike(stroke: st.strike, body))
+  let struck = redline-fill(st.del, if st.strike == none { body } else { strike(stroke: st.strike, body) })
   // On a dark background, a light one of its own keeps it legible.
   context if redline-light-text() { highlight(fill: st.del-fill, struck) } else { struck }
 }
@@ -658,6 +771,11 @@
 
 // The version laid out for the side-by-side layout, or none.
 #let redline-side = sys.inputs.at("redline-side", default: none)
+
+// Whether the binary keeps only the pages with marks and the summary
+// (`--input redline-only-changes`), so that a page of this PDF is not one of
+// the output.
+#let redline-only-changes = "redline-only-changes" in sys.inputs
 
 // On each side of the side-by-side layout, every change records its kind
 // as a change from the old version to the new one, an identity, so that
@@ -743,11 +861,11 @@
     let one = run.len() == 1
     let (pa, pb) = (redline-printed(a), redline-printed(b))
     let span(x, y) = if one [#x] else [#x–#y]
-    let pdf = [PDF #if one [page] else [pages] #span(a.page(), b.page())]
+    let pdf = if redline-only-changes [#if one [page] else [pages] #span(a.page(), b.page()) of the full PDF] else [PDF #if one [page] else [pages] #span(a.page(), b.page())]
     let p = if prefix { if one [p. ] else [pp. ] }
     if pa == none or pb == none {
-      if numbered or pa != pb { pdf } else [#p#span(a.page(), b.page())]
-    } else if pa == str(a.page()) and pb == str(b.page()) [#p#span(pa, pb)] else [#p#span(pa, pb) (#pdf)]
+      if numbered or pa != pb or redline-only-changes { pdf } else [#p#span(a.page(), b.page())]
+    } else if pa == str(a.page()) and pb == str(b.page()) or redline-only-changes [#p#span(pa, pb)] else [#p#span(pa, pb) (#pdf)]
   }).join[, ]
 }
 
@@ -761,6 +879,25 @@
   // `join` takes no default before Typst 0.12.
   if runs.len() == 0 { "–" } else { runs.map(r => str(r.first()) + if r.len() > 1 { "–" + str(r.last()) } else { "" }).join(", ") }
 }
+
+// The pages numbered `ps` in this PDF as the summary's table names them,
+// under the head `redline-table-head()`: by these numbers, or, where pages
+// are left out of the output, by the names that the margin uses.
+#let redline-table-pages(ps) = if not redline-only-changes { redline-pages(ps) } else {
+  let at = (:)
+  for m in query(<redline-page>) { at.insert(str(m.location().page()), m.location()) }
+  redline-page-names(ps.map(p => at.at(str(p), default: none)).filter(l => l != none), prefix: false)
+}
+
+// The head of the summary's column of pages: "Page" where its numbers are
+// those printed on the pages.
+#let redline-table-head() = {
+  let printed = query(<redline-page>).all(m => redline-printed(m.location()) in (none, str(m.location().page())))
+  if printed or redline-only-changes [Page] else [PDF page]
+}
+
+// Where the summary is, as the line at the top of the first page says it.
+#let redline-summary-at(loc) = if redline-only-changes [at the end] else [on #redline-page-names((loc,))]
 
 // `body` in text set as `set text(..args)` sets it, also where the document
 // has a rule such as `show text: set text(fill: red)`: a show-set rule wins
@@ -828,7 +965,39 @@
   parbreak()
 }
 
-#let redline-ins(body, block: false, bare: none, step: none, move: none, id: none) = {
+// The look of math `b` inserted or deleted inside a formula. Strikes,
+// highlights and boxes do not reach into math, so deleted math is crossed
+// out with a line, each piece between line breaks and alignment points on
+// its own, and both are coloured. A deleted piece is ordinary math, so that
+// an operator inserted after it is spaced as one; `gap` sets it apart
+// inside, as a space after it would make that operator a sign.
+#let redline-math-look(kind, b, st, gap: false) = {
+  let breaks = (linebreak, $&$.body.func())
+  let cross(run, gap) = if run.any(c => c != [ ]) or gap {
+    let c = redline-neutral(run.join())
+    math.class("normal", if st.strike != none { math.cancel(c, stroke: st.strike) } else { c } + if gap { h(st.gap) })
+  }
+  let shown = if kind == "ins" or b == [] { b } else {
+    let (out, run) = ([], ())
+    for c in if b.func() == [].func() { b.children } else { (b,) } {
+      if c.func() in breaks { out += cross(run, false) + c; run = () } else { run.push(c) }
+    }
+    out + cross(run, gap)
+  }
+  redline-fill(if kind == "del" { st.del } else { st.ins }, shown)
+}
+
+// A change inside a formula: `body` is an inline equation whose body is laid
+// out as part of the formula around it, in its style and spacing; the bar
+// marks the line. Nothing deleted leaves nothing in the formula.
+#let redline-math(kind, body, st, step, id, gap: false) = {
+  let b = if type(body) == content and body.func() == math.equation { body.body } else { body }
+  redline-tag(kind, -0.8em, step: step, id: id)
+  redline-math-look(kind, b, st, gap: gap)
+  context redline-tag("end", 0.3em, width: 0pt)
+}
+
+#let redline-ins(body, block: false, bare: none, step: none, move: none, math: false, id: none) = {
   if move != none {
     let end = move.at("end", default: false)
     // Both ends, so that the pages a long move spans are shown.
@@ -836,7 +1005,9 @@
     return side + redline-move-tag(if end { "end" } else { "to" }, move.id, step: step, block: move.block, heading: move.at("heading", default: false))
   }
   let st = redline-step-style(step)
-  if redline-side != none { redline-side-mark("ins", body, id: id) }
+  let side = if redline-side != none { redline-side-mark("ins", body, id: id) }
+  if math { return side + redline-math(if redline-side == "old" { "del" } else { "ins" }, body, st, step, id) }
+  side
   if redline-side == "old" {
     let look = redline-del-look.with(st: st)
     redline-mark("del", redline-footnotes(body, look), block, look, st.del-frame, frame-style: look, bare: bare, step: step, id: id)
@@ -844,6 +1015,15 @@
     let body = redline-footnotes(body, b => redline-ins-rules(b, false, st: st))
     redline-mark("ins", body, block, b => redline-ins-rules(b, block, st: st), st.ins-frame, frame-style: redline-fill.with(st.ins), bare: bare, step: step, id: id)
   }
+}
+
+// Deleted content without its text or without its framed parts and
+// drawings, as `del-text` and `del-blocks` of `st` say; [] if nothing is
+// left, which leaves the mark's tags, so that its bar and number stay.
+#let redline-kept(body, block, st) = {
+  let (lead, ch, trail) = redline-parts(body)
+  let left = ch.filter(c => if redline-framed(c, block and ch.len() == 1) or redline-drawing-box(c) { st.del-blocks } else { st.del-text })
+  if left.len() == 0 { [] } else if left.len() == ch.len() { body } else { (lead, ..left, trail).join() }
 }
 
 // A deleted list or enum item, `item` as in redline-del, spaced as its list
@@ -869,14 +1049,17 @@
 
 // On a side of the side-by-side layout, a deletion is content the version
 // does not have: the page next to it shows it.
-#let redline-del(body, block: false, heading: none, item: none, gap: false, bare: none, step: none, move: none, id: none) = {
+#let redline-del(body, block: false, heading: none, item: none, gap: false, bare: none, step: none, move: none, math: false, id: none) = {
   let st = redline-step-style(step)
   // The binary pairs the pages of a move's two places by the marks around
   // its content, which each side has.
   if redline-side != none and move != none { return }
   if redline-side != none { return redline-side-mark("del", body, id: id, block: block or heading != none or item != none) }
   if move != none { return redline-move-line(move, body, step) }
+  if math { return redline-math("del", if st.del-text { body } else { [] }, st, step, id, gap: gap and st.del-text) }
   let block = block or heading != none or item != none
+  let body = if st.del-text and st.del-blocks { body } else { redline-kept(body, block, st) }
+  let (item, gap) = if body == [] { (none, false) } else { (item, gap) }
   // Content that draws nothing stays in the paragraph it was in, and the
   // summary lists its code.
   let unseen = redline-unseen(body)
@@ -911,7 +1094,19 @@
   // Line numbers belong to the lines of the new version.
   if apart and sys.version >= version(0, 12, 0) { set par.line(numbering: none); mark } else { mark }
   redline-restore(start)
-  if apart { parbreak() } else if gap and not unseen { h(0.25em) }
+  if apart { parbreak() } else if gap and not unseen { h(st.gap) }
+}
+
+// A change bar `len` long in `paint`, unless the style gives bars a colour.
+// A deletion bar is thinner and dashed, with whole dashes at its ends and at
+// least three, so that a short one does not read as a colon.
+#let redline-bar(len, ins, paint, st) = {
+  let paint = if st.bars != auto { st.bars } else { paint }
+  let k = calc.max(3, calc.round((len + 1.5pt) / 4.5pt))
+  let space = calc.min(1.5pt, len / (2 * k))
+  line(angle: 90deg, length: len, stroke: if ins { st.bar-width + paint } else {
+    (paint: paint, thickness: st.del-bar-width, dash: ((len - (k - 1) * space) / k, space))
+  })
 }
 
 // The bars code shadows `top`, `bottom` and `left`. Bars are placed from the
@@ -966,13 +1161,13 @@
   show: redline-own-text.with(6.5pt)
   set par(justify: false)
   let lead = if v.at("empty", default: false) [typst-redline found no changes] else [Changes marked by typst-redline]
-  let pages = redline-page-names((at.first().location(),))
+  let pages = redline-summary-at(at.first().location())
   // The colours inside the link, which the document can style. Without
   // its first words where it would wrap; on white and at the right, to read
   // on a header band beside a title.
-  let line(head) = [#redline-text(fill: luma(110), head)#redline-text(fill: redline-style.del, more)]
-  let full = line[#lead · summary on #pages]
-  let line = context if measure(full).width <= width { full } else { line[Summary on #pages] }
+  let line(head) = [#redline-text(fill: redline-style.number, head)#redline-text(fill: redline-style.del, more)]
+  let full = line[#lead · summary #pages]
+  let line = context if measure(full).width <= width { full } else { line[Summary #pages] }
   let line = box(fill: white, outset: (x: 2pt, y: 1.5pt), radius: 1pt, line)
   let dy = calc.max(2pt, margin / 4 - 3pt)
   // Where the top margin has no room for it, it would cover the text.
@@ -1110,16 +1305,8 @@
       merged.last().at(2) = calc.max(last.at(2), bar.at(2))
     } else { merged.push(bar) }
   }
-  // A deletion bar is thinner and dashed, with whole dashes at its ends and
-  // at least three, so that a short one does not read as a colon.
-  for (x, y0, y1, ins, paint) in merged {
-    let len = calc.max(y1 - y0, 0pt)
-    let k = calc.max(3, calc.round((len + 1.5pt) / 4.5pt))
-    let space = calc.min(1.5pt, len / (2 * k))
-    let stroke = if ins { st.bar-width + paint } else {
-      (paint: paint, thickness: st.del-bar-width, dash: ((len - (k - 1) * space) / k, space))
-    }
-    place(redline-top-left, dx: x, dy: y0, line(angle: 90deg, length: len, stroke: stroke))
+  for (x, y0, y1, ins, paint) in merged.filter(_ => st.bars != none) {
+    place(redline-top-left, dx: x, dy: y0, redline-bar(calc.max(y1 - y0, 0pt), ins, paint, st))
   }
   // A move's bracket, from the start of its new place to its end, linked to
   // its old place, with the x of the far side of the free space for its
@@ -1138,6 +1325,7 @@
     } else { bar-x(s, e, cw, g, n, 3) }
   }
   let ends = query(<redline-move>)
+  let bracketed = false
   let (lo, hi) = (0, ends.len())
   while lo < hi {
     let mid = calc.quo(lo + hi, 2)
@@ -1152,7 +1340,7 @@
     // Brackets of moves that follow each other stay a little apart.
     let y0 = if s.page < pg { top } else { s.y - (if redline-value(a).block { 0.1em } else { 0.8em }).to-absolute() + 2.5pt }
     let y1 = if e.page > pg { bottom } else { e.y + (if v.block { 0em } else { 0.3em }).to-absolute() - 2.5pt }
-    let stroke = st.move-stroke + st.move
+    let stroke = st.move-stroke
     // The end of a line of text can reach past the column; its column is
     // the one it ends.
     let e-in = if v.block { e } else { (page: e.page, x: e.x - 2pt, y: e.y) }
@@ -1168,6 +1356,7 @@
       if first { place(redline-top-left, dx: x, dy: from, line(length: tick, stroke: stroke)) }
       if last { place(redline-top-left, dx: x, dy: to, line(length: tick, stroke: stroke)) }
     }
+    bracketed = true
     let ((x, right-side, edge), _, y1, ..) = pieces.first()
     let (x0, x1) = if right-side { (x - 3pt, edge - 2pt) } else { (edge + 2pt, x + 3pt) }
     let other = redline-move-find("from", v.id)
@@ -1286,6 +1475,8 @@
     let tw = measure(t).width
     place(redline-top-left, dx: if r { calc.min(anchor(r), w - tw - edge(r)) } else { calc.max(anchor(r) - tw, edge(r)) }, dy: calc.max(y, 1pt), t)
   }
+  // For --only-changes: a page with a bar, bracket or number of a change.
+  if redline-only-changes and (merged.len() > 0 or bracketed or lines.len() > 0) { redline-meta(none, <redline-marked-page>) }
   // The legend goes at the bottom edge of the page, as the pointer line goes
   // at the top edge, if it stays clear of the footer. The side-by-side
   // layout has one under each pair of pages instead. The footer lies in the
@@ -1501,7 +1692,7 @@
 }
 
 #let redline-move-bracket = {
-  let s = redline-style.move-stroke + redline-style.move
+  let s = redline-style.move-stroke
   box(width: 4pt, height: 0.65em, {
     place(dx: 0.5pt, line(angle: 90deg, length: 0.65em, stroke: s))
     place(dx: 0.5pt, line(length: 2.5pt, stroke: s))
@@ -1711,6 +1902,13 @@
   let drawn = query(<redline-page>).map(m => m.location().page())
   let unbarred = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location().page()).dedup().filter(p => p not in drawn)
   redline-ints(unbarred, <redline-unbarred>)
+  if redline-only-changes and redline-side == none {
+    // The first page of the summary, then each page with a mark, as
+    // redline-page-bars finds it or where it draws no bars.
+    let marked = query(<redline-marked-page>).map(m => m.location().page()) + unbarred
+    let start = query(<redline-summary>).map(m => m.location().page())
+    redline-ints((start.at(0, default: 0), ..marked.sorted().dedup()), <redline-marked>)
+  }
   if redline-side != none {
     // The pages where the marks of each id end, in order: the tags of a mark
     // are the visible tags that follow each other, its id on the first.
@@ -1747,16 +1945,22 @@
 // Each kind of mark drawn as on the pages, with a few words.
 #let redline-marks-legend(info) = {
   let steps = info.at("history", default: (steps: false)).steps
-  let st = if steps { redline-style + redline-colours(luma(70)) } else { redline-style }
+  let st = if steps { redline-colours(luma(70)) } else { redline-style }
   let frame(stroke) = box(width: 1.4em, height: 0.75em, stroke: stroke)
-  let bar(paint, width, dash) = box(height: 0.9em, baseline: 0.1em, line(angle: 90deg, length: 0.9em, stroke: (paint: paint, thickness: width, dash: dash)))
+  let bar(ins, paint) = box(height: 0.9em, baseline: 0.1em, context redline-bar(0.9em.to-absolute(), ins, paint, st))
+  // A side of the side-by-side layout shows deleted content whatever the style.
+  let side = redline-side != none
   let items = (
     (redline-ins-rules([text], false, st: st), [inserted text]),
-    (redline-del-rules(st: st)[text], [deleted text]),
-    (frame(st.ins-frame), [inserted block]),
-    (frame(st.del-frame), [deleted block]),
+    ..if st.del-text or side { ((redline-del-rules(st: st)[text], [deleted text]),) },
+    ..if info.at("math", default: false) {(
+      (math.equation(redline-math-look("ins", $x^2$.body, st)), [inserted in a formula]),
+      ..if st.del-text or side { ((math.equation(redline-math-look("del", $x^2$.body, st)), [deleted in a formula]),) },
+    )},
+    ..if st.ins-frame != none { ((frame(st.ins-frame), [inserted block]),) },
+    ..if (st.del-blocks or side) and st.del-frame != none { ((frame(st.del-frame), [deleted block]),) },
     ..if not steps { ((text(fill: st.ins)[Text], [new paragraph]),) },
-    ([#bar(st.ins, st.bar-width, none)#h(3pt)#bar(st.del, st.del-bar-width, (2.5pt, 1.5pt))], [changed lines]),
+    ..if st.bars != none { (([#bar(true, st.ins)#h(3pt)#bar(false, st.del)], [changed lines]),) },
     (text(fill: redline-style.number)[3], [change number]),
   )
   if info.at("moved", default: 0) > 0 {
@@ -1834,20 +2038,17 @@
     block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
     if total == 0 [No changes found between the two versions.] else [#total #if total == 1 [change] else [changes]#if apart == total [, not marked on the pages but listed below] else if apart > 0 [, #apart of them not marked on the pages but listed below].]
 
-    // Pages by their number in this PDF, which is the number printed on
-    // them unless a page prints another.
-    let printed = query(<redline-page>).all(m => redline-printed(m.location()) in (none, str(m.location().page())))
     let rows = redline-section-rows(info, lost, nums)
     let min-level = calc.min(..rows.map(r => r.level), 9)
     let rows = rows.map(r => {
-      let pages = if r.pages.len() > 0 { redline-pages(r.pages) }
+      let pages = if r.pages.len() > 0 { redline-table-pages(r.pages) }
       let (name, pages) = if r.heading == none { (r.name, pages) } else { (link(r.heading, r.name), link(r.heading, pages)) }
       (pad(left: (r.level - min-level) * 1.2em, name), if r.ns.len() > 0 { redline-number(r.ns) }, r.what, pages)
     }).flatten()
     if rows.len() > 0 {
       redline-head[Changes by section]
       let grey = text.with(size: 0.85em, fill: luma(110))
-      let head = (grey[Section], grey[No.], grey[Changes], grey(if printed [Page] else [PDF page]))
+      let head = (grey[Section], grey[No.], grey[Changes], grey(redline-table-head()))
       // Columns are as wide as their content. Section names get their width
       // first, as long as the changes keep a third of what the numbers and
       // pages leave; neither gets less than its longest unbreakable part,
@@ -1950,7 +2151,7 @@
   let row-page(ps, r) = if ps.len() > 0 { ps.at(calc.min(r, ps.len() - 1)) }
   let hist = info.at("history", default: none)
   let steps = hist != none and hist.steps
-  let sample = if steps { st + redline-colours(luma(70)) } else { st }
+  let sample = if steps { redline-colours(luma(70)) } else { st }
   set page(width: auto, height: auto, margin: gap)
   set text(size: size)
   // The first page is as large as what it says.

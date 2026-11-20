@@ -11,6 +11,8 @@ Each of these was tried with the current version. Within each group, the ones a 
 - In deleted code, a label passed as a named argument or written in math is taken to be attached by the code and is renamed, and one passed positionally is taken to be a reference; a reference made from a label passed as a named argument shows the renamed label, such as *redline-del-label-a*.
 - A figure whose body changed is deleted and inserted whole, caption and all, when it is passed to another call, as in `#align(center, figure(...))`, when it is inline, or when an argument other than its body and content in brackets changed.
 - A raw block with one changed line is deleted and inserted whole.
+- New parts of a formula are only coloured blue, which does not show in greyscale; the bar in the margin marks their line. A changed part is marked with what it is attached to where it cannot stand alone: a changed base such as the `x` of `x^2` marks all of `x^2`. A formula right next to changed words can be shown whole, with them.
+- Deleted parts of a display formula widen it, and a wide formula can then reach its equation number. `--math-markup whole` shows the old formula on a line of its own.
 - A heading, list item or code line deleted or inserted directly between two lines of text, with no blank line, shows the unchanged text next to it as deleted and inserted again.
 - A citation added to or removed from a group such as `@a @b` marks the whole group.
 - Inserted or deleted text that the document gives a colour of its own, such as a link or a white tag on a dark box, keeps that colour and is marked only by its strike, highlight or bar; under a rule such as `show text: set text(fill: ...)` it takes that rule's colour.
@@ -30,7 +32,7 @@ Each of these was tried with the current version. Within each group, the ones a 
 
 ## Deleted content in the new layout
 
-- Deleted content shifts line and page breaks compared with the new version, and a deleted figure, table or drawing that fits on a page is kept whole, so on a full slide it and the new one each take a page of their own; side by side avoids this.
+- Deleted content shifts line and page breaks compared with the new version, and a deleted figure, table or drawing that fits on a page is kept whole, so on a full slide it and the new one each take a page of their own; side by side avoids this, and so does `--graphics-markup new-only`, which leaves the old one out. Deleted text still takes room with `new-only`.
 - Deleted content is laid out under the new version's show and set rules, so where such a rule changed, it does not look as it did in the old version.
 - A reference or citation in deleted text to a label or bibliography entry that the new version lacks shows the label or key, not the number the old version printed. A deleted citation of an entry that the new version keeps shows that entry's number in the new bibliography, or its key where the new version first cites another entry between the two.
 - Deleted content that updates a state, for example in a show rule of a package, leaves the state changed after it, because Typst records no initial value to set it back to; the summary page names such states.
@@ -48,11 +50,13 @@ Each of these was tried with the current version. Within each group, the ones a 
 ## Files and the command line
 
 - Package files are not checked for changes.
+- `--only-changes` leaves out a page whose only change is listed on the summary, such as a page that a changed `#set` rule or a reflow redraws.
+- With `--only-changes`, links on the summary and cross-references in the text that lead to a page left out lead nowhere, and with Typst 0.15 the PDF has no tags for accessibility, as with `typst compile --pages`.
 - Two plain files whose projects need different roots, such as two copies of a project that use paths starting with `/`, cannot be compared, because `--root` is one folder for both; comparing git revisions of the project works.
 - Jujutsu works in a repository colocated with git, with git commit hashes or bookmarks as revisions, not jj change ids or revsets. A repository that is not colocated, and other version control such as Mercurial or Subversion, are not read; compare two copies of the files instead.
 
 ## Typst versions
 
 - The tests run with Typst 0.15.1 and 0.14.2 and also pass with 0.11.1; Typst 0.12 and 0.13 are not tested.
-- With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked.
+- With Typst 0.11, `--only-changes` does not work. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked.
 - With Typst 0.11, the summary is laid out on the document's pages, with its header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.

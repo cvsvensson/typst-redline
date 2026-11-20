@@ -1,22 +1,22 @@
 # Gallery
 
-Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again. [Known problems](known-problems.md) lists the cases where the marks fall short.
+Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again. [Known problems](known-problems.md) lists the cases where the marks fall short, and [Styling](styling.md) shows the paper example in latexdiff's markup types and in colours of its own.
 
 ## Text, formulas and figures
 
-Deleted words are struck out in red and new ones highlighted in blue; a new paragraph is blue. The old formula is tinted in a dashed red frame above the new one in a blue frame. The figure's plot changed: the old plot, crossed out, stands before the new figure, whose caption appears once with its new words marked. The equation and the figure keep their numbers. Bars in the margin mark each changed line, with the number of each change next to them; the old and the new formula are one change and share a number, and a line with two changes is labelled *7–8*.
+Deleted words are struck out in red and new ones highlighted in blue; a new paragraph is blue. The formula gained a term, which is blue inside it; deleted parts of a formula are crossed out in red. A line added to or removed from an aligned formula is marked as a line. A formula that changed for the most part, or whose lines were joined or split, is shown whole instead, the old one tinted in a dashed red frame above the new one in a blue frame, as with `--math-markup whole`. The figure's plot changed: the old plot, crossed out, stands before the new figure, whose caption appears once with its new words marked. The equation and the figure keep their numbers. Bars in the margin mark each changed line, with the number of each change next to them; a deleted and an inserted piece that replace each other are one change and share a number, and a line with two changes is labelled *7–8*.
 
 ```
 typst-redline old.typ new.typ
 ```
 
-<img src="paper.png" width="560" alt="A paper page with a deleted word, new words, the old formula tinted and the old plot crossed out in dashed red frames above the new ones in blue frames, a new paragraph, and bars and change numbers in the margin">
+<img src="paper.png" width="560" alt="A paper page with a deleted word, new words, a new term of a formula in blue, the old plot crossed out in a dashed red frame above the new one in a blue frame, a new paragraph, and bars and change numbers in the margin">
 
 Files: [paper/old.typ](paper/old.typ), [paper/new.typ](paper/new.typ).
 
 Text is marked the same way inside headings, list items, captions, bold and emphasized text. A deleted list item stays in its list, with its old marker or number in red, and a deleted line break shows as a struck ↵ instead of breaking the line. A new or removed citation is marked in the text. Where the text is light, as on a dark slide, deleted words get a light background and new paragraphs a lighter blue.
 
-In an old formula, figure, code block or drawing, text is struck through where it can be; an image or a drawing, such as a plot, is crossed out, and anything else, such as a formula, a table, a code block or a chart built from boxes, is tinted red. A drawing in a box in the text, such as an icon, gets a frame of its own size. Code blocks and filled boxes keep their colours inside the frame.
+In an old formula, figure, code block or drawing, text is struck through where it can be; an image or a drawing, such as a plot, is crossed out, and anything else, such as a formula, a table, a code block or a chart built from boxes, is tinted red. A drawing in a box in the text, such as an icon, gets a frame of its own size. Code blocks and filled boxes keep their colours inside the frame. With `--graphics-markup new-only`, as in latexdiff, the old formula and plot are left out, and a short dashed bar with the change's number marks where they stood; with `--graphics-markup none`, the new ones also have no frame and only their bar marks them. In side by side, the old one is on the old page in either case, and `none` leaves out the frames on both pages.
 
 Change numbers count in the reading order of the new version, so that a co-author can write "change 14 is wrong". A change in a column between others, or next to a margin too narrow for its number, has its number in the other margin on the same line.
 
@@ -74,7 +74,7 @@ From the top:
 - **Not marked in place**: each change that has no mark on the pages, after its number, said in words with old in red and new in blue where it can be, and its source. Bibliography entries that appear, disappear or change are listed here too.
 - **What this PDF shows differently**: notes on where this PDF differs from a plain proof, for example pages without bars or coarser marks; see [Known problems](known-problems.md).
 - **Commits**: for a comparison with git, the commits between the two versions that change the document or a file it reads.
-- **How changes are marked**: the legend, a sample of each kind of mark.
+- **How changes are marked**: the legend, a sample of each kind of mark; those of marks inside formulas and of moved text only where the document has them.
 
 What is listed rather than marked:
 
@@ -84,6 +84,10 @@ What is listed rather than marked:
 A change inside a content argument in brackets, such as a template's `abstract: [...]`, is marked on the page like other text. Another call whose arguments change is marked whole, old call deleted and new one inserted. When only the body of a call that also takes content by name changed, such as the image of a `#figure(image(...), caption: [...])`, the old body is shown deleted and the new figure inserted, so that its caption shows once, with edits in it marked.
 
 The summary is set in the document's font, without its template, header, footer, foreground or background, on pages at least as wide as the document's. Its pages do not count in the document's page total, so a footer such as *page 3 of 12* reads as in the new version.
+
+## Only the changed pages
+
+With `--only-changes`, the PDF has only the pages that carry a mark, including the old place of moved text, and the summary. A page whose only change is listed on the summary, such as one that a changed `#set` rule redraws, is left out. The pointer line on the first page, if that page is kept, says that the summary is at the end, and the summary and margin notes name pages by the numbers printed on them, or by their place in the full PDF where a page has none.
 
 ## Who changed what
 

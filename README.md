@@ -2,9 +2,9 @@
 
 Like latexdiff, for Typst.
 
-`typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document. It makes a PDF of the new version with deleted text struck out, new text highlighted, changed formulas and figures framed, and bars and change numbers in the margin; a summary at the end lists every change, including those it cannot mark on the page. AI agents wrote this tool.
+`typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document. It makes a PDF of the new version with deleted text struck out, new text highlighted, changed parts of formulas coloured, changed figures framed, and bars and change numbers in the margin; a summary at the end lists every change, including those it cannot mark on the page. AI agents wrote this tool.
 
-<img src="docs/paper.png" width="480" alt="A paper page: a deleted word struck out in red, new words highlighted in blue, the old formula tinted and the old plot crossed out in dashed red frames above the new ones in blue frames, a new paragraph in blue, and bars in the margin next to each changed line, with the number of each change beside them">
+<img src="docs/paper.png" width="480" alt="A paper page: a deleted word struck out in red, new words highlighted in blue, a new term of a formula in blue, the old plot crossed out in a dashed red frame above the new one in a blue frame, a new paragraph in blue, and bars in the margin next to each changed line, with the number of each change beside them">
 
 The [gallery](docs/gallery.md) shows every kind of mark, each with the files it was made from.
 
@@ -56,14 +56,43 @@ Without git, compare two copies; quote paths that contain spaces:
 typst-redline "thesis v1/thesis.typ" "thesis v2/thesis.typ"
 ```
 
-The PDF is written next to the file, or next to the new file when you give two, as `<name>.redline.pdf`, and its path is printed. `-o out.pdf` writes it elsewhere. With one file, the new version is the file as it is on disk, uncommitted changes included, unless `--to <revision>` names another.
+The PDF is written next to the file, or next to the new file when you give two, as `<name>.redline.pdf`, and its path is printed. With one file, the new version is the file as it is on disk, uncommitted changes included, unless `--to <revision>` names another.
 
-If the document reads files outside its own folder, such as `#include "../shared/intro.typ"`, pass the folder that holds all of its files with `--root`, for example `typst-redline thesis/main.typ --root .` from that folder. Without `--root`, the `TYPST_ROOT` environment variable is used if it is set, and otherwise the folder of the file. `--typst <path>` picks another `typst` than the one on `PATH`, and arguments after `--` go to `typst compile`, for example `-- --font-path fonts`. `--keep-typ` keeps the marked Typst source and prints where it is, and `--list-files` prints the paths of the files the document is made of. `typst-redline --help` lists every option.
+### Options
+
+`typst-redline --help` lists them too.
+
+**Versions**
+- `--since <rev>` and `--to <rev>`, as above. As in latexdiff-vc, `-r v1` is `--since v1` and `-r v1 -r v2` is `--since v1 --to v2`.
+- `-L <text>` names the old version in the PDF, and a second `-L` the new one.
+- `--root <dir>`: the folder that holds all of the document's files, for a document that reads files outside its own folder, such as `#include "../shared/intro.typ"`; for example `typst-redline thesis/main.typ --root .`. Without it, the `TYPST_ROOT` environment variable is used if it is set, and otherwise the folder of the file.
+
+**What to mark**
+- `--no-moves` shows moved text as deleted at its old place and inserted at its new place.
+- `--each-commit` and `--steps <revs|n>` colour each change by the commit, or group of commits, that made it ([picture](docs/gallery.md#who-changed-what), [details](docs/git.md)).
+- `--math-markup whole` shows every changed formula whole, the old one and the new one, instead of marking its changed parts.
+
+**How marks look** ([docs/styling.md](docs/styling.md) has the details and pictures)
+- `-t UNDERLINE`, `-t CHANGEBAR` and three other latexdiff markup types start from latexdiff's look.
+- `--style key=value` changes one setting, such as `--style del=green` or `--style ins-fill=none` for no highlight, and `--style my-style.typ` several from a file that holds a dictionary such as `(del: green, bars: none)`; [examples](docs/styles). A `.typst-redline.typ` in the project and a `style.typ` in the user's settings apply by themselves ([where](docs/styling.md#style-files-that-apply-by-themselves)).
+- `--graphics-markup new-only` leaves out the old version of a changed formula, figure, table, code block or drawing, and `none` also shows the new one without frame or colour; the bar and the number stay.
+- `-p my-preamble.typ` replaces the styling whole; `--show-preamble` prints the built-in one to start from.
+
+**Output**
+- `-o out.pdf` writes the PDF elsewhere.
+- `--layout side-by-side`: [below](#slides-and-side-by-side).
+- `--only-changes` keeps only the pages with marks and the summary, for a long document with a few changes. The pages keep the numbers printed on them, and the summary and margin notes name pages by those numbers. It needs Typst 0.12 or later.
+- `--keep-typ` keeps the marked Typst source and prints where it is.
+- `--typst <path>` picks another `typst` than the one on `PATH`, and arguments after `--` go to `typst compile`, for example `-- --font-path fonts`.
+
+**Without a PDF**
+- `--mark-reviewed` and `--show-reviewed`: [recipes](#recipes-with-git).
+- `--list-files` prints the paths of the files the document is made of.
 
 ## What is marked
 
 - Deleted text is struck out in red and new text highlighted in blue, also in headings, lists, captions and footnotes.
-- A changed formula, figure, table, code block or drawing is shown whole: the old one in a dashed red frame, the new one in a blue frame.
+- Inside a changed formula, the deleted parts are crossed out in red and the new parts are blue, where the change is small; a formula that changed for the most part, or whose lines were joined or split, is shown whole, like a changed figure, table, code block or drawing: the old one in a dashed red frame, the new one in a blue frame.
 - A bar in the margin points to every changed line, dashed for deletions and solid for insertions, with a number for each change that the summary page uses too.
 - A moved paragraph or section is shown once, at its new place, with a "moved" note; at its old place a grey line links to it.
 - Changes in included files and replaced images are marked; with git, the old version of each file comes from the old commit.
@@ -79,7 +108,7 @@ The last page, or pages, list every change by its number, section by section, an
 
 ## Slides and side by side
 
-`--layout side-by-side` shows each changed page of the old version next to the same page of the new version, leaves out pages without changes, and ends with the summary. Use it for slides: in the default layout, deleted content takes room on the page, so a full slide overflows. It needs Typst 0.14 or later and an old version that compiles; the default layout falls back to coarser marks instead.
+`--layout side-by-side` shows each changed page of the old version next to the same page of the new version, leaves out pages without changes, and ends with the summary. Use it for slides: in the default layout, deleted content takes room on the page, so a full slide overflows. Where only figures changed, `--graphics-markup new-only` also keeps the slides whole. It needs Typst 0.14 or later and an old version that compiles; the default layout falls back to coarser marks instead.
 
 ```
 typst-redline talk.typ --since HEAD~1 --layout side-by-side
@@ -99,16 +128,12 @@ typst-redline talk.typ --since HEAD~1 --layout side-by-side
 
 The ones you are most likely to meet; [docs/known-problems.md](docs/known-problems.md) has the full list, each tried with the current version.
 
-- In the default layout, deleted content takes room on the page, so line and page breaks shift, and on a full slide the old and the new version of a figure each take a page of their own; use side by side for slides.
+- In the default layout, deleted content takes room on the page, so line and page breaks shift, and on a full slide the old and the new version of a figure each take a page of their own; use side by side for slides, or `--graphics-markup new-only`, which leaves the old figure out.
 - Some moved text shows as deleted at one place and inserted at the other, for example a sentence moved within or between paragraphs, or a passage rewritten so much that it keeps less than about 60% of its words.
 - Where a function reads its content as text, a changed text can be missing from the page, not only its mark, and a function that fails on marked content makes the whole document fall back to coarser marks; the summary page says so in both cases.
 - Deleted code that uses a name which meant something else at its place, such as a loop variable or a function parameter, is shown by that name, such as *[unit]*, not as it looked.
 - Deleted content is laid out under the new version's show and set rules, and a reference in it to a label that the new version lacks shows the label, not the number the old version printed.
 - Typst 0.12 and 0.13 are not tested; before Typst 0.14, side by side does not work and a file read only through a computed path, such as `#include name + ".typ"`, is not checked for changes.
-
-## Styling
-
-Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`; the six colours of `--each-commit` and `--steps` are in `redline-style.steps`. The data the tool passes to the preamble changes between versions, so copy it again after each update.
 
 ## VS Code
 
