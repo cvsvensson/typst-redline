@@ -135,7 +135,8 @@ async function project(doc: vscode.TextDocument): Promise<Project> {
 // to the file as it is now; `ends` are the revisions where ticked colour steps end.
 type Base = { rev: string; to?: string; ends?: string[]; what: string } | { file: string; what: string };
 // `parent` is the first parent's short hash: the base that includes the commit's own change.
-type Commit = { hash: string; parent: string; date: string; subject: string };
+// `size` counts the lines the commit adds and removes in the document's files.
+type Commit = { hash: string; parent: string; date: string; subject: string; size: string };
 type BaseItem = vscode.QuickPickItem & { base?: Base | "between" | "several" | "other" };
 
 function unsaved(doc: vscode.TextDocument, root: string) {
@@ -225,13 +226,27 @@ async function documentFiles(doc: vscode.TextDocument, root: string) {
 // first or the edge of a shallow clone, has no version before its change and is left out.
 async function commits(dir: string, files: string[]): Promise<{ list: Commit[]; why: string }> {
   try {
-    const log = await git(dir, "log", "--first-parent", "-n", "40", "--date=short", "--format=%h%x09%p%x09%ad%x09%s", "--", ...files);
+    // A merge's size is its change against the first parent, the change the CLI shows for it.
+    const log = await git(
+      dir, "log", "--first-parent", "-n", "40", "--numstat", "--diff-merges=first-parent",
+      "--date=short", "--format=%x01%h%x09%p%x09%ad%x09%s", "--", ...files,
+    );
     const all = log
-      .split(/\r?\n/)
-      .filter((l) => l.trim())
-      .map((l) => {
-        const [hash, parents, date, ...subject] = l.split("\t");
-        return { hash, parent: parents.split(" ")[0], date, subject: subject.join("\t") };
+      .split("\x01")
+      .filter((block) => block.trim())
+      .map((block) => {
+        const [line, ...stats] = block.split(/\r?\n/);
+        const [hash, parents, date, ...subject] = line.split("\t");
+        let added = 0;
+        let removed = 0;
+        let binary = false;
+        for (const [a, d] of stats.filter((l) => l.trim()).map((l) => l.split("\t"))) {
+          binary ||= a === "-";
+          added += Number(a) || 0;
+          removed += Number(d) || 0;
+        }
+        const size = `+${added} −${removed}${binary ? " +binary" : ""}`;
+        return { hash, parent: parents.split(" ")[0], date, subject: subject.join("\t"), size };
       });
     const list = all.filter((c) => c.parent);
     const why = list.length ? "" : all.length ? "The only commit here has nothing before it to compare with." : "No commits change this document.";
@@ -247,7 +262,14 @@ async function commits(dir: string, files: string[]): Promise<{ list: Commit[]; 
 }
 
 const quote = (c: Commit) => `"${c.subject}"`;
-const commitItem = (c: Commit) => ({ label: c.subject, description: `${c.date}  ${c.hash}`, c });
+// A heading for each day, then its commits. A heading carries its first commit only to give
+// all items one type; it cannot be picked.
+const commitItems = (list: Commit[]) =>
+  list.flatMap((c, k) => {
+    const item = { label: `${c.hash} · ${c.size}`, description: c.subject, kind: vscode.QuickPickItemKind.Default, c };
+    const heading = { label: c.date, kind: vscode.QuickPickItemKind.Separator, c };
+    return k && list[k - 1].date === c.date ? [item] : [heading, item];
+  });
 
 // HEAD if the document has changes since it, as the run sees them: in its files that git
 // tracks, in the file itself if git does not track it, or unsaved. The run counts other
@@ -293,7 +315,11 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>, severa
     if (head) {
       targets.push({ label: "$(edit) Changes since the last commit", base: { rev: head, what: "changes since the last commit" } });
     }
-    targets.push(...list.map((c) => ({ ...commitItem(c), base: { rev: c.parent, what: `changes in ${quote(c)} and after` } })));
+    targets.push(
+      ...commitItems(list).map(({ c, ...i }) =>
+        i.kind === vscode.QuickPickItemKind.Separator ? i : { ...i, base: { rev: c.parent, what: `changes in ${quote(c)} and after` } },
+      ),
+    );
   }
   if (!targets.length) {
     output.appendLine(why);
@@ -344,7 +370,7 @@ async function pickFile(doc: vscode.TextDocument): Promise<Base | undefined> {
 const maxColours = 6;
 
 async function pickSeveral(list: Commit[]): Promise<Base | "back" | undefined> {
-  let items = list.map(commitItem);
+  let items = commitItems(list);
   for (;;) {
     const ticked = await pick(items, {
       title: "Typst Redline: Several Commits",
@@ -369,7 +395,7 @@ async function pickSeveral(list: Commit[]): Promise<Base | "back" | undefined> {
 }
 
 async function pickBetween(list: Commit[]): Promise<Base | undefined> {
-  const [from] = (await pick(list.map(commitItem), {
+  const [from] = (await pick(commitItems(list), {
     title: "Typst Redline: Between Two Commits",
     placeholder: "Pick the oldest commit to show",
     view: "view",
@@ -377,7 +403,7 @@ async function pickBetween(list: Commit[]): Promise<Base | undefined> {
   if (!from) {
     return undefined;
   }
-  const [to] = (await pick(list.slice(0, list.indexOf(from.c) + 1).map(commitItem), {
+  const [to] = (await pick(commitItems(list.slice(0, list.indexOf(from.c) + 1)), {
     title: "Typst Redline: Between Two Commits",
     placeholder: "Pick the newest commit to show",
     view: "view",
