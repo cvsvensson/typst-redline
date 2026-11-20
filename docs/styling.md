@@ -37,15 +37,18 @@ with `my-style.typ`:
 | `del-fill` | light red | Behind deleted text where the text is light, as on a dark background |
 | `underline` | `0.5pt` | Line under inserted words; `none` for none |
 | `strike` | `0.065em` | Line through deleted text; `none` for none |
-| `ins-frame`, `del-frame` | `0.6pt`, `(thickness: 0.6pt, dash: "dashed")` | Frames of inserted and deleted formulas, figures and other blocks |
+| `ins-frame`, `del-frame` | `0.6pt`, `(thickness: 0.6pt, dash: "dashed")` | Frames of inserted and deleted formulas, figures and other blocks; `none` for none |
+| `block-colour` | `true` | Whether changed blocks take the colour of their mark: new ones coloured, old ones tinted or crossed out |
 | `outset` | `(x: 0.4em, top: 0.3em, bottom: 0.5em)` | How far frames stand outside their block |
-| `deleted` | `true` | Whether deleted content is shown; `false` leaves it out, and its bar and number stay |
+| `deleted`, `del-blocks` | `true`, `true` | Whether deleted content is shown, and of it formulas, figures, tables, code blocks and drawings; `false` leaves it out, and its bar and number stay |
 | `bars` | `true` | Change bars in the colour of their mark, a colour for all bars, or `false` for none; the change numbers stay |
 | `bar-width`, `del-bar-width` | `2pt`, `1.5pt` | Thickness of insertion and deletion bars |
 | `bar-gap`, `lane` | `0.5cm`, `3.5pt` | Distance of the bars from the text, and between bars of different kinds |
 | `move`, `move-stroke` | grey, `0.8pt` | Brackets and lines of moved text |
 | `number` | grey | Change numbers in the margin and on the summary |
 | `steps` | six colours | Colours of `--each-commit` and `--steps`, which replace `ins` and `del` |
+
+`--graphics-markup new-only` sets `del-blocks: false`, and `--graphics-markup none` also `block-colour: false` and both frames to `none`; latexdiff's default is `new-only`, and the types below leave it as it is.
 
 A stroke without a colour, such as `strike: 1pt` or `del-frame: (thickness: 1pt, dash: "dotted")`, takes the colour of its mark, so `del: green` also makes the strike-through green. A dictionary value is merged into the default: `outset: (x: 0pt)` keeps `top` and `bottom`. An unknown key is an error that lists the keys.
 
