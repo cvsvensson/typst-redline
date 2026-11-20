@@ -2686,23 +2686,27 @@ fn r_with_since_is_a_usage_error() {
 }
 
 #[test]
-fn a_usage_error_names_r_when_r_was_given() {
-    let dir = temp_dir("r-two-files");
-    let out = cli(&dir, &["old.typ", "new.typ", "-r", "a"]);
-    assert_eq!(out.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("-r") && !stderr.contains("--since"), "{stderr}");
-}
-
-#[test]
 fn labels_name_the_versions_on_the_summary() {
     if !typst_available() {
         return;
     }
-    let dir = repo("labels", &["alpha", "beta"]);
-    let args = ["doc/main.typ", "--since", "c-alpha", "-L", "Sent", "--label", "Draft"];
-    let src = marked(&dir, &args, "main.typ");
-    assert!(src.contains("old: \"Sent\", new: \"Draft\""), "{src}");
+    let dir = temp_dir("labels");
+    std::fs::write(dir.join("old.typ"), "Old.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New.").unwrap();
+    let out = cli(
+        &dir,
+        &["old.typ", "new.typ", "-L", "Sent", "--label", "Draft", "--keep-typ"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let kept = Path::new(stderr.lines().find_map(|l| l.strip_prefix("kept ")).unwrap());
+    // The summary shows each label as text of its own.
+    let show = r#"#show regex("Sent|Draft"): it => [#metadata(it.text)<probe>#it]"#;
+    let src = std::fs::read_to_string(kept.join("new.typ")).unwrap();
+    std::fs::write(kept.join("main.typ"), format!("{show}\n{src}")).unwrap();
+    let shown = query(kept, "<probe>");
+    std::fs::remove_dir_all(kept).unwrap();
+    assert!(shown.contains("Sent") && shown.contains("Draft"), "{shown}");
 }
 
 #[test]

@@ -259,14 +259,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             _ => a.files.push(arg),
         }
     }
-    // Usage errors name the options that gave the revisions.
-    let by_r = !revs.is_empty();
-    let (since_to, since_or_to) = if by_r {
-        ("-r", "-r")
-    } else {
-        ("--since and --to", "--since or --to")
-    };
-    if by_r {
+    if !revs.is_empty() {
         if revs.len() > 2 || a.since.is_some() || a.to.is_some() {
             return Err("give -r once or twice, and not with --since or --to".into());
         }
@@ -304,11 +297,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         ));
     }
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
-        return Err(if by_r {
-            "a range in -r cannot be followed by a second -r".into()
-        } else {
-            "--to cannot be combined with a range in --since".into()
-        });
+        return Err("--to (or a second -r) cannot be combined with a range in --since (or -r)".into());
     }
     if [a.mark_reviewed, a.show_reviewed, a.list_files]
         .iter()
@@ -324,7 +313,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         (a.list_files, "--list-files"),
     ] {
         if set && (a.files.len() != 1 || a.since.is_some() || a.to.is_some()) {
-            return Err(format!("{opt} takes one file and no {since_or_to}"));
+            return Err(format!("{opt} takes one file and no --since/--to (or -r)"));
         }
         if let Some(s) = &a.steps
             && set
@@ -339,7 +328,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
     }
     match (a.files.len(), &a.since, &a.to) {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(Box::new(a))),
-        _ => Err(format!("give one file, or two files without {since_to}")),
+        _ => Err("give one file, or two files without --since/--to (or -r)".into()),
     }
 }
 
