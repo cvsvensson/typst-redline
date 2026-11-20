@@ -73,7 +73,7 @@ The PDF is written next to the file, or next to the new file when you give two, 
 
 **How marks look** ([docs/styling.md](docs/styling.md) has the details and pictures)
 - `-t UNDERLINE`, `-t CHANGEBAR` and three other latexdiff markup types start from latexdiff's look.
-- `--style key=value` changes one setting, such as `--style del=green` or `--style ins-fill=none` for no highlight, and `--style my-style.typ` several from a file that holds a dictionary such as `(del: green, bars: false)`.
+- `--style key=value` changes one setting, such as `--style del=green` or `--style ins-fill=none` for no highlight, and `--style my-style.typ` several from a file that holds a dictionary such as `(del: green, bars: none)`.
 - `--graphics-markup new-only` leaves out the old version of a changed formula, figure, table, code block or drawing, and `none` also shows the new one without frame or colour; the bar and the number stay.
 - `-p my-preamble.typ` replaces the styling whole; `--show-preamble` prints the built-in one to start from.
 

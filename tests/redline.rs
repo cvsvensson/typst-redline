@@ -4052,7 +4052,8 @@ End.
 End.
 "
     );
-    if let Some([marked, lost, new]) = styled_probes("deleted-out", "(deleted: false)", &old, &new) {
+    if let Some([marked, lost, new]) = styled_probes("deleted-out", "(del-text: false, del-blocks: false)", &old, &new)
+    {
         assert_eq!((marked, lost), (new, "[]".into()));
     }
 }
@@ -4074,7 +4075,7 @@ Text.
 }
 
 #[test]
-fn graphics_markup_none_runs() {
+fn graphics_markup_none_draws_no_frame() {
     let dir = temp_dir("graphics-markup-none");
     std::fs::write(
         dir.join("old.typ"),
@@ -4094,6 +4095,22 @@ $ y $
 #box(rect(width: 2cm))",
     )
     .unwrap();
-    let out = cli(&dir, &["old.typ", "new.typ", "--graphics-markup", "none"]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    // Frames are the only strokes 0.6pt wide.
+    for (markup, framed) in [("both", true), ("none", false)] {
+        let args = [
+            "--graphics-markup",
+            markup,
+            "-o",
+            "out.pdf",
+            "--",
+            "--format",
+            "svg",
+            "--pages",
+            "1",
+        ];
+        let out = cli(&dir, &[&["old.typ", "new.typ"], &args[..]].concat());
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let svg = std::fs::read_to_string(dir.join("out.pdf")).unwrap();
+        assert_eq!(svg.contains(r#"stroke-width="0.6""#), framed, "{markup}");
+    }
 }

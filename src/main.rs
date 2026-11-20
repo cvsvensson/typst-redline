@@ -61,7 +61,7 @@ How marks look:
   --style <key=value|file.typ>
                         Change one setting, such as --style del=green or
                         --style strike=none, or several from a file holding a
-                        dictionary such as (del: green, bars: false).
+                        dictionary such as (del: green, bars: none).
                         Repeatable; later values win. The keys are in
                         docs/styling.md and at the top of --show-preamble
   --graphics-markup <both|new-only|none>
@@ -234,11 +234,11 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             "--graphics-markup" => {
                 // latexdiff's spellings too.
                 let keys: &[&str] = match val()?.to_ascii_lowercase().as_str() {
-                    "both" | "2" => &["del-blocks=true", "block-colour=true"],
-                    "new-only" | "newonly" | "1" => &["del-blocks=false", "block-colour=true"],
+                    "both" | "2" => &[],
+                    "new-only" | "1" => &["del-blocks=false"],
                     "none" | "off" | "0" => &[
                         "del-blocks=false",
-                        "block-colour=false",
+                        "block-color=false",
                         "ins-frame=none",
                         "del-frame=none",
                     ],
