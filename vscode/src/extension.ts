@@ -155,9 +155,10 @@ function exe(doc: vscode.TextDocument) {
 
 // One list; resolves to the accepted items, or undefined when the list is closed. With
 // `view`, the title names the view, or only its layout, and a button switches the layout in place.
+// With `tick`, a second button resolves to that item, which the list does not show.
 function pick<T extends vscode.QuickPickItem>(
   items: readonly T[],
-  o: { title: string; placeholder: string; active?: T; many?: boolean; view?: "view" | "layout" },
+  o: { title: string; placeholder: string; active?: T; many?: boolean; view?: "view" | "layout"; tick?: T },
 ): Promise<readonly T[] | undefined> {
   return new Promise((resolve) => {
     const list = vscode.window.createQuickPick<T>();
@@ -166,6 +167,7 @@ function pick<T extends vscode.QuickPickItem>(
     list.matchOnDescription = true;
     list.canSelectMany = !!o.many;
     list.items = items;
+    let accepted = false;
     if (o.many) {
       list.selectedItems = items.filter((i) => i.picked);
     } else if (o.active) {
@@ -175,16 +177,21 @@ function pick<T extends vscode.QuickPickItem>(
       const showView = () => {
         const v = currentView();
         const name = o.view === "view" ? viewName(v) : layoutName(v);
-        list.title = `${o.title} (${o.view}: ${name}) · button at right: ${otherLayoutName(v)}`;
-        list.buttons = [layoutButton(v)];
+        const hints = [otherLayoutName(v), ...(o.tick ? ["tick several commits"] : [])];
+        list.title = `${o.title} (${o.view}: ${name}) · button${hints.length > 1 ? "s" : ""} at right: ${hints.join(", ")}`;
+        list.buttons = [layoutButton(v), ...(o.tick ? [tickButton] : [])];
       };
       showView();
-      list.onDidTriggerButton(async () => {
+      list.onDidTriggerButton(async (b) => {
+        if (b === tickButton) {
+          accepted = true;
+          resolve([o.tick!]);
+          return list.hide();
+        }
         await switchLayout();
         showView();
       });
     }
-    let accepted = false;
     list.onDidAccept(() => {
       accepted = true;
       resolve(o.many ? list.selectedItems : list.activeItems.slice(0, 1));
@@ -331,9 +338,7 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>, severa
     { label: "", kind: vscode.QuickPickItemKind.Separator },
     { label: "$(file) Another file...", description: "compare with a .typ file of your choice", base: "other" },
   );
-  if (list.length > 1) {
-    targets.push({ label: "$(list-selection) Several commits...", description: "a new colour at each ticked commit", base: "several" });
-  }
+  const tick: BaseItem | undefined = list.length > 1 ? { label: "", base: "several" } : undefined;
   if (list.length > 0) {
     targets.push({ label: "$(git-compare) Between two commits...", description: "not up to the file as it is now", base: "between" });
   }
@@ -346,6 +351,7 @@ async function pickBase(doc: vscode.TextDocument, proj: Promise<Project>, severa
             placeholder: meaning,
             active: targets.find((t) => t.kind !== vscode.QuickPickItemKind.Separator),
             view: "view",
+            tick,
           })
         )?.[0]?.base;
     if (base === "several") {
@@ -446,6 +452,11 @@ function switchLayout() {
 }
 
 const otherLayoutName = (v: View) => layouts.find((l) => l.layout !== v.layout)!.label.toLowerCase();
+
+const tickButton: vscode.QuickInputButton = {
+  iconPath: new vscode.ThemeIcon("checklist"),
+  tooltip: "Tick several commits, each starting a new colour",
+};
 
 // The icon shows the layout the button switches to.
 function layoutButton(v: View): vscode.QuickInputButton {

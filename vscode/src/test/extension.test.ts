@@ -43,7 +43,8 @@ suite("Typst Redline commands", () => {
   let tmp: string;
   let file: string;
   // The labels to pick in the lists shown, in order: "" accepts the active item, a missing
-  // one closes the list, and "[button]" switches the layout in the open list.
+  // one closes the list, "[button]" switches the layout in the open list and "[tick]" presses
+  // the button for ticking several commits.
   let picks: string[];
   // The labels to tick in each list of commits to tick, in order.
   let ticks: string[][];
@@ -100,6 +101,10 @@ suite("Typst Redline commands", () => {
           for (; picks[0] === "[button]"; titles.push(list.title)) {
             picks.shift();
             await list.button(list.buttons[0]);
+          }
+          if (picks[0] === "[tick]") {
+            picks.shift();
+            return list.button(list.buttons[1]);
           }
           if (list.canSelectMany) {
             const t = ticks.shift();
@@ -211,7 +216,7 @@ suite("Typst Redline commands", () => {
     picks = [];
     await show();
     const words = labels(lists[0]).map((l) => l.replace(/^\$\([^)]*\) /, ""));
-    assert.deepStrictEqual(words, ["third – ändrad “här”", "second", "", "Another file...", "Several commits...", "Between two commits..."]);
+    assert.deepStrictEqual(words, ["third – ändrad “här”", "second", "", "Another file...", "Between two commits..."]);
     const day = git(path.dirname(file), "log", "-1", "--date=short", "--format=%ad");
     assert.deepStrictEqual(
       lists[0].slice(0, 3).map((i) => [i.label, i.kind]),
@@ -252,8 +257,8 @@ suite("Typst Redline commands", () => {
     picks = ["[button]", "second"];
     await show();
     assert.deepStrictEqual(titles, [
-      "Typst Redline: Show Changes (view: Side by side, coloured by commit, 4 steps) · button at right: marked",
-      "Typst Redline: Show Changes (view: Marked, coloured by commit, 4 steps) · button at right: side by side",
+      "Typst Redline: Show Changes (view: Side by side, coloured by commit, 4 steps) · buttons at right: marked, tick several commits",
+      "Typst Redline: Show Changes (view: Marked, coloured by commit, 4 steps) · buttons at right: side by side, tick several commits",
     ]);
     assert.strictEqual(lists.length, 1);
     assert.strictEqual(actives[0] && name(actives[0]), "third – ändrad “här”");
@@ -317,7 +322,7 @@ suite("Typst Redline commands", () => {
 
   test("ticked commits start a colour each, their own change included, in the view's layout", async () => {
     await setView("Side by side");
-    picks = ["Several commits"];
+    picks = ["[tick]"];
     ticks = [["third – ändrad “här”", "second"]];
     await show();
     assertOpenedPdf();
@@ -327,7 +332,7 @@ suite("Typst Redline commands", () => {
   });
 
   test("the command for several commits opens the list to tick, and ticks pass the same arguments", async () => {
-    picks = ["Several commits"];
+    picks = ["[tick]"];
     ticks = [["third – ändrad “här”", "second"]];
     await show();
     lists = [];
@@ -346,7 +351,7 @@ suite("Typst Redline commands", () => {
       git(dir, "commit", "-q", "-am", `line ${i}`);
     }
     const seven = ["line 0", "line 1", "line 2", "line 3", "line 4", "line 5", "second"];
-    picks = ["Several commits"];
+    picks = ["[tick]"];
     ticks = [seven, []];
     await show();
     assert.strictEqual(warnings.length, 1);
@@ -363,7 +368,7 @@ suite("Typst Redline commands", () => {
     git(dir, "commit", "-q", "-am", "side work");
     git(dir, "checkout", "-q", "-");
     git(dir, "merge", "-q", "--no-ff", "side", "-m", "merge side");
-    picks = ["Several commits"];
+    picks = ["[tick]"];
     ticks = [["merge side", "second"]];
     await show();
     assert.ok(!labels(lists[0]).includes("side work"));
@@ -524,7 +529,7 @@ suite("Typst Redline commands", () => {
     const steps = [
       [],
       ["[button]"],
-      ["Several commits"],
+      ["[tick]"],
       ["Between two commits"],
       ["Between two commits", "second"],
       ["Another file"],
