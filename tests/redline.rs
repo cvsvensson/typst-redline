@@ -2679,6 +2679,15 @@ fn r_with_since_is_a_usage_error() {
 }
 
 #[test]
+fn a_usage_error_names_r_when_r_was_given() {
+    let dir = temp_dir("r-two-files");
+    let out = cli(&dir, &["old.typ", "new.typ", "-r", "a"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("-r") && !stderr.contains("--since"), "{stderr}");
+}
+
+#[test]
 fn labels_name_the_versions_on_the_summary() {
     if !typst_available() {
         return;
@@ -2687,6 +2696,17 @@ fn labels_name_the_versions_on_the_summary() {
     let args = ["doc/main.typ", "--since", "c-alpha", "-L", "Sent", "--label", "Draft"];
     let src = marked(&dir, &args, "main.typ");
     assert!(src.contains("old: \"Sent\", new: \"Draft\""), "{src}");
+}
+
+#[test]
+fn labels_leave_diagnostics_naming_the_revisions() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("labels-diagnostics", &["alpha"]);
+    let out = cli(&dir, &["doc/main.typ", "--since", "c-alpha", "-L", "Sent"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no changes found between c-alpha and"), "{stderr}");
 }
 
 #[test]

@@ -22,8 +22,7 @@ Usage:
 With one file, the old version is the file at git revision --since (default
 HEAD) and the new version is the working copy, or the file at --to. --since
 A..B is --since A --to B; --since A...B compares the merge base of A and B
-with B. As in latexdiff-vc, -r A is --since A and -r A -r B is --since A
---to B. With two files, each is a path or REV:PATH (:PATH for the index).
+with B. With two files, each is a path or REV:PATH (:PATH for the index).
 Without a file, in a terminal, it asks for the file and the old version.
 
 --mark-reviewed records HEAD as reviewed for the file, in a local git ref
@@ -51,7 +50,9 @@ Options:
                         tool splits the commits, and then the uncommitted
                         changes, into n steps that change about the same
                         amount of the document (one file only)
-  -L, --label <text>    Name the old version on the summary page; given
+  -r <rev>              As in latexdiff-vc: -r A is --since A, and
+                        -r A -r B is --since A --to B
+  -L, --label <text>    Name the old version in the PDF; given
                         twice, the old and then the new version
   --no-moves            Show moved text as deleted at its old place and
                         inserted at its new place
@@ -203,7 +204,14 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             _ => a.files.push(arg),
         }
     }
-    if !revs.is_empty() {
+    // Usage errors name the options that gave the revisions.
+    let by_r = !revs.is_empty();
+    let (since_to, since_or_to) = if by_r {
+        ("-r", "-r")
+    } else {
+        ("--since and --to", "--since or --to")
+    };
+    if by_r {
         if revs.len() > 2 || a.since.is_some() || a.to.is_some() {
             return Err("give -r once or twice, and not with --since or --to".into());
         }
@@ -241,7 +249,11 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         ));
     }
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
-        return Err("--to cannot be combined with a range in --since".into());
+        return Err(if by_r {
+            "a range in -r cannot be followed by a second -r".into()
+        } else {
+            "--to cannot be combined with a range in --since".into()
+        });
     }
     if [a.mark_reviewed, a.show_reviewed, a.list_files]
         .iter()
@@ -257,7 +269,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         (a.list_files, "--list-files"),
     ] {
         if set && (a.files.len() != 1 || a.since.is_some() || a.to.is_some()) {
-            return Err(format!("{opt} takes one file and no --since or --to"));
+            return Err(format!("{opt} takes one file and no {since_or_to}"));
         }
         if let Some(s) = &a.steps
             && set
@@ -272,7 +284,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
     }
     match (a.files.len(), &a.since, &a.to) {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(Box::new(a))),
-        _ => Err("give one file, or two files without --since and --to".into()),
+        _ => Err(format!("give one file, or two files without {since_to}")),
     }
 }
 
@@ -692,7 +704,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             a.typst
         ));
     }
-    let (mut old, mut new) = specs(&a, reviewed).map_err(|e| {
+    let (old, new) = specs(&a, reviewed).map_err(|e| {
         if a.root_env && e.contains("the root") {
             format!("{e} (set by TYPST_ROOT)")
         } else if a.files.len() == 1 && e.contains("not a git repository") {
@@ -707,17 +719,15 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             Tree::Git { .. } => format!("{} does not exist in {}", new.entry, new.label),
         });
     }
-    for (spec, label) in [&mut old, &mut new].into_iter().zip(&a.labels) {
-        spec.label = label.clone();
-    }
     let pdf = output_path(&a, &old, &new)?;
     let (read_old, read_new) = (|p: &str| old.tree.read(p), |p: &str| new.tree.read(p));
-    let version = |spec: &Spec, read| Version {
-        label: spec.label.clone(),
+    // -L changes only the names the PDF shows; diagnostics name the revisions.
+    let version = |spec: &Spec, read, i: usize| Version {
+        label: a.labels.get(i).unwrap_or(&spec.label).clone(),
         entry: spec.entry.clone(),
         read,
     };
-    let (old_v, new_v) = (version(&old, &read_old), version(&new, &read_new));
+    let (old_v, new_v) = (version(&old, &read_old, 0), version(&new, &read_new, 1));
     let files = [
         project_files(&old_v, reads.as_deref()),
         project_files(&new_v, reads.as_deref()),
@@ -895,7 +905,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                     &a,
                     dir,
                     sides,
-                    (&old.label, &new.label),
+                    (&old_v.label, &new_v.label),
                     [back, &result],
                     &history,
                     &tmp,
