@@ -270,6 +270,8 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         a.to = revs.get(1).cloned();
         a.since = revs.into_iter().next();
     }
+    // The side-by-side layout shows only pages with changes anyway.
+    a.only_changes &= !a.side_by_side;
     if a.labels.len() > 2 {
         return Err("give -L once for the old version, or twice for the old and the new".into());
     }
@@ -720,67 +722,15 @@ fn fallback_note(fallbacks: &[&str]) -> String {
 /// tell which files a compile read; if the proof read a file that the
 /// comparison did not check, it is made again with those files.
 fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<PathBuf, String> {
-    let (old, new) = specs(&a, reviewed).map_err(|e| {
-        if a.root_env && e.contains("the root") {
-            format!("{e} (set by TYPST_ROOT)")
-        } else if a.files.len() == 1 && e.contains("not a git repository") {
-            format!("{e}\nhint: with one file, the old version comes from git; to compare two files, give both: typst-redline old.typ new.typ")
-        } else {
-            e
-        }
-    })?;
-    let style = style_inputs(&a, &style_files(&a, &new))?;
-    let version = typst_version(&a.typst);
-    let deps = version.as_deref().is_some_and(|v| minor(v) >= (0, 14));
+    let Setup {
+        old,
+        new,
+        inputs,
+        deps,
+        preamble,
+        pdf,
+    } = setup(&a, reviewed)?;
     let reads = reads.or_else(|| deps.then(Vec::new));
-    // The side-by-side layout shows only pages with changes anyway.
-    let only_changes = a.only_changes && !a.side_by_side;
-    let preamble = match &a.preamble {
-        Some(p) => {
-            let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
-            let needs = [
-                (a.side_by_side, "redline-side-by-side", "the side-by-side layout"),
-                (only_changes, "redline-marked", "--only-changes"),
-                (
-                    a.steps.is_some(),
-                    "redline-step-style",
-                    a.steps.as_ref().map_or("", StepArg::option),
-                ),
-                (
-                    !style.is_empty(),
-                    "\"redline-style\"",
-                    "a style file, --style, --type or --graphics-markup",
-                ),
-            ];
-            if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
-                return Err(format!(
-                    "the preamble {} does not use {name}, which {what} needs",
-                    p.display()
-                ));
-            }
-            text
-        }
-        None => PREAMBLE.to_string(),
-    };
-    let needs = [
-        (a.side_by_side, (0, 14), "the side-by-side layout"),
-        (only_changes, (0, 12), "--only-changes"),
-    ];
-    if let Some(v) = &version
-        && let Some((_, at, what)) = needs.iter().find(|(on, at, _)| *on && minor(v) < *at)
-    {
-        return Err(format!(
-            "{what} needs Typst {}.{} or later, but {} is Typst {v}",
-            at.0, at.1, a.typst
-        ));
-    }
-    if new.tree.read(&new.entry).is_none() {
-        return Err(match new.tree {
-            Tree::Dir(_) => format!("{} does not exist", new.file.display()),
-            Tree::Git { .. } => format!("{} does not exist in {}", new.entry, new.label),
-        });
-    }
-    let pdf = output_path(&a, &old, &new)?;
     let (read_old, read_new) = (|p: &str| old.tree.read(p), |p: &str| new.tree.read(p));
     // -L changes only the names the PDF shows; diagnostics name the revisions.
     let version = |spec: &Spec, read, i: usize| Version {
@@ -795,51 +745,20 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     ]
     .concat();
     let log = log(&old, &new, &files)?;
-    let plan = match (&a.steps, &log) {
-        (None, _) => Plan::default(),
-        (Some(s), Some(log)) => plan_steps(s, log, &old, &new)?,
-        (Some(s), None) => {
-            return Err(format!(
-                "{} needs two git revisions, or a revision and the working tree",
-                s.option()
-            ));
-        }
-    };
-    let step_trees: Vec<Tree> = plan
-        .ends
-        .iter()
-        .map(|(hash, _)| match &old.tree {
-            Tree::Git { repo, prefix, .. } => Tree::Git {
-                repo: repo.clone(),
-                prefix: prefix.clone(),
-                rev: Some(hash.clone()),
-            },
-            Tree::Dir(_) => unreachable!(),
-        })
-        .collect();
-    // A step before the entry was renamed has it under its old name.
-    let step_entry = |t: &Tree| {
-        if t.read(&new.entry).is_some() {
-            new.entry.clone()
-        } else {
-            old.entry.clone()
-        }
-    };
-    let step_reads: Vec<_> = step_trees.iter().map(|t| move |p: &str| t.read(p)).collect();
+    let (ends, step_commits) = step_ends(&a, log.as_ref(), &old, &new)?;
+    let step_reads: Vec<_> = ends.iter().map(|(t, ..)| move |p: &str| t.read(p)).collect();
     let history = History {
         steps: a.steps.is_some().then(|| {
-            step_trees
-                .iter()
+            ends.iter()
                 .zip(&step_reads)
-                .zip(&plan.ends)
-                .map(|((t, read), (_, label))| Version {
+                .map(|((_, entry, label), read)| Version {
                     label: label.clone(),
-                    entry: step_entry(t),
+                    entry: entry.clone(),
                     read,
                 })
                 .collect()
         }),
-        step_commits: plan.commits,
+        step_commits,
         ..log.map(|l| l.history).unwrap_or_default()
     };
 
@@ -891,28 +810,11 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         if i > 0 {
             result = redline(&old_v, &new_v, opts, &history, moves, reads.as_deref());
         }
-        a.typst_args = typst_args.clone();
-        a.typst_args
-            .extend(["--input".into(), format!("redline-fallback={}", fallbacks.join(","))]);
-        a.typst_args.extend(style.iter().cloned());
-        if only_changes {
-            a.typst_args
-                .extend(["--input".into(), "redline-only-changes=true".into()]);
-        }
-        let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
-            let input = format!("redline-side={side}");
-            let (entry, pdf) = (root.join(entry), dir.join(pdf));
-            let mut args: Vec<&dyn AsRef<OsStr>> = vec![&"--input", &input, &entry, &pdf];
-            let deps_args = deps_args(deps, root);
-            args.extend(deps_args.iter().map(|d| d as &dyn AsRef<OsStr>));
-            typst(&a, root, "compile", &args)
-        };
+        let fallback = format!("redline-fallback={}", fallbacks.join(","));
+        a.typst_args = [&typst_args[..], &["--input".into(), fallback], &inputs].concat();
         write(dir, &result.files)?;
         let out = if !a.side_by_side {
-            let (entry, deps_args) = (dir.join(&new.entry), deps_args(deps, dir));
-            let mut args: Vec<&dyn AsRef<OsStr>> = vec![&entry, &tmp];
-            args.extend(deps_args.iter().map(|d| d as &dyn AsRef<OsStr>));
-            typst(&a, dir, "compile", &args)?
+            compile(&a, dir, &[], &new.entry, &tmp, deps)?
         } else {
             let back_history = History {
                 steps: history.steps.clone(),
@@ -933,6 +835,10 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 write(&old_root, &[(PREAMBLE_PATH.into(), preamble.clone())])?;
             }
             write(&old_root, &back.files)?;
+            let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
+                let input = format!("redline-side={side}");
+                compile(&a, root, &["--input", &input], entry, &dir.join(pdf), deps)
+            };
             let (old_side, new_side) = both(|| side(sides[0]), || side(sides[1]));
             let new_side = new_side?;
             if new_side.status.success() { old_side? } else { new_side }
@@ -948,10 +854,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 a.typst_args = typst_args;
                 return run(a, reviewed, Some(read));
             }
-            for w in &result.warnings {
-                eprintln!("warning: {w}");
-            }
-            eprint!("{stderr}");
+            echo(&result, &stderr);
             if !fallbacks.is_empty() {
                 let note = fallback_note(fallbacks);
                 eprintln!(
@@ -966,8 +869,8 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             {
                 eprintln!("note: no changes found between {} and {}", old.label, new.label);
             }
-            if let Some(back) = &back {
-                compose(
+            match &back {
+                Some(back) => compose(
                     &a,
                     dir,
                     sides,
@@ -975,46 +878,12 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                     [back, &result],
                     &history,
                     &tmp,
-                )?;
-            } else if ["foreground", "background"]
-                .iter()
-                .all(|w| result.files.iter().any(|(_, s)| s.contains(w)))
-            {
-                // Bars are lost only where the document sets both, and asking
-                // where costs another compile. The summary page lists such
-                // pages in any case.
-                let args: [&dyn AsRef<OsStr>; 5] = [
-                    &dir.join(&new.entry),
-                    &"<redline-unbarred>",
-                    &"--field",
-                    &"key",
-                    &"--one",
-                ];
-                let out = typst(&a, dir, "query", &args)?;
-                warn_unbarred(&ints(&out.stdout).unwrap_or_default(), &pdf.display().to_string());
+                )?,
+                None => check_bars(&a, dir, &new.entry, &result, &pdf)?,
             }
-            if only_changes && let Err(e) = keep_marked_pages(&a, dir, &new.entry, &tmp) {
-                eprintln!("warning: the PDF has all pages, because --only-changes could not leave out the others: {e}");
-            }
-            let written = std::fs::copy(&tmp, &pdf);
-            let _ = std::fs::remove_file(&tmp);
-            written.map_err(|e| {
-                // ERROR_SHARING_VIOLATION: a PDF viewer on Windows holds the file open.
-                let open = match e.raw_os_error() {
-                    Some(32) if cfg!(windows) => "; close it in the program that has it open",
-                    _ => "",
-                };
-                format!("cannot write {}: {e}{open}", pdf.display())
-            })?;
-            return Ok(pdf);
+            return deliver(&a, dir, &new.entry, &tmp, pdf);
         }
-        // The preamble's messages about the style start with where it came from.
-        if let Some(e) = stderr
-            .lines()
-            .filter_map(|l| l.strip_prefix("error: "))
-            .map(|e| e.strip_prefix("assertion failed: ").unwrap_or(e))
-            .find(|e| style_error(e))
-        {
+        if let Some(e) = style_message(&stderr) {
             return Err(e.to_string());
         }
         if first_error.is_empty() {
@@ -1026,25 +895,218 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 .unwrap_or_default()
                 .into();
         }
-        // An error of the document itself is reported as the user wrote it,
-        // not in the marked copy. The old version matters where it is laid
-        // out whole.
-        if i == 0 {
-            let versions = if a.side_by_side { vec![&new, &old] } else { vec![&new] };
-            if let Some((s, errors)) = versions.into_iter().find_map(|s| Some((s, alone(&a, dir, s)?))) {
-                stderr = errors;
-                broken = Some(match &s.tree {
-                    Tree::Dir(_) => s.file.display().to_string(),
-                    Tree::Git { .. } => format!("{} at {}", s.entry, s.label),
-                });
-                break;
-            }
+        if i == 0
+            && let Some((name, errors)) = broken_version(&a, dir, &old, &new)
+        {
+            stderr = errors;
+            broken = Some(name);
+            break;
         }
     }
+    echo(&result, &stderr);
+    Err(failure(&a, &new, &stderr, broken))
+}
+
+/// The two versions and what the run needs besides, checked before
+/// anything is compared.
+struct Setup {
+    old: Spec,
+    new: Spec,
+    /// The `--input` arguments of every compile but the fallback.
+    inputs: Vec<String>,
+    /// Typst can write the files a compile reads.
+    deps: bool,
+    preamble: String,
+    pdf: PathBuf,
+}
+
+fn setup(a: &Args, reviewed: Option<&str>) -> Result<Setup, String> {
+    let (old, new) = specs(a, reviewed).map_err(|e| {
+        if a.root_env && e.contains("the root") {
+            format!("{e} (set by TYPST_ROOT)")
+        } else if a.files.len() == 1 && e.contains("not a git repository") {
+            format!("{e}\nhint: with one file, the old version comes from git; to compare two files, give both: typst-redline old.typ new.typ")
+        } else {
+            e
+        }
+    })?;
+    let mut inputs = style_inputs(a, &style_files(a, &new))?;
+    let version = typst_version(&a.typst);
+    let preamble = match &a.preamble {
+        Some(p) => {
+            let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            let needs = [
+                (a.side_by_side, "redline-side-by-side", "the side-by-side layout"),
+                (a.only_changes, "redline-marked", "--only-changes"),
+                (
+                    a.steps.is_some(),
+                    "redline-step-style",
+                    a.steps.as_ref().map_or("", StepArg::option),
+                ),
+                (
+                    !inputs.is_empty(),
+                    "\"redline-style\"",
+                    "a style file, --style, --type or --graphics-markup",
+                ),
+            ];
+            if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
+                return Err(format!(
+                    "the preamble {} does not use {name}, which {what} needs",
+                    p.display()
+                ));
+            }
+            text
+        }
+        None => PREAMBLE.to_string(),
+    };
+    let needs = [
+        (a.side_by_side, (0, 14), "the side-by-side layout"),
+        (a.only_changes, (0, 12), "--only-changes"),
+    ];
+    if let Some(v) = &version
+        && let Some((_, at, what)) = needs.iter().find(|(on, at, _)| *on && minor(v) < *at)
+    {
+        return Err(format!(
+            "{what} needs Typst {}.{} or later, but {} is Typst {v}",
+            at.0, at.1, a.typst
+        ));
+    }
+    if new.tree.read(&new.entry).is_none() {
+        return Err(match new.tree {
+            Tree::Dir(_) => format!("{} does not exist", new.file.display()),
+            Tree::Git { .. } => format!("{} does not exist in {}", new.entry, new.label),
+        });
+    }
+    let pdf = output_path(a, &old, &new)?;
+    if a.only_changes {
+        inputs.extend(["--input".into(), "redline-only-changes=true".into()]);
+    }
+    Ok(Setup {
+        old,
+        new,
+        inputs,
+        deps: version.as_deref().is_some_and(|v| minor(v) >= (0, 14)),
+        preamble,
+        pdf,
+    })
+}
+
+/// The versions the steps of `--steps` or `--each-commit` end at, as (tree,
+/// entry, label), and the number of commits in each step.
+type StepEnds = (Vec<(Tree, String, String)>, Vec<usize>);
+
+fn step_ends(a: &Args, log: Option<&Log>, old: &Spec, new: &Spec) -> Result<StepEnds, String> {
+    let plan = match (&a.steps, log) {
+        (None, _) => Plan::default(),
+        (Some(s), Some(log)) => plan_steps(s, log, old, new)?,
+        (Some(s), None) => {
+            return Err(format!(
+                "{} needs two git revisions, or a revision and the working tree",
+                s.option()
+            ));
+        }
+    };
+    let Tree::Git { repo, prefix, .. } = &old.tree else {
+        return Ok((vec![], plan.commits));
+    };
+    let ends = plan
+        .ends
+        .into_iter()
+        .map(|(hash, label)| {
+            let tree = Tree::Git {
+                repo: repo.clone(),
+                prefix: prefix.clone(),
+                rev: Some(hash),
+            };
+            // A step before the entry was renamed has it under its old name.
+            let entry = match tree.read(&new.entry) {
+                Some(_) => new.entry.clone(),
+                None => old.entry.clone(),
+            };
+            (tree, entry, label)
+        })
+        .collect();
+    Ok((ends, plan.commits))
+}
+
+/// Compile `entry` of the project in `root` to `pdf`, writing the files it
+/// reads if `deps`.
+fn compile(a: &Args, root: &Path, inputs: &[&str], entry: &str, pdf: &Path, deps: bool) -> Result<Output, String> {
+    let (entry, deps) = (root.join(entry), deps_args(deps, root));
+    let mut args: Vec<&dyn AsRef<OsStr>> = inputs.iter().map(|i| i as &dyn AsRef<OsStr>).collect();
+    args.extend([&entry as &dyn AsRef<OsStr>, &pdf]);
+    args.extend(deps.iter().map(|d| d as &dyn AsRef<OsStr>));
+    typst(a, root, "compile", &args)
+}
+
+fn echo(result: &Redline, stderr: &str) {
     for w in &result.warnings {
         eprintln!("warning: {w}");
     }
     eprint!("{stderr}");
+}
+
+/// Warn of the pages of the marked document in `dir` whose changes have no
+/// bars.
+fn check_bars(a: &Args, dir: &Path, entry: &str, result: &Redline, pdf: &Path) -> Result<(), String> {
+    // Bars are lost only where the document sets both, and asking where
+    // costs another compile. The summary page lists such pages in any case.
+    if ["foreground", "background"]
+        .iter()
+        .all(|w| result.files.iter().any(|(_, s)| s.contains(w)))
+    {
+        let out = query_key(a, dir, &[], &dir.join(entry), "<redline-unbarred>")?;
+        warn_unbarred(&ints(&out.stdout).unwrap_or_default(), &pdf.display().to_string());
+    }
+    Ok(())
+}
+
+/// Put the compiled `tmp` at `pdf`, with only the pages with changes if
+/// `--only-changes` asks for that.
+fn deliver(a: &Args, dir: &Path, entry: &str, tmp: &Path, pdf: PathBuf) -> Result<PathBuf, String> {
+    if a.only_changes
+        && let Err(e) = keep_marked_pages(a, dir, entry, tmp)
+    {
+        eprintln!("warning: the PDF has all pages, because --only-changes could not leave out the others: {e}");
+    }
+    let written = std::fs::copy(tmp, &pdf);
+    let _ = std::fs::remove_file(tmp);
+    written.map_err(|e| {
+        // ERROR_SHARING_VIOLATION: a PDF viewer on Windows holds the file open.
+        let open = match e.raw_os_error() {
+            Some(32) if cfg!(windows) => "; close it in the program that has it open",
+            _ => "",
+        };
+        format!("cannot write {}: {e}{open}", pdf.display())
+    })?;
+    Ok(pdf)
+}
+
+/// The preamble's message about the style in the errors of a compile; it
+/// starts with where the style came from.
+fn style_message(stderr: &str) -> Option<&str> {
+    stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("error: "))
+        .map(|e| e.strip_prefix("assertion failed: ").unwrap_or(e))
+        .find(|e| style_error(e))
+}
+
+/// The version that does not compile on its own, by name, with its errors.
+/// An error of the document itself is reported as the user wrote it, not in
+/// the marked copy. The old version matters where it is laid out whole.
+fn broken_version(a: &Args, dir: &Path, old: &Spec, new: &Spec) -> Option<(String, String)> {
+    let versions = if a.side_by_side { vec![new, old] } else { vec![new] };
+    let (s, errors) = versions.into_iter().find_map(|s| Some((s, alone(a, dir, s)?)))?;
+    let name = match &s.tree {
+        Tree::Dir(_) => s.file.display().to_string(),
+        Tree::Git { .. } => format!("{} at {}", s.entry, s.label),
+    };
+    Some((name, errors))
+}
+
+/// Print hints for the errors of a failed compile and return the error.
+fn failure(a: &Args, new: &Spec, stderr: &str, broken: Option<String>) -> String {
     if let Some(hint) = version_hint(&a.typst) {
         eprintln!("{hint}");
     }
@@ -1055,7 +1117,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         );
     }
     if not_found || stderr.contains("project root") {
-        match repository(&new).filter(|top| !same_dir(top, &new.root)) {
+        match repository(new).filter(|top| !same_dir(top, &new.root)) {
             Some(top) => eprintln!("hint: to use the repository as the root, add --root {}", top.display()),
             None if a.root.is_none() && !not_found => {
                 eprintln!("hint: give the folder that holds all the files of the document with --root")
@@ -1064,14 +1126,14 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         }
     }
     if let Some(name) = broken {
-        return Err(format!("{name} does not compile on its own, without marks"));
+        return format!("{name} does not compile on its own, without marks");
     }
     let hint = if a.keep {
         ""
     } else {
         " (rerun with --keep-typ to inspect the generated source)"
     };
-    Err(format!("typst compile failed{hint}"))
+    format!("typst compile failed{hint}")
 }
 
 /// The style file of a project, in the folder of the document or above.
@@ -1823,17 +1885,7 @@ fn compose(
     type Layout = (usize, usize, Vec<usize>, Vec<usize>, Vec<Placed>, Vec<Anchor>);
     let query = |(root, entry, side, _): (&Path, &String, &str, &str)| {
         let input = format!("redline-side={side}");
-        let entry = root.join(entry);
-        let args: [&dyn AsRef<OsStr>; 7] = [
-            &"--input",
-            &input,
-            &"--field",
-            &"key",
-            &"--one",
-            &entry,
-            &"<redline-layout>",
-        ];
-        typst(a, root, "query", &args)
+        query_key(a, root, &["--input", &input], &root.join(entry), "<redline-layout>")
     };
     let layout = |out: Output, label: &str| -> Result<Layout, String> {
         let nums = ints(&out.stdout);
@@ -1993,8 +2045,7 @@ fn compose(
 /// if that fails.
 fn keep_marked_pages(a: &Args, dir: &Path, entry: &str, to: &Path) -> Result<(), String> {
     let entry = dir.join(entry);
-    let args: [&dyn AsRef<OsStr>; 5] = [&entry, &"<redline-marked>", &"--field", &"key", &"--one"];
-    let out = typst(a, dir, "query", &args)?;
+    let out = query_key(a, dir, &[], &entry, "<redline-marked>")?;
     let ints = ints(&out.stdout);
     let Some([summary, marked @ ..]) = ints.as_deref() else {
         return Err(format!(
@@ -2017,6 +2068,14 @@ fn keep_marked_pages(a: &Args, dir: &Path, entry: &str, to: &Path) -> Result<(),
         ));
     }
     std::fs::rename(&part, to).map_err(|e| e.to_string())
+}
+
+/// `typst query` for the `key` field of the one element with `label`, which
+/// the preamble places, in `entry` of the project in `root`.
+fn query_key(a: &Args, root: &Path, inputs: &[&str], entry: &Path, label: &str) -> Result<Output, String> {
+    let mut args: Vec<&dyn AsRef<OsStr>> = inputs.iter().map(|i| i as &dyn AsRef<OsStr>).collect();
+    args.extend([&entry as &dyn AsRef<OsStr>, &label, &"--field", &"key", &"--one"]);
+    typst(a, root, "query", &args)
 }
 
 /// The number of pages of a PDF that typst wrote, if it has any.
