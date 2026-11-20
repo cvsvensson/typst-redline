@@ -171,31 +171,111 @@ fn changed_spacing_in_raw_text_is_marked() {
     assert!(out.contains("#redline-ins()[`a  b`]"), "{out}");
 }
 
+/// Assert that the redline of fixture `name` holds each of `marks`.
+fn assert_marks(name: &str, marks: &[&str]) {
+    let out = body(name);
+    for m in marks {
+        assert!(out.contains(m), "{m}\n{out}");
+    }
+}
+
 #[test]
-fn changed_parts_of_a_formula_are_marked_inside_it() {
-    let out = body("math-parts");
-    assert!(out.contains("c^(#{import \"/.redline-old/main.typ\": *; redline-del(math: true, gap: true)[$2$]};#redline-ins(math: true)[$3$];)$"), "{out}");
-    assert!(
-        out.contains("V(x) #redline-ins(math: true)[$+ lambda x^4$]; $"),
-        "{out}"
+fn changed_exponent_is_marked_inside_the_formula() {
+    assert_marks(
+        "math-exponent",
+        &[
+            "redline-del(math: true, gap: true)[$2$]",
+            "redline-ins(math: true)[$3$]",
+        ],
     );
-    assert!(out.contains("mat(1, 2; 3, #{"), "{out}");
+}
+
+#[test]
+fn new_term_is_marked_inside_the_formula() {
+    assert_marks("math-term", &["redline-ins(math: true)[$+ lambda x^4$]"]);
+}
+
+#[test]
+fn changed_part_of_a_fraction_is_marked_inside_it() {
+    assert_marks(
+        "math-fraction",
+        &[
+            "redline-del(math: true, gap: true)[$E$]",
+            "redline-ins(math: true)[$(E - mu)$]",
+        ],
+    );
+}
+
+#[test]
+fn changed_matrix_cell_is_marked_inside_the_matrix() {
+    assert_marks(
+        "math-matrix",
+        &[
+            "redline-del(math: true, gap: true)[$4$]",
+            "redline-ins(math: true)[$5$]",
+        ],
+    );
 }
 
 #[test]
 fn embedded_code_in_a_formula_is_marked_with_its_hash() {
-    let out = body("math-code");
-    assert!(out.contains("#redline-ins(math: true)[$#y$]; + 1"), "{out}");
-    assert!(!out.contains("##"), "{out}");
+    assert_marks(
+        "math-code",
+        &[
+            "redline-del(math: true, gap: true)[$#x$]",
+            "redline-ins(math: true)[$#y$]",
+        ],
+    );
 }
 
 #[test]
-fn changed_parts_of_a_formula_apart_by_spaces_are_one_change() {
-    let out = body("math-signs");
-    assert!(
-        out.contains("[$alpha beta gamma$]};#redline-ins(math: true)[$delta epsilon zeta$]"),
-        "{out}"
+fn deleted_part_before_a_sign_is_marked_alone() {
+    assert_marks("math-sign-after-deletion", &["redline-del(math: true)[$b$]"]);
+}
+
+#[test]
+fn replaced_operator_is_marked_inside_the_formula() {
+    assert_marks(
+        "math-operator",
+        &[
+            "redline-del(math: true, gap: true)[$+$]",
+            "redline-ins(math: true)[$-$]",
+        ],
     );
+}
+
+#[test]
+fn changes_apart_by_a_short_part_are_one_change() {
+    assert_marks(
+        "math-phrase",
+        &[
+            "redline-del(math: true, gap: true)[$b c d$]",
+            "redline-ins(math: true)[$x c y$]",
+        ],
+    );
+}
+
+#[test]
+fn inserted_line_of_a_formula_is_marked_whole() {
+    assert_marks("math-line-inserted", &["redline-ins(math: true)[$\\\n  &= e$]"]);
+}
+
+#[test]
+fn deleted_line_of_a_formula_is_marked_whole() {
+    assert_marks("math-line-deleted", &["redline-del(math: true)[$\\\n  &= r $]"]);
+}
+
+#[test]
+fn rewritten_formula_is_marked_whole() {
+    assert_marks(
+        "math-rewrite",
+        &["redline-ins(block: true)[$ sum_(n=0)^infinity a_n = lim_(N -> infinity) S_N $]"],
+    );
+}
+
+#[test]
+fn formula_with_joined_lines_is_marked_whole() {
+    assert_marks("math-lines-joined", &["redline-ins(block: true)[$ x &= y + z $]"]);
 }
 
 #[test]
@@ -204,25 +284,32 @@ fn side_by_side_pairs_a_line_inserted_in_an_aligned_formula() {
         return;
     }
     let dir = temp_dir("side-by-side-aligned-line");
-    std::fs::write(dir.join("old.typ"), "$ a &= b + c \\\n  &= d $\n").unwrap();
-    std::fs::write(dir.join("new.typ"), "$ a &= b + c \\\n  &= d \\\n  &= e $\n").unwrap();
+    for side in ["old", "new"] {
+        let src = read_fixture("math-line-inserted", side, "main.typ").unwrap();
+        std::fs::write(dir.join(format!("{side}.typ")), src).unwrap();
+    }
     assert_eq!(shown_pairs(&dir), ["(1,), new: (1,)"]);
+}
+
+/// The summary's legend for the redline of fixture `name`, as `repr` shows
+/// it without white space.
+fn legend(name: &str) -> Option<String> {
+    let body = body(name);
+    let info = body.split_once("redline-summary(")?.1.split_once("\n)) }")?.0;
+    let probe = format!(
+        "#import \"/{PREAMBLE_PATH}\": redline-marks-legend\n#metadata(repr(redline-marks-legend({info}))))<probe>\n"
+    );
+    let files = [(PREAMBLE_PATH.into(), PREAMBLE.into()), ("main.typ".into(), probe)];
+    Some(query(&compile(&format!("{name}-legend"), &files)?, "<probe>"))
 }
 
 #[test]
 fn legend_shows_marks_inside_formulas_where_there_are_some() {
-    assert!(body("math-parts").contains(" math: true,"));
-    assert!(!body("display-label").contains(" math: true,"));
-}
-
-#[test]
-fn rewritten_formula_and_deleted_line_break_are_marked_whole() {
-    let out = body("math-parts");
-    assert!(
-        out.contains("#redline-ins(block: true)[$ sum_(n=0)^infinity a_n = lim_(N -> infinity) S_N $]"),
-        "{out}"
-    );
-    assert!(out.contains("#redline-ins(block: true)[$ x &= y + z $]"), "{out}");
+    let (Some(fine), Some(whole)) = (legend("math-term"), legend("math-rewrite")) else {
+        return;
+    };
+    assert!(fine.contains("insertedinaformula"), "{fine}");
+    assert!(!whole.contains("inaformula"), "{whole}");
 }
 
 #[test]
