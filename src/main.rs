@@ -36,7 +36,19 @@ Options:
   -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
   --root <dir>          Project root (default: TYPST_ROOT, else the directory
                         of each file)
-  --preamble <file>     Replace the built-in change styling
+  --style <key=value|file.typ>
+                        Change how changes look: one setting, such as
+                        --style del=green or --style strike=none, or several
+                        from a file holding a dictionary such as
+                        (del: green, bars: false). Repeatable; later values
+                        win. The keys are in docs/styling.md and at the top
+                        of --show-preamble
+  -t, --type <name>     Start from a latexdiff markup type: UNDERLINE, COLOR,
+                        CULINECHBAR, CCHANGEBAR or CHANGEBAR (which strikes
+                        deleted text that latexdiff leaves out). Types that
+                        change fonts or hide deleted text are not offered
+  -p, --preamble <file> Replace the built-in change styling
+  --show-preamble       Print the built-in preamble, to start one of your own
   --layout <layout>     inline (default): the new version with changes marked;
                         side-by-side: changed pages of the old and the new
                         version next to each other (needs Typst 0.14 or later,
@@ -73,6 +85,9 @@ struct Args {
     /// The root comes from `TYPST_ROOT`.
     root_env: bool,
     preamble: Option<PathBuf>,
+    /// The values of --style, in order.
+    styles: Vec<String>,
+    style_type: Option<String>,
     typst: String,
     keep: bool,
     side_by_side: bool,
@@ -143,6 +158,8 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         root: None,
         root_env: false,
         preamble: None,
+        styles: vec![],
+        style_type: None,
         typst: "typst".into(),
         keep: false,
         side_by_side: false,
@@ -166,7 +183,10 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             "--to" => a.to = Some(val()?),
             "-o" | "--output" => a.output = Some(val()?.into()),
             "--root" => a.root = Some(val()?.into()),
-            "--preamble" => a.preamble = Some(val()?.into()),
+            "-p" | "--preamble" => a.preamble = Some(val()?.into()),
+            "--style" => a.styles.push(val()?),
+            "-t" | "--type" => a.style_type = Some(val()?),
+            "--show-preamble" => return Ok(Parsed::Print(PREAMBLE.into())),
             "--typst" => a.typst = val()?,
             "--keep-typ" => a.keep = true,
             "--each-commit" | "--steps" => {
@@ -627,6 +647,7 @@ fn fallback_note(fallbacks: &[&str]) -> String {
 /// tell which files a compile read; if the proof read a file that the
 /// comparison did not check, it is made again with those files.
 fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<PathBuf, String> {
+    let style = style_inputs(&a)?;
     let version = typst_version(&a.typst);
     let deps = version.as_deref().is_some_and(|v| minor(v) >= (0, 14));
     let reads = reads.or_else(|| deps.then(Vec::new));
@@ -644,6 +665,19 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
                 return Err(format!(
                     "the preamble {} does not define {name}, which {what} needs",
+                    p.display()
+                ));
+            }
+            let reads = [
+                (!a.styles.is_empty(), "redline-style", "--style"),
+                (a.style_type.is_some(), "redline-type", "--type"),
+            ];
+            if let Some((_, input, what)) = reads
+                .iter()
+                .find(|(on, input, _)| *on && !text.contains(&format!("\"{input}\"")))
+            {
+                return Err(format!(
+                    "the preamble {} does not read the input {input}, which {what} sets",
                     p.display()
                 ));
             }
@@ -788,6 +822,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         a.typst_args = typst_args.clone();
         a.typst_args
             .extend(["--input".into(), format!("redline-fallback={}", fallbacks.join(","))]);
+        a.typst_args.extend(style.iter().cloned());
         let side = |(root, entry, side, pdf): (&Path, &String, &str, &str)| {
             let input = format!("redline-side={side}");
             let (entry, pdf) = (root.join(entry), dir.join(pdf));
@@ -907,6 +942,9 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         // not in the marked copy. The old version matters where it is laid
         // out whole.
         if i == 0 {
+            if !style.is_empty() {
+                check_style(&a, dir)?;
+            }
             let versions = if a.side_by_side { vec![&new, &old] } else { vec![&new] };
             if let Some((s, errors)) = versions.into_iter().find_map(|s| Some((s, alone(&a, dir, s)?))) {
                 stderr = errors;
@@ -949,6 +987,68 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         " (rerun with --keep-typ to inspect the generated source)"
     };
     Err(format!("typst compile failed{hint}"))
+}
+
+/// The `--input` arguments that pass --type and the dictionaries of --style
+/// to the preamble.
+fn style_inputs(a: &Args) -> Result<Vec<String>, String> {
+    let mut inputs = vec![];
+    if let Some(t) = &a.style_type {
+        inputs.extend(["--input".into(), format!("redline-type={t}")]);
+    }
+    let mut parts = vec![];
+    for s in &a.styles {
+        let part = match s.split_once('=') {
+            Some((key, value)) if !key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '-') => {
+                format!("({key}: {value})")
+            }
+            _ => std::fs::read_to_string(s).map_err(|e| {
+                format!("--style {s}: {e}; give key=value, such as del=green, or a file that holds a dictionary")
+            })?,
+        };
+        if let Some(e) = typst_syntax::parse_code(&part).errors_and_warnings().0.first() {
+            return Err(format!("--style {s}: {}", e.message));
+        }
+        parts.push(part);
+    }
+    if !parts.is_empty() {
+        // A file can end in a line comment.
+        let parts: String = parts.iter().map(|p| format!("{p}\n,")).collect();
+        inputs.extend(["--input".into(), format!("redline-style=({parts})")]);
+    }
+    Ok(inputs)
+}
+
+/// An error in --type or --style, found by marking a few changes with the
+/// preamble in `dir`: the document's compile, which failed, cannot tell it
+/// from an error of its own.
+fn check_style(a: &Args, dir: &Path) -> Result<(), String> {
+    let (src, pdf) = (
+        dir.join(".redline-style-check.typ"),
+        dir.join(".redline-style-check.pdf"),
+    );
+    let check = format!(
+        "#import \"/{PREAMBLE_PATH}\": redline-ins, redline-del, redline-bars\n#show: redline-bars\n\
+         A #redline-ins[b] #redline-del[c] d.\n\n#redline-ins(block: true)[$ x $]\n\n#redline-del(block: true)[$ y $]\n"
+    );
+    std::fs::write(&src, check).map_err(|e| format!("{}: {e}", src.display()))?;
+    let out = typst(a, dir, "compile", &[&src, &pdf])?;
+    let _ = std::fs::remove_file(&src);
+    let _ = std::fs::remove_file(&pdf);
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let error = stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("error: "))
+        .unwrap_or_default();
+    let error = error.strip_prefix("assertion failed: ").unwrap_or(error);
+    Err(if error.starts_with("--") {
+        error.to_string()
+    } else {
+        format!("--style or --type: {error}")
+    })
 }
 
 /// The errors of compiling a version as it is, if it fails: in place for a
@@ -2007,7 +2107,8 @@ fn main() -> ExitCode {
     let args = match parsed {
         Ok(Parsed::Run(a)) => a,
         Ok(Parsed::Print(text)) => {
-            print!("{text}");
+            // A reader such as `head` may close the pipe early.
+            let _ = std::io::stdout().write_all(text.as_bytes());
             return ExitCode::SUCCESS;
         }
         Ok(Parsed::Pick { .. }) => unreachable!(),
