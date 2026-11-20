@@ -2653,6 +2653,78 @@ fn to_with_a_range_is_a_usage_error() {
 }
 
 #[test]
+fn r_once_is_since() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("r-once", &["alpha"]);
+    std::fs::write(dir.join("doc/main.typ"), doc("beta")).unwrap();
+    let src = marked(&dir, &["doc/main.typ", "-r", "c-alpha"], "main.typ");
+    assert_compared(&src, "alpha", "beta");
+}
+
+#[test]
+fn r_twice_is_since_and_to() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("r-twice", &["alpha", "beta", "gamma"]);
+    let r = marked(&dir, &["doc/main.typ", "-r", "c-alpha", "-r", "c-beta"], "main.typ");
+    let since = marked(
+        &dir,
+        &["doc/main.typ", "--since", "c-alpha", "--to", "c-beta"],
+        "main.typ",
+    );
+    assert_eq!(r, since);
+}
+
+#[test]
+fn r_with_since_is_a_usage_error() {
+    let dir = temp_dir("r-since");
+    let out = cli(&dir, &["main.typ", "-r", "a", "--since", "b"]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn a_usage_error_names_r_when_r_was_given() {
+    let dir = temp_dir("r-two-files");
+    let out = cli(&dir, &["old.typ", "new.typ", "-r", "a"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("-r") && !stderr.contains("--since"), "{stderr}");
+}
+
+#[test]
+fn labels_name_the_versions_on_the_summary() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("labels", &["alpha", "beta"]);
+    let args = ["doc/main.typ", "--since", "c-alpha", "-L", "Sent", "--label", "Draft"];
+    let src = marked(&dir, &args, "main.typ");
+    assert!(src.contains("old: \"Sent\", new: \"Draft\""), "{src}");
+}
+
+#[test]
+fn labels_leave_diagnostics_naming_the_revisions() {
+    if !typst_available() {
+        return;
+    }
+    let dir = repo("labels-diagnostics", &["alpha"]);
+    let out = cli(&dir, &["doc/main.typ", "--since", "c-alpha", "-L", "Sent"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no changes found between c-alpha and"), "{stderr}");
+}
+
+#[test]
+fn a_latexdiff_option_names_what_takes_its_place() {
+    let dir = temp_dir("latexdiff-pdf");
+    let out = cli(&dir, &["old.typ", "new.typ", "--pdf"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("always writes a PDF"));
+}
+
+#[test]
 fn no_arguments_without_a_terminal_print_the_usage() {
     let dir = temp_dir("no-arguments");
     std::fs::write(dir.join("main.typ"), "Text.\n").unwrap();

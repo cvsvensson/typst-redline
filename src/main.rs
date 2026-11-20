@@ -61,6 +61,10 @@ Options:
                         tool splits the commits, and then the uncommitted
                         changes, into n steps that change about the same
                         amount of the document (one file only)
+  -r <rev>              As in latexdiff-vc: -r A is --since A, and
+                        -r A -r B is --since A --to B
+  -L, --label <text>    Name the old version in the PDF; given
+                        twice, the old and then the new version
   --no-moves            Show moved text as deleted at its old place and
                         inserted at its new place
   --graphics-markup <m> How a changed formula, figure, table, code block or
@@ -103,6 +107,8 @@ struct Args {
     show_reviewed: bool,
     list_files: bool,
     no_moves: bool,
+    /// Labels of the old and the new version given with `-L`.
+    labels: Vec<String>,
     typst_args: Vec<String>,
 }
 
@@ -175,8 +181,10 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         show_reviewed: false,
         list_files: false,
         no_moves: false,
+        labels: vec![],
         typst_args: vec![],
     };
+    let mut revs = vec![];
     let mut it = argv.iter().cloned();
     while let Some(arg) = it.next() {
         let mut val = || it.next().ok_or(format!("{arg} needs a value"));
@@ -188,6 +196,8 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             }
             "--since" => a.since = Some(val()?),
             "--to" => a.to = Some(val()?),
+            "-r" => revs.push(val()?),
+            "-L" | "--label" => a.labels.push(val()?),
             "-o" | "--output" => a.output = Some(val()?.into()),
             "--root" => a.root = Some(val()?.into()),
             "-p" | "--preamble" => a.preamble = Some(val()?.into()),
@@ -232,9 +242,26 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
                 }
             }
             "--" => a.typst_args.extend(it.by_ref()),
-            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s if s.starts_with('-') => return Err(unknown_option(s)),
             _ => a.files.push(arg),
         }
+    }
+    // Usage errors name the options that gave the revisions.
+    let by_r = !revs.is_empty();
+    let (since_to, since_or_to) = if by_r {
+        ("-r", "-r")
+    } else {
+        ("--since and --to", "--since or --to")
+    };
+    if by_r {
+        if revs.len() > 2 || a.since.is_some() || a.to.is_some() {
+            return Err("give -r once or twice, and not with --since or --to".into());
+        }
+        a.to = revs.get(1).cloned();
+        a.since = revs.into_iter().next();
+    }
+    if a.labels.len() > 2 {
+        return Err("give -L once for the old version, or twice for the old and the new".into());
     }
     if a.root.is_none() {
         a.root = std::env::var_os("TYPST_ROOT")
@@ -264,7 +291,11 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         ));
     }
     if a.to.is_some() && a.since.as_deref().is_some_and(|s| s.contains("..")) {
-        return Err("--to cannot be combined with a range in --since".into());
+        return Err(if by_r {
+            "a range in -r cannot be followed by a second -r".into()
+        } else {
+            "--to cannot be combined with a range in --since".into()
+        });
     }
     if [a.mark_reviewed, a.show_reviewed, a.list_files]
         .iter()
@@ -280,7 +311,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         (a.list_files, "--list-files"),
     ] {
         if set && (a.files.len() != 1 || a.since.is_some() || a.to.is_some()) {
-            return Err(format!("{opt} takes one file and no --since or --to"));
+            return Err(format!("{opt} takes one file and no {since_or_to}"));
         }
         if let Some(s) = &a.steps
             && set
@@ -295,8 +326,21 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
     }
     match (a.files.len(), &a.since, &a.to) {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(Box::new(a))),
-        _ => Err("give one file, or two files without --since and --to".into()),
+        _ => Err(format!("give one file, or two files without {since_to}")),
     }
+}
+
+/// The usage error for an unknown option, which for an option of latexdiff
+/// says what takes its place.
+fn unknown_option(s: &str) -> String {
+    let hint = match s {
+        "--pdf" | "--ps" | "--postscript" => "typst-redline always writes a PDF",
+        "--flatten" => "included files are always compared",
+        "--git" => "revisions are read with git; give them with --since and --to, or -r",
+        "--force" => "an existing output file is overwritten",
+        _ => return format!("unknown option {s}"),
+    };
+    format!("unknown option {s}: {hint}")
 }
 
 /// One side of the comparison: `entry` in `tree`, whose working-tree
@@ -726,12 +770,13 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     }
     let pdf = output_path(&a, &old, &new)?;
     let (read_old, read_new) = (|p: &str| old.tree.read(p), |p: &str| new.tree.read(p));
-    let version = |spec: &Spec, read| Version {
-        label: spec.label.clone(),
+    // -L changes only the names the PDF shows; diagnostics name the revisions.
+    let version = |spec: &Spec, read, i: usize| Version {
+        label: a.labels.get(i).unwrap_or(&spec.label).clone(),
         entry: spec.entry.clone(),
         read,
     };
-    let (old_v, new_v) = (version(&old, &read_old), version(&new, &read_new));
+    let (old_v, new_v) = (version(&old, &read_old, 0), version(&new, &read_new, 1));
     let files = [
         project_files(&old_v, reads.as_deref()),
         project_files(&new_v, reads.as_deref()),
@@ -910,7 +955,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                     &a,
                     dir,
                     sides,
-                    (&old.label, &new.label),
+                    (&old_v.label, &new_v.label),
                     [back, &result],
                     &history,
                     &tmp,
