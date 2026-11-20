@@ -3827,3 +3827,22 @@ fn set_rule_of_a_show_rule_is_listed_with_it() {
     let texts: Vec<&str> = r.changes.iter().map(|c| c.text.as_str()).collect();
     assert_eq!(texts, ["show emph: set text(fill: blue)"]);
 }
+
+#[test]
+fn frame_of_a_numbered_equation_holds_the_formula_only() {
+    let doc = |eq: &str| {
+        format!(
+            "#set math.equation(numbering: \"(1)\")\n#show box: it => [#metadata(it.width)<probe>#it]\nText.\n{eq}\n"
+        )
+    };
+    for (old, new) in [("$ x = y $", "$ x = y + z $"), (r"$ x &= y \ &= z $", "$ x &= y + z $")] {
+        let Some((marked, _)) = probes("numbered-equation-frame", &doc(old), &doc(new)) else {
+            return;
+        };
+        let widest = marked
+            .split('"')
+            .filter_map(|v| v.rsplit('+').next()?.strip_suffix("pt")?.parse::<f64>().ok())
+            .fold(0.0, f64::max);
+        assert!(widest < 100.0, "{new}: {marked}");
+    }
+}
