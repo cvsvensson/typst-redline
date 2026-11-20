@@ -475,7 +475,7 @@ function viewArgs(view: View, base: Base, colours: boolean) {
 }
 
 // The command chooses these itself, from its lists.
-const flowOptions = ["--since", "--to", "--layout", "--each-commit", "--steps"];
+const flowOptions = ["--since", "--to", "-r", "--layout", "--each-commit", "--steps"];
 
 function checkExtraArgs(extra: string[]) {
   const end = extra.indexOf("--");

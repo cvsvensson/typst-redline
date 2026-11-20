@@ -22,7 +22,8 @@ Usage:
 With one file, the old version is the file at git revision --since (default
 HEAD) and the new version is the working copy, or the file at --to. --since
 A..B is --since A --to B; --since A...B compares the merge base of A and B
-with B. With two files, each is a path or REV:PATH (:PATH for the index).
+with B. As in latexdiff-vc, -r A is --since A and -r A -r B is --since A
+--to B. With two files, each is a path or REV:PATH (:PATH for the index).
 Without a file, in a terminal, it asks for the file and the old version.
 
 --mark-reviewed records HEAD as reviewed for the file, in a local git ref
@@ -50,6 +51,8 @@ Options:
                         tool splits the commits, and then the uncommitted
                         changes, into n steps that change about the same
                         amount of the document (one file only)
+  -L, --label <text>    Name the old version on the summary page; given
+                        twice, the old and then the new version
   --no-moves            Show moved text as deleted at its old place and
                         inserted at its new place
   --typst <path>        typst executable (default: typst)
@@ -81,6 +84,8 @@ struct Args {
     show_reviewed: bool,
     list_files: bool,
     no_moves: bool,
+    /// Labels of the old and the new version given with `-L`.
+    labels: Vec<String>,
     typst_args: Vec<String>,
 }
 
@@ -151,8 +156,10 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         show_reviewed: false,
         list_files: false,
         no_moves: false,
+        labels: vec![],
         typst_args: vec![],
     };
+    let mut revs = vec![];
     let mut it = argv.iter().cloned();
     while let Some(arg) = it.next() {
         let mut val = || it.next().ok_or(format!("{arg} needs a value"));
@@ -164,6 +171,8 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             }
             "--since" => a.since = Some(val()?),
             "--to" => a.to = Some(val()?),
+            "-r" => revs.push(val()?),
+            "-L" | "--label" => a.labels.push(val()?),
             "-o" | "--output" => a.output = Some(val()?.into()),
             "--root" => a.root = Some(val()?.into()),
             "--preamble" => a.preamble = Some(val()?.into()),
@@ -190,9 +199,19 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
                 }
             }
             "--" => a.typst_args.extend(it.by_ref()),
-            s if s.starts_with('-') => return Err(format!("unknown option {s}")),
+            s if s.starts_with('-') => return Err(unknown_option(s)),
             _ => a.files.push(arg),
         }
+    }
+    if !revs.is_empty() {
+        if revs.len() > 2 || a.since.is_some() || a.to.is_some() {
+            return Err("give -r once or twice, and not with --since or --to".into());
+        }
+        a.to = revs.get(1).cloned();
+        a.since = revs.into_iter().next();
+    }
+    if a.labels.len() > 2 {
+        return Err("give -L once for the old version, or twice for the old and the new".into());
     }
     if a.root.is_none() {
         a.root = std::env::var_os("TYPST_ROOT")
@@ -255,6 +274,19 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         (1, _, _) | (2, None, None) => Ok(Parsed::Run(Box::new(a))),
         _ => Err("give one file, or two files without --since and --to".into()),
     }
+}
+
+/// The usage error for an unknown option, which for an option of latexdiff
+/// says what takes its place.
+fn unknown_option(s: &str) -> String {
+    let hint = match s {
+        "--pdf" | "--ps" | "--postscript" => "typst-redline always writes a PDF",
+        "--flatten" => "included files are always compared",
+        "--git" => "revisions are read with git; give them with --since and --to, or -r",
+        "--force" => "an existing output file is overwritten",
+        _ => return format!("unknown option {s}"),
+    };
+    format!("unknown option {s}: {hint}")
 }
 
 /// One side of the comparison: `entry` in `tree`, whose working-tree
@@ -660,7 +692,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             a.typst
         ));
     }
-    let (old, new) = specs(&a, reviewed).map_err(|e| {
+    let (mut old, mut new) = specs(&a, reviewed).map_err(|e| {
         if a.root_env && e.contains("the root") {
             format!("{e} (set by TYPST_ROOT)")
         } else if a.files.len() == 1 && e.contains("not a git repository") {
@@ -674,6 +706,9 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             Tree::Dir(_) => format!("{} does not exist", new.file.display()),
             Tree::Git { .. } => format!("{} does not exist in {}", new.entry, new.label),
         });
+    }
+    for (spec, label) in [&mut old, &mut new].into_iter().zip(&a.labels) {
+        spec.label = label.clone();
     }
     let pdf = output_path(&a, &old, &new)?;
     let (read_old, read_new) = (|p: &str| old.tree.read(p), |p: &str| new.tree.read(p));

@@ -6,6 +6,8 @@
 
 **What changed since a date.** Find the last commit before it and compare with that: `typst-redline paper.typ --since $(git rev-list -1 --before="2026-11-16 00:00" HEAD)`. If no commit is that old, `typst-redline` stops with *--since needs a value*.
 
+**From latexdiff-vc.** `-r v1` is `--since v1`, `-r v1 -r v2` is `--since v1 --to v2`, and `-L old -L new` names the two versions on the summary page. Revisions are always read with git, included files are always compared and the output is always a PDF, so `--git`, `--flatten` and `--pdf` are not needed.
+
 **What a branch changed**: `typst-redline paper.typ --since main...feature` compares the point where `feature` left `main` with `feature`.
 
 **Who changed what.** `--each-commit` gives each commit between the two versions its own colour, for up to 6 commits that change the document or a file it reads. The commits are listed in their colours on the summary page and in one small line in the bottom margin of each marked page ([picture](gallery.md#who-changed-what)).

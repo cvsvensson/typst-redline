@@ -13,7 +13,7 @@ The document is the `.typ` file the user names. Otherwise, take the one that is 
 
 - The current version: `typst compile <file.typ>` writes `<file>.pdf`.
 - The changes: `typst-redline <file.typ> --since <rev>` writes `<file>.redline.pdf` next to the file and prints its path on stdout. The new version is the file on disk, uncommitted changes included; without `--since`, the old version is the last commit. `-o <path>` writes the PDF elsewhere, for example outside the user's repository.
-  - A commit, tag or branch: `--since <rev>`; between two: `--since <a> --to <b>`; since a branch left main: `--since main...HEAD`.
+  - A commit, tag or branch: `--since <rev>`; between two: `--since <a> --to <b>` (latexdiff-vc's `-r <a> -r <b>` also works); since a branch left main: `--since main...HEAD`.
   - A time ("since Monday", "since last week"): work out the calendar date from today's date, then find the last commit before it: `git log -1 --format='%h %ad %s' --date=short --before='<YYYY-MM-DD> 00:00'`. Do not pass a weekday name to git: it reads it loosely and can return the latest commit. If a commit is printed, use its hash with `--since` and tell the user which commit (date and subject) you compared with. If nothing is printed, no commit is that old: compare with the first commit, `git rev-list --max-parents=0 HEAD`, and tell the user that what the first commit contained is not marked.
   - Two files, or a file at a revision: `typst-redline <old> <new>`, each a path or `REV:PATH`. Quote paths with spaces. The PDF goes next to the new file.
   - Files outside the document's folder (`#include "../x.typ"`): add `--root <folder holding all of them>`.
