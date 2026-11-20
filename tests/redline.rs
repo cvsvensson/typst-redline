@@ -3332,7 +3332,7 @@ fn side_by_side_needs_the_preamble_function() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        out.status.code() == Some(1) && stderr.contains("does not define redline-side-by-side"),
+        out.status.code() == Some(1) && stderr.contains("does not use redline-side-by-side"),
         "{stderr}"
     );
 }
@@ -3719,7 +3719,7 @@ fn each_commit_needs_the_preamble_function() {
         ],
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("does not define redline-step-style"), "{stderr}");
+    assert!(stderr.contains("does not use redline-step-style"), "{stderr}");
 }
 
 /// A repository whose `doc/main.typ` gains a paragraph per commit: `lines`
@@ -3971,25 +3971,45 @@ fn an_unknown_style_key_or_a_value_of_another_type_is_an_error() {
     let dir = temp_dir("style-unknown-key");
     std::fs::write(dir.join("old.typ"), "Old.").unwrap();
     std::fs::write(dir.join("new.typ"), "New.").unwrap();
-    for (style, error) in [
-        ("dell=green", "--style: no key dell"),
-        ("bars=1", "--style bars=1: give a boolean or color"),
+    for (args, error) in [
+        (["--style", "dell=green"], "error: --style: no key dell"),
+        (
+            ["--style", "bars=1"],
+            "error: --style bars=1: bars takes auto, color or none",
+        ),
+        (["-t", "wavy"], "error: --type wavy: no such type"),
     ] {
-        let out = cli(&dir, &["old.typ", "new.typ", "--style", style]);
+        let out = cli(&dir, &[&["old.typ", "new.typ"], &args[..]].concat());
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(out.status.code() == Some(1) && stderr.contains(error), "{stderr}");
+        assert!(out.status.code() == Some(2) && stderr.contains(error), "{stderr}");
+        assert!(!stderr.contains("note:") && !stderr.contains("redline.typ"), "{stderr}");
     }
 }
 
 #[test]
 fn a_latexdiff_type_and_a_style_file_apply() {
     let dir = temp_dir("style-type");
-    std::fs::write(dir.join("old.typ"), "Old.").unwrap();
-    std::fs::write(dir.join("new.typ"), "New.").unwrap();
-    std::fs::write(dir.join("s.typ"), "(bars: false, strike: none) // mine").unwrap();
-    let out = cli(&dir, &["old.typ", "new.typ", "-t", "CChangeBar", "--style", "s.typ"]);
+    std::fs::write(dir.join("old.typ"), "Old words.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New words.").unwrap();
+    std::fs::write(dir.join("s.typ"), "(bars: rgb(\"#00c000\")) // mine").unwrap();
+    let args = [
+        "-t",
+        "CChangeBar",
+        "--style",
+        "s.typ",
+        "-o",
+        "out.pdf",
+        "--",
+        "--format",
+        "svg",
+        "--pages",
+        "1",
+    ];
+    let out = cli(&dir, &[&["old.typ", "new.typ"], &args[..]].concat());
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(dir.join("new.redline.pdf").exists());
+    let svg = std::fs::read_to_string(dir.join("out.pdf")).unwrap();
+    // The type's blue for new text, the file's colour for the bars.
+    assert!(svg.contains(r##"fill="#0000ff""##) && svg.contains(r##"stroke="#00c000""##));
 }
 
 #[test]

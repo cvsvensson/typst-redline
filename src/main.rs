@@ -732,16 +732,15 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                     "redline-step-style",
                     a.steps.as_ref().map_or("", StepArg::option),
                 ),
+                (
+                    !style.is_empty(),
+                    "\"redline-style\"",
+                    "--style, --type and --graphics-markup",
+                ),
             ];
             if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
                 return Err(format!(
-                    "the preamble {} does not define {name}, which {what} needs",
-                    p.display()
-                ));
-            }
-            if !style.is_empty() && !text.contains("\"redline-style\"") {
-                return Err(format!(
-                    "the preamble {} does not read the input redline-style, which --style, --type and --graphics-markup set",
+                    "the preamble {} does not use {name}, which {what} needs",
                     p.display()
                 ));
             }
@@ -1004,6 +1003,15 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             })?;
             return Ok(pdf);
         }
+        // The preamble's messages about the style start with the option.
+        if let Some(e) = stderr
+            .lines()
+            .filter_map(|l| l.strip_prefix("error: "))
+            .map(|e| e.strip_prefix("assertion failed: ").unwrap_or(e))
+            .find(|e| e.starts_with("--style") || e.starts_with("--type"))
+        {
+            return Err(e.to_string());
+        }
         if first_error.is_empty() {
             // A Typst that panics, as 0.11 does on some marks, prints no error line.
             first_error = stderr
@@ -1017,9 +1025,6 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         // not in the marked copy. The old version matters where it is laid
         // out whole.
         if i == 0 {
-            if !style.is_empty() {
-                check_style(&a, dir)?;
-            }
             let versions = if a.side_by_side { vec![&new, &old] } else { vec![&new] };
             if let Some((s, errors)) = versions.into_iter().find_map(|s| Some((s, alone(&a, dir, s)?))) {
                 stderr = errors;
@@ -1088,38 +1093,6 @@ fn style_inputs(a: &Args) -> Result<Vec<String>, String> {
     // A file can end in a line comment.
     let parts: String = parts.iter().map(|p| format!("{p}\n,")).collect();
     Ok(vec!["--input".into(), format!("redline-style=({parts})")])
-}
-
-/// An error in --type or --style, found by marking a few changes with the
-/// preamble in `dir`: the document's compile, which failed, cannot tell it
-/// from an error of its own.
-fn check_style(a: &Args, dir: &Path) -> Result<(), String> {
-    let (src, pdf) = (
-        dir.join(".redline-style-check.typ"),
-        dir.join(".redline-style-check.pdf"),
-    );
-    let check = format!(
-        "#import \"/{PREAMBLE_PATH}\": redline-ins, redline-del, redline-bars\n#show: redline-bars\n\
-         A #redline-ins[b] #redline-del[c] d.\n\n#redline-ins(block: true)[$ x $]\n\n#redline-del(block: true)[$ y $]\n"
-    );
-    std::fs::write(&src, check).map_err(|e| format!("{}: {e}", src.display()))?;
-    let out = typst(a, dir, "compile", &[&src, &pdf])?;
-    let _ = std::fs::remove_file(&src);
-    let _ = std::fs::remove_file(&pdf);
-    if out.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let error = stderr
-        .lines()
-        .find_map(|l| l.strip_prefix("error: "))
-        .unwrap_or_default();
-    let error = error.strip_prefix("assertion failed: ").unwrap_or(error);
-    Err(if error.starts_with("--") {
-        error.to_string()
-    } else {
-        format!("--style or --type: {error}")
-    })
 }
 
 /// The errors of compiling a version as it is, if it fails: in place for a
@@ -2287,6 +2260,11 @@ fn main() -> ExitCode {
                 println!("{line}");
             }
             ExitCode::SUCCESS
+        }
+        // A value that --style or --type gave is a usage error.
+        Err(e) if e.starts_with("--style") || e.starts_with("--type") => {
+            eprintln!("error: {e}\nsee typst-redline --help");
+            ExitCode::from(2)
         }
         Err(e) => {
             eprintln!("error: {e}");
