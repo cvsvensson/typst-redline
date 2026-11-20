@@ -108,7 +108,7 @@ The ones you are most likely to meet; [docs/known-problems.md](docs/known-proble
 
 ## Styling
 
-`--style key=value` changes one setting, such as `--style del=green` or `--style ins-fill=none` for no highlight, and `--style my-style.typ` several from a file that holds a dictionary such as `(del: green, bars: false)`. `-t UNDERLINE` and the other latexdiff markup types that keep deleted text start from latexdiff's look. [docs/styling.md](docs/styling.md) lists the keys and types, and how to replace the styling whole with `--preamble`.
+`--style key=value` changes one setting, such as `--style del=green` or `--style ins-fill=none` for no highlight, and `--style my-style.typ` several from a file that holds a dictionary such as `(del: green, bars: false)`. `-t UNDERLINE`, `-t CHANGEBAR` and three other latexdiff markup types start from latexdiff's look. [docs/styling.md](docs/styling.md) lists the keys and types, and how to replace the styling whole with `--preamble`.
 
 ## VS Code
 

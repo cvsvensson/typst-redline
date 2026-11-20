@@ -13,9 +13,20 @@ with `my-style.typ`:
 (del: rgb("#b00000"), strike: 1pt, bars: false)
 ```
 
-`-t UNDERLINE` gives latexdiff's default look: new text blue and underlined, deleted text red and struck through, no highlight and no bars.
+`-t UNDERLINE` gives latexdiff's default look; the [latexdiff types](#latexdiff-types) below lists the others. The page of the [gallery](gallery.md)'s paper example with each of them, and with `--style ins=purple --style ins-fill=none`:
 
-<img src="paper-underline.png" width="480" alt="The paper page with -t UNDERLINE: new words blue and underlined without a highlight, deleted words red and struck through, changed formulas and figures framed, and change numbers in the margin without bars">
+<table>
+<tr>
+<td><img src="paper-underline.png" width="260" alt="The paper page with -t UNDERLINE: new words blue and underlined, deleted words red and struck through, no bars"><br><code>-t UNDERLINE</code></td>
+<td><img src="paper-color.png" width="260" alt="The paper page with -t COLOR: new words blue, deleted words red and struck through, no bars"><br><code>-t COLOR</code></td>
+<td><img src="paper-culinechbar.png" width="260" alt="The paper page with -t CULINECHBAR: as UNDERLINE, with black change bars"><br><code>-t CULINECHBAR</code></td>
+</tr>
+<tr>
+<td><img src="paper-cchangebar.png" width="260" alt="The paper page with -t CCHANGEBAR: new words blue, deleted words red and not struck through, black change bars"><br><code>-t CCHANGEBAR</code></td>
+<td><img src="paper-changebar.png" width="260" alt="The paper page with -t CHANGEBAR: black text, deleted content left out, black change bars and numbers"><br><code>-t CHANGEBAR</code></td>
+<td><img src="paper-style.png" width="260" alt="The paper page with new content in purple without a highlight"><br><code>--style ins=purple --style ins-fill=none</code></td>
+</tr>
+</table>
 
 ## Keys
 
@@ -28,7 +39,8 @@ with `my-style.typ`:
 | `strike` | `0.065em` | Line through deleted text; `none` for none |
 | `ins-frame`, `del-frame` | `0.6pt`, `(thickness: 0.6pt, dash: "dashed")` | Frames of inserted and deleted formulas, figures and other blocks |
 | `outset` | `(x: 0.4em, top: 0.3em, bottom: 0.5em)` | How far frames stand outside their block |
-| `bars` | `true` | Whether change bars are drawn; the change numbers stay |
+| `deleted` | `true` | Whether deleted content is shown; `false` leaves it out, and its bar and number stay |
+| `bars` | `true` | Change bars in the colour of their mark, a colour for all bars, or `false` for none; the change numbers stay |
 | `bar-width`, `del-bar-width` | `2pt`, `1.5pt` | Thickness of insertion and deletion bars |
 | `bar-gap`, `lane` | `0.5cm`, `3.5pt` | Distance of the bars from the text, and between bars of different kinds |
 | `move`, `move-stroke` | grey, `0.8pt` | Brackets and lines of moved text |
@@ -39,15 +51,17 @@ A stroke without a colour, such as `strike: 1pt` or `del-frame: (thickness: 1pt,
 
 ## latexdiff types
 
-`-t NAME` (or `--type`, any case) starts from one of latexdiff's markup types; `--style` applies after it.
+`-t NAME` (or `--type`, any case) starts from one of latexdiff's markup types, with its pure blue and red; `--style` applies after it.
 
-- `UNDERLINE`: new text blue and underlined, deleted text red and struck through, no bars. latexdiff's underline is wavy; Typst's is straight.
+- `UNDERLINE`: new text blue and underlined, deleted text red and struck through, no bars.
 - `COLOR`: as `UNDERLINE`, without the underline.
-- `CULINECHBAR`: `UNDERLINE` with change bars.
-- `CCHANGEBAR`: new text blue, deleted text red and not struck through, change bars.
-- `CHANGEBAR`: change bars, everything in black, new text not otherwise marked. latexdiff leaves deleted text out; here it is struck through.
+- `CULINECHBAR`: `UNDERLINE` with black change bars.
+- `CCHANGEBAR`: new text blue, deleted text red and not struck through, black change bars.
+- `CHANGEBAR`: black change bars, new text not otherwise marked, deleted content left out.
 
-The other types are not offered: `CFONT`, `CFONTCHBAR`, `FONTSTRIKE` and `BOLD` set new text in another font, which changes the layout of the new version, and `INVISIBLE`, `TRADITIONAL`, `CTRADITIONAL` and `PDFCOMMENT` leave deleted text out or move it into footnotes or PDF comments.
+Where Typst or this tool differ from latexdiff: the underline is straight, not wavy; a deletion bar is dashed along the deleted text, where the changebar package puts a short bar; change numbers stand next to the bars; and changed formulas and figures keep their frames, also in black with `CHANGEBAR`.
+
+The other types are not offered: `CFONT`, `CFONTCHBAR`, `FONTSTRIKE` and `BOLD` set new text in another font, which changes the layout of the new version; `TRADITIONAL`, `CTRADITIONAL` and `PDFCOMMENT` move deleted text into footnotes or PDF comments; and `INVISIBLE` marks nothing.
 
 ## A preamble of your own
 

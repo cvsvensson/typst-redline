@@ -44,9 +44,8 @@ Options:
                         win. The keys are in docs/styling.md and at the top
                         of --show-preamble
   -t, --type <name>     Start from a latexdiff markup type: UNDERLINE, COLOR,
-                        CULINECHBAR, CCHANGEBAR or CHANGEBAR (which strikes
-                        deleted text that latexdiff leaves out). Types that
-                        change fonts or hide deleted text are not offered
+                        CULINECHBAR, CCHANGEBAR or CHANGEBAR. Types that
+                        change fonts or move deleted text are not offered
   -p, --preamble <file> Replace the built-in change styling
   --show-preamble       Print the built-in preamble, to start one of your own
   --layout <layout>     inline (default): the new version with changes marked;
@@ -668,16 +667,9 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                     p.display()
                 ));
             }
-            let reads = [
-                (!a.styles.is_empty(), "redline-style", "--style"),
-                (a.style_type.is_some(), "redline-type", "--type"),
-            ];
-            if let Some((_, input, what)) = reads
-                .iter()
-                .find(|(on, input, _)| *on && !text.contains(&format!("\"{input}\"")))
-            {
+            if !style.is_empty() && !text.contains("\"redline-style\"") {
                 return Err(format!(
-                    "the preamble {} does not read the input {input}, which {what} sets",
+                    "the preamble {} does not read the input redline-style, which --style and --type set",
                     p.display()
                 ));
             }
@@ -989,14 +981,10 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     Err(format!("typst compile failed{hint}"))
 }
 
-/// The `--input` arguments that pass --type and the dictionaries of --style
-/// to the preamble.
+/// The `--input` argument that passes the name of --type and the
+/// dictionaries of --style to the preamble, in the order they apply.
 fn style_inputs(a: &Args) -> Result<Vec<String>, String> {
-    let mut inputs = vec![];
-    if let Some(t) = &a.style_type {
-        inputs.extend(["--input".into(), format!("redline-type={t}")]);
-    }
-    let mut parts = vec![];
+    let mut parts: Vec<String> = a.style_type.iter().map(|t| format!("{t:?}")).collect();
     for s in &a.styles {
         let part = match s.split_once('=') {
             Some((key, value)) if !key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '-') => {
@@ -1011,12 +999,12 @@ fn style_inputs(a: &Args) -> Result<Vec<String>, String> {
         }
         parts.push(part);
     }
-    if !parts.is_empty() {
-        // A file can end in a line comment.
-        let parts: String = parts.iter().map(|p| format!("{p}\n,")).collect();
-        inputs.extend(["--input".into(), format!("redline-style=({parts})")]);
+    if parts.is_empty() {
+        return Ok(vec![]);
     }
-    Ok(inputs)
+    // A file can end in a line comment.
+    let parts: String = parts.iter().map(|p| format!("{p}\n,")).collect();
+    Ok(vec!["--input".into(), format!("redline-style=({parts})")])
 }
 
 /// An error in --type or --style, found by marking a few changes with the
