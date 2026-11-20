@@ -63,6 +63,14 @@ Options:
                         amount of the document (one file only)
   --no-moves            Show moved text as deleted at its old place and
                         inserted at its new place
+  --graphics-markup <m> How a changed formula, figure, table, code block or
+                        drawing is shown, as in latexdiff: both (default):
+                        the old one in a dashed red frame, then the new one
+                        in a blue frame; new-only: only the new one; none:
+                        only the new one, without frame or colour. A left-out
+                        old one keeps its bar and number; side by side shows
+                        it on the old page. Sets the style keys del-blocks,
+                        block-colour and, for none, the frames
   --typst <path>        typst executable (default: typst)
   --mark-reviewed       Record HEAD as reviewed for the file (see above)
   --show-reviewed       Print the commit --since reviewed uses (see above)
@@ -201,6 +209,21 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             "--show-reviewed" => a.show_reviewed = true,
             "--list-files" => a.list_files = true,
             "--no-moves" => a.no_moves = true,
+            "--graphics-markup" => {
+                // latexdiff's spellings too.
+                let keys: &[&str] = match val()?.to_ascii_lowercase().as_str() {
+                    "both" | "2" => &["del-blocks=true", "block-colour=true"],
+                    "new-only" | "newonly" | "1" => &["del-blocks=false", "block-colour=true"],
+                    "none" | "off" | "0" => &[
+                        "del-blocks=false",
+                        "block-colour=false",
+                        "ins-frame=none",
+                        "del-frame=none",
+                    ],
+                    m => return Err(format!("unknown graphics markup {m}; give both, new-only or none")),
+                };
+                a.styles.extend(keys.iter().map(|k| k.to_string()));
+            }
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
                     "inline" => false,
@@ -669,7 +692,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             }
             if !style.is_empty() && !text.contains("\"redline-style\"") {
                 return Err(format!(
-                    "the preamble {} does not read the input redline-style, which --style and --type set",
+                    "the preamble {} does not read the input redline-style, which --style, --type and --graphics-markup set",
                     p.display()
                 ));
             }

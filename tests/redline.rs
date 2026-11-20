@@ -3923,3 +3923,44 @@ End.
         assert_eq!((marked, lost), (new, "[]".into()));
     }
 }
+
+#[test]
+fn old_blocks_left_out_keep_their_mark() {
+    let doc = |w: &str| {
+        format!(
+            "#show rect.where(height: 1cm): it => [#metadata(it.width)<probe>#it]
+Text.
+
+#figure(rect(width: {w}, height: 1cm), caption: [A shape.])
+"
+        )
+    };
+    if let Some([marked, lost, new]) = styled_probes("del-blocks", "(del-blocks: false)", &doc("1cm"), &doc("2cm")) {
+        assert_eq!((marked, lost), (new, "[]".into()));
+    }
+}
+
+#[test]
+fn graphics_markup_none_runs() {
+    let dir = temp_dir("graphics-markup-none");
+    std::fs::write(
+        dir.join("old.typ"),
+        "Old.
+
+$ x $
+
+#box(rect(width: 1cm))",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("new.typ"),
+        "New.
+
+$ y $
+
+#box(rect(width: 2cm))",
+    )
+    .unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ", "--graphics-markup", "none"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}

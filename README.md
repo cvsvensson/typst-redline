@@ -63,7 +63,7 @@ If the document reads files outside its own folder, such as `#include "../shared
 ## What is marked
 
 - Deleted text is struck out in red and new text highlighted in blue, also in headings, lists, captions and footnotes.
-- A changed formula, figure, table, code block or drawing is shown whole: the old one in a dashed red frame, the new one in a blue frame.
+- A changed formula, figure, table, code block or drawing is shown whole: the old one in a dashed red frame, the new one in a blue frame. `--graphics-markup new-only` leaves the old one out, and `--graphics-markup none` also shows the new one without frame or colour; the bar and the number stay, and the summary lists the change as before.
 - A bar in the margin points to every changed line, dashed for deletions and solid for insertions, with a number for each change that the summary page uses too.
 - A moved paragraph or section is shown once, at its new place, with a "moved" note; at its old place a grey line links to it.
 - Changes in included files and replaced images are marked; with git, the old version of each file comes from the old commit.
@@ -79,7 +79,7 @@ The last page, or pages, list every change by its number, section by section, an
 
 ## Slides and side by side
 
-`--layout side-by-side` shows each changed page of the old version next to the same page of the new version, leaves out pages without changes, and ends with the summary. Use it for slides: in the default layout, deleted content takes room on the page, so a full slide overflows. It needs Typst 0.14 or later and an old version that compiles; the default layout falls back to coarser marks instead.
+`--layout side-by-side` shows each changed page of the old version next to the same page of the new version, leaves out pages without changes, and ends with the summary. Use it for slides: in the default layout, deleted content takes room on the page, so a full slide overflows. Where only figures changed, `--graphics-markup new-only` also keeps the slides whole. It needs Typst 0.14 or later and an old version that compiles; the default layout falls back to coarser marks instead.
 
 ```
 typst-redline talk.typ --since HEAD~1 --layout side-by-side
@@ -99,7 +99,7 @@ typst-redline talk.typ --since HEAD~1 --layout side-by-side
 
 The ones you are most likely to meet; [docs/known-problems.md](docs/known-problems.md) has the full list, each tried with the current version.
 
-- In the default layout, deleted content takes room on the page, so line and page breaks shift, and on a full slide the old and the new version of a figure each take a page of their own; use side by side for slides.
+- In the default layout, deleted content takes room on the page, so line and page breaks shift, and on a full slide the old and the new version of a figure each take a page of their own; use side by side for slides, or `--graphics-markup new-only`, which leaves the old figure out.
 - Some moved text shows as deleted at one place and inserted at the other, for example a sentence moved within or between paragraphs, or a passage rewritten so much that it keeps less than about 60% of its words.
 - Where a function reads its content as text, a changed text can be missing from the page, not only its mark, and a function that fails on marked content makes the whole document fall back to coarser marks; the summary page says so in both cases.
 - Deleted code that uses a name which meant something else at its place, such as a loop variable or a function parameter, is shown by that name, such as *[unit]*, not as it looked.

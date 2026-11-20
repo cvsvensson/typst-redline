@@ -83,8 +83,13 @@
   ins-frame: 0.6pt,
   del-frame: (thickness: 0.6pt, dash: "dashed"),
   outset: (x: 0.4em, top: 0.3em, bottom: 0.5em),
-  // Whether deleted content is shown. Left out, it keeps its bar and number.
+  // Whether deleted content is shown, and of it formulas, figures, tables,
+  // code blocks and drawings; left out, it keeps its bar and number.
   deleted: true,
+  del-blocks: true,
+  // Whether changed blocks take the colour of their mark: new ones
+  // coloured, old ones tinted or crossed out.
+  block-colour: true,
   // Change bars: true in the colour of their mark, a colour for all, or
   // false for none. They sit this far outside the text area, at most half
   // the margin; deletion bars one lane further out, so that the two never
@@ -238,11 +243,15 @@
     or sole and repr(c.func()) in ("context", "layout") and "frames" not in redline-fallback
 )
 
+// Whether a part of a mark is a box in the text that shows no text, a
+// drawing such as an icon, which is framed at its own size.
+#let redline-drawing-box(c) = c.func() == box and c.at("body", default: none) != none and not redline-textual(c)
+
 // The two lines that cross out deleted content of size `w` by `h`, light
 // enough that the content stays legible, on a white edge that shows them
 // on a fill of their own colour.
-#let redline-cross(stroke, w, h) = {
-  for s in (1.5pt + white.transparentize(45%), 0.75pt + stroke.paint.transparentize(30%)) {
+#let redline-cross(paint, w, h) = {
+  for s in (1.5pt + white.transparentize(45%), 0.75pt + paint.transparentize(30%)) {
     place(top + left, line(start: (0pt, 0pt), end: (w, h), stroke: s))
     place(top + left, line(start: (0pt, h), end: (w, 0pt), stroke: s))
   }
@@ -256,7 +265,7 @@
 // that text in it stays legible.
 // A deleted element (`whole`) that fits on a page is not split across
 // pages, where the frame would hold only its last part.
-#let redline-frame(it, stroke, cross: false, tint: false, whole: false, start: none, end: none, step: none, id: none) = layout(region => block(width: 100%, breakable: not whole or measure(block(width: region.width, it)).height > region.height, layout(size => {
+#let redline-frame(it, stroke, paint, cross: false, tint: false, whole: false, start: none, end: none, step: none, id: none) = layout(region => block(width: 100%, breakable: not whole or measure(block(width: region.width, it)).height > region.height, layout(size => {
   let st = redline-style
   let eq = it.func() == math.equation
   // Twice the width tells content that fills its width as unbounded room
@@ -287,14 +296,14 @@
   // struck, alone.
   let (cw, ch) = if it.func() == figure { (body-w, measure(block(width: size.width, it.body)).height) } else { (w, h) }
   let cross = cross and not empty and ch >= 0.3 * cw
-  let fill = if (cross or tint) and not cross { stroke.paint.transparentize(90%) }
+  let fill = if (cross or tint) and not cross { paint.transparentize(90%) }
   place(top + a, box(width: w, height: h, {
     if not empty { place(rect(width: 100%, height: 100%, stroke: stroke, fill: fill, outset: st.outset)) }
     if cross and it.func() == figure {
       let caption = it.at("caption", default: none)
       let above = caption != none and caption.at("position", default: figure.caption.position) == top
-      place(center, dy: if above { h - ch } else { 0pt }, box(width: cw, height: ch, redline-cross(stroke, cw, ch)))
-    } else if cross { redline-cross(stroke, w, h) }
+      place(center, dy: if above { h - ch } else { 0pt }, box(width: cw, height: ch, redline-cross(paint, cw, ch)))
+    } else if cross { redline-cross(paint, w, h) }
     place(top + left, if start != none { redline-tag(start, -st.outset.top, step: step, id: id) })
     place(bottom + left, if end != none { redline-tag("end", st.outset.bottom, width: size.width) })
   }))
@@ -397,6 +406,8 @@
 // start tag can fall on the line before, and a bare end tag does not know
 // its container.
 #let redline-mark(kind, body, block, style, stroke, frame-style: x => x, plain: x => x, whole: false, bare: none, step: none, id: none) = {
+  let st = redline-step-style(step)
+  let paint = if kind == "ins" { st.ins } else { st.del }
   let bare-start = not block and bare in ("start", "both")
   let bare-end = not block and bare in ("end", "both")
   let end-tag = if bare-end { context redline-tag("end", 0.3em, width: 0pt) } else { redline-tag("end", 0.3em) }
@@ -442,8 +453,9 @@
       let own = picture or redline-own-colours(b)
       // A strike reaches only the words of an equation.
       let eq = kind == "del" and c.func() == math.equation
-      let f = redline-frame(c, stroke, cross: kind == "del" and picture, tint: kind == "del" and (own or eq), whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
-      out.push(if eq { plain(text(fill: stroke.paint, f)) } else if not own { frame-style(f) } else if c.func() == figure {
+      let tinted = kind == "del" and st.block-colour
+      let f = redline-frame(c, stroke, paint, cross: tinted and picture, tint: tinted and (own or eq), whole: whole, start: start, end: if i == n - 1 { "end" }, step: step, id: id)
+      out.push(if not st.block-colour { plain(f) } else if eq { plain(text(fill: paint, f)) } else if not own { frame-style(f) } else if c.func() == figure {
         show figure.caption: frame-style
         plain(f)
       } else { plain(f) })
@@ -465,10 +477,10 @@
         if i == 0 and not (between or bare-start) { out.push[#box(redline-tag(kind, -0.8em, step: step, id: id))\u{2060}] }
         c
       }
-      let c = if c.func() == box and c.at("body", default: none) != none and not redline-textual(c) {
-        box(stroke: stroke, outset: redline-step-style(step).outset.top, {
+      let c = if redline-drawing-box(c) {
+        box(stroke: stroke, outset: st.outset.top, {
           c
-          if kind == "del" { context { let s = measure(c); redline-cross(stroke, s.width, s.height) } }
+          if kind == "del" and st.block-colour { context { let s = measure(c); redline-cross(paint, s.width, s.height) } }
         })
       } else { c }
       run.push(if i == n - 1 and broken != none { broken } else if i == n - 1 and styled { redline-end-in(c, end-tag) } else { c })
@@ -901,6 +913,15 @@
   }
 }
 
+// Deleted content without its framed parts and drawings, for
+// `del-blocks: false`; [] if nothing else is left, which leaves the mark's
+// tags, so that its bar and number stay.
+#let redline-unframed(body, block) = {
+  let (lead, ch, trail) = redline-parts(body)
+  let left = ch.filter(c => not (redline-framed(c, block and ch.len() == 1) or redline-drawing-box(c)))
+  if left.len() == 0 { [] } else if left.len() == ch.len() { body } else { (lead, ..left, trail).join() }
+}
+
 // A deleted list or enum item, `item` as in redline-del, spaced as its list
 // spaces items and with its marker in `fill` where the list puts markers.
 #let redline-item(item, fill, body) = context {
@@ -932,7 +953,8 @@
   if redline-side != none { return redline-side-mark("del", body, id: id, block: block or heading != none or item != none) }
   if move != none { return redline-move-line(move, body, step) }
   let block = block or heading != none or item != none
-  let (body, item, gap) = if st.deleted { (body, item, gap) } else { ([], none, false) }
+  let body = if not st.deleted { [] } else if st.del-blocks { body } else { redline-unframed(body, block) }
+  let (item, gap) = if body == [] { (none, false) } else { (item, gap) }
   // Content that draws nothing stays in the paragraph it was in, and the
   // summary lists its code.
   let unseen = redline-unseen(body)
@@ -1810,11 +1832,13 @@
   let st = if steps { redline-colours(luma(70)) } else { redline-style }
   let frame(stroke) = box(width: 1.4em, height: 0.75em, stroke: stroke)
   let bar(ins, paint) = box(height: 0.9em, baseline: 0.1em, context redline-bar(0.9em.to-absolute(), ins, paint, st))
+  // A side of the side-by-side layout shows deleted content whatever the style.
+  let shown = st.deleted or redline-side != none
   let items = (
     (redline-ins-rules([text], false, st: st), [inserted text]),
-    ..if st.deleted { ((redline-del-rules(st: st)[text], [deleted text]),) },
-    (frame(st.ins-frame), [inserted block]),
-    ..if st.deleted { ((frame(st.del-frame), [deleted block]),) },
+    ..if shown { ((redline-del-rules(st: st)[text], [deleted text]),) },
+    ..if st.ins-frame != none { ((frame(st.ins-frame), [inserted block]),) },
+    ..if shown and st.del-frame != none and (st.del-blocks or redline-side != none) { ((frame(st.del-frame), [deleted block]),) },
     ..if not steps { ((text(fill: st.ins)[Text], [new paragraph]),) },
     ..if st.bars != false { (([#bar(true, st.ins)#h(3pt)#bar(false, st.del)], [changed lines]),) },
     (text(fill: redline-style.number)[3], [change number]),

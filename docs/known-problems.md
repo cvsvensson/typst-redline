@@ -30,7 +30,7 @@ Each of these was tried with the current version. Within each group, the ones a 
 
 ## Deleted content in the new layout
 
-- Deleted content shifts line and page breaks compared with the new version, and a deleted figure, table or drawing that fits on a page is kept whole, so on a full slide it and the new one each take a page of their own; side by side avoids this.
+- Deleted content shifts line and page breaks compared with the new version, and a deleted figure, table or drawing that fits on a page is kept whole, so on a full slide it and the new one each take a page of their own; side by side avoids this, and so does `--graphics-markup new-only`, which leaves the old one out. Deleted text still takes room with `new-only`.
 - Deleted content is laid out under the new version's show and set rules, so where such a rule changed, it does not look as it did in the old version.
 - A reference or citation in deleted text to a label or bibliography entry that the new version lacks shows the label or key, not the number the old version printed. A deleted citation of an entry that the new version keeps shows that entry's number in the new bibliography, or its key where the new version first cites another entry between the two.
 - Deleted content that updates a state, for example in a show rule of a package, leaves the state changed after it, because Typst records no initial value to set it back to; the summary page names such states.
