@@ -208,7 +208,7 @@ impl Doc {
 
 /// The node at `*i`, or a `#` with the expression after it and a semicolon
 /// ending it; `*i` is left at its last node.
-fn unit(nodes: &[SyntaxNode], i: &mut usize) -> Vec<SyntaxNode> {
+pub fn unit(nodes: &[SyntaxNode], i: &mut usize) -> Vec<SyntaxNode> {
     let mut unit = vec![nodes[*i].clone()];
     if nodes[*i].kind() == K::Hash && *i + 1 < nodes.len() {
         *i += 1;
@@ -251,6 +251,18 @@ impl Tok {
             nodes: vec![],
             block: false,
             at,
+        }
+    }
+
+    /// Nodes compared as one: code, math or a reference.
+    pub fn atom(nodes: Vec<SyntaxNode>, block: bool) -> Self {
+        Tok {
+            kind: TK::Atom,
+            key: skeleton(&nodes),
+            text: text(&nodes),
+            block,
+            at: (nodes[0].span(), 0),
+            nodes,
         }
     }
 
@@ -331,14 +343,10 @@ pub fn tokenize(nodes: &[SyntaxNode]) -> Vec<Tok> {
                 let line_end = nodes.get(i + 1).is_none_or(|c| c.full_text().starts_with('\n'));
                 let display = n.kind() == K::Equation && n.children().nth(1).is_some_and(|c| c.kind() == K::Space)
                     || n.cast::<ast::Raw>().is_some_and(|r| r.block());
-                toks.push(Tok {
-                    kind: TK::Atom,
-                    key: skeleton(&unit),
-                    text: text(&unit),
-                    block: display || (n.kind() == K::Hash && line_start && line_end),
-                    at: (n.span(), 0),
-                    nodes: unit,
-                });
+                toks.push(Tok::atom(
+                    unit,
+                    display || (n.kind() == K::Hash && line_start && line_end),
+                ));
             }
         }
         i += 1;

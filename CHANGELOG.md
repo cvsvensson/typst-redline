@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Inside a changed formula, only the changed parts are marked: deleted ones crossed out in red, new ones in blue. Whole lines added to or removed from an aligned formula are marked as lines. A formula that changed for the most part, or whose lines were joined or split, is still shown whole. `--math-markup whole` shows every changed formula whole.
+
 ## 0.1.0
 
 First release. `typst-redline` makes a PDF of the new version of a Typst document with the changes against an old version marked.

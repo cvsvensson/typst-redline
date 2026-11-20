@@ -79,6 +79,8 @@
   // Through deleted text, or none; as thick as the text is large, so that
   // it does not cover small text.
   strike: 0.065em,
+  // Between deleted content and the new content that replaces it.
+  gap: 0.25em,
   // Frames of block-level elements, this far outside them. A block ends
   // at the baseline of its last line: the frame clears the descenders.
   ins-frame: 0.6pt,
@@ -267,7 +269,7 @@
     states: [Numbers after deleted content can differ from the new version, because counters that it changes are not set back.],
     frames: [Changed drawings, and other content that the document lays out by code, have no frame; the bar in the margin still marks them.],
     names: [Deleted code is shown by its name instead of as it looked.],
-    whole: [A changed call is marked whole, the old call deleted and the new one inserted, even where only text inside it changed.],
+    whole: [A changed call or formula is marked whole, the old one deleted and the new one inserted, even where only a part of it changed.],
   )
   let lines = redline-fallback.filter(f => f in says).map(f => says.at(f))
   if lines.len() > 0 [Some changes are marked more coarsely, because the document did not compile with every change marked in full. #lines.join[ ]]
@@ -963,7 +965,39 @@
   parbreak()
 }
 
-#let redline-ins(body, block: false, bare: none, step: none, move: none, id: none) = {
+// The look of math `b` inserted or deleted inside a formula. Strikes,
+// highlights and boxes do not reach into math, so deleted math is crossed
+// out with a line, each piece between line breaks and alignment points on
+// its own, and both are coloured. A deleted piece is ordinary math, so that
+// an operator inserted after it is spaced as one; `gap` sets it apart
+// inside, as a space after it would make that operator a sign.
+#let redline-math-look(kind, b, st, gap: false) = {
+  let breaks = (linebreak, $&$.body.func())
+  let cross(run, gap) = if run.any(c => c != [ ]) or gap {
+    let c = redline-neutral(run.join())
+    math.class("normal", if st.strike != none { math.cancel(c, stroke: st.strike) } else { c } + if gap { h(st.gap) })
+  }
+  let shown = if kind == "ins" or b == [] { b } else {
+    let (out, run) = ([], ())
+    for c in if b.func() == [].func() { b.children } else { (b,) } {
+      if c.func() in breaks { out += cross(run, false) + c; run = () } else { run.push(c) }
+    }
+    out + cross(run, gap)
+  }
+  redline-fill(if kind == "del" { st.del } else { st.ins }, shown)
+}
+
+// A change inside a formula: `body` is an inline equation whose body is laid
+// out as part of the formula around it, in its style and spacing; the bar
+// marks the line. Nothing deleted leaves nothing in the formula.
+#let redline-math(kind, body, st, step, id, gap: false) = {
+  let b = if type(body) == content and body.func() == math.equation { body.body } else { body }
+  redline-tag(kind, -0.8em, step: step, id: id)
+  redline-math-look(kind, b, st, gap: gap)
+  context redline-tag("end", 0.3em, width: 0pt)
+}
+
+#let redline-ins(body, block: false, bare: none, step: none, move: none, math: false, id: none) = {
   if move != none {
     let end = move.at("end", default: false)
     // Both ends, so that the pages a long move spans are shown.
@@ -971,7 +1005,9 @@
     return side + redline-move-tag(if end { "end" } else { "to" }, move.id, step: step, block: move.block, heading: move.at("heading", default: false))
   }
   let st = redline-step-style(step)
-  if redline-side != none { redline-side-mark("ins", body, id: id) }
+  let side = if redline-side != none { redline-side-mark("ins", body, id: id) }
+  if math { return side + redline-math(if redline-side == "old" { "del" } else { "ins" }, body, st, step, id) }
+  side
   if redline-side == "old" {
     let look = redline-del-look.with(st: st)
     redline-mark("del", redline-footnotes(body, look), block, look, st.del-frame, frame-style: look, bare: bare, step: step, id: id)
@@ -1013,13 +1049,14 @@
 
 // On a side of the side-by-side layout, a deletion is content the version
 // does not have: the page next to it shows it.
-#let redline-del(body, block: false, heading: none, item: none, gap: false, bare: none, step: none, move: none, id: none) = {
+#let redline-del(body, block: false, heading: none, item: none, gap: false, bare: none, step: none, move: none, math: false, id: none) = {
   let st = redline-step-style(step)
   // The binary pairs the pages of a move's two places by the marks around
   // its content, which each side has.
   if redline-side != none and move != none { return }
   if redline-side != none { return redline-side-mark("del", body, id: id, block: block or heading != none or item != none) }
   if move != none { return redline-move-line(move, body, step) }
+  if math { return redline-math("del", if st.del-text { body } else { [] }, st, step, id, gap: gap and st.del-text) }
   let block = block or heading != none or item != none
   let body = if st.del-text and st.del-blocks { body } else { redline-kept(body, block, st) }
   let (item, gap) = if body == [] { (none, false) } else { (item, gap) }
@@ -1057,7 +1094,7 @@
   // Line numbers belong to the lines of the new version.
   if apart and sys.version >= version(0, 12, 0) { set par.line(numbering: none); mark } else { mark }
   redline-restore(start)
-  if apart { parbreak() } else if gap and not unseen { h(0.25em) }
+  if apart { parbreak() } else if gap and not unseen { h(st.gap) }
 }
 
 // A change bar `len` long in `paint`, unless the style gives bars a colour.
@@ -1916,6 +1953,10 @@
   let items = (
     (redline-ins-rules([text], false, st: st), [inserted text]),
     ..if st.del-text or side { ((redline-del-rules(st: st)[text], [deleted text]),) },
+    ..if info.at("math", default: false) {(
+      (math.equation(redline-math-look("ins", $x^2$.body, st)), [inserted in a formula]),
+      ..if st.del-text or side { ((math.equation(redline-math-look("del", $x^2$.body, st)), [deleted in a formula]),) },
+    )},
     ..if st.ins-frame != none { ((frame(st.ins-frame), [inserted block]),) },
     ..if (st.del-blocks or side) and st.del-frame != none { ((frame(st.del-frame), [deleted block]),) },
     ..if not steps { ((text(fill: st.ins)[Text], [new paragraph]),) },
