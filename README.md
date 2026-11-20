@@ -12,13 +12,15 @@ The [gallery](docs/gallery.md) shows every kind of mark, each with the files it 
 
 `typst-redline` compiles with the [`typst`](https://github.com/typst/typst#installation) on your `PATH`, and uses [git](https://git-scm.com/downloads) for comparisons with commits; comparing two files needs no git.
 
-No release has been published yet, so install it with [Rust](https://rustup.rs):
+Download the archive for your platform from the [Releases page](https://github.com/cvsvensson/typst-redline/releases) (`typst-redline-<target>.tar.gz`, or `.zip` on Windows; targets are `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `x86_64-apple-darwin`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`), unpack it and put `typst-redline` in a folder on your `PATH`. `typst-redline --version` checks that it is found.
+
+Alternatively, install it with [Rust](https://rustup.rs):
 
 ```
 cargo install --git https://github.com/cvsvensson/typst-redline
 ```
 
-Run the same command with `--force` to update, and `cargo uninstall typst-redline` to remove it; the [`cargo install` documentation](https://doc.rust-lang.org/cargo/commands/cargo-install.html) says where it puts the program. `typst-redline --version` checks that it is found.
+Add `--tag v0.1.0` for a release, or run the command again with `--force` to update; `cargo uninstall typst-redline` removes it.
 
 CI runs the tests with Typst 0.15.1 on Linux, macOS and Windows, and with Typst 0.14.2 on Linux ([ci.yml](.github/workflows/ci.yml)); [Known problems](docs/known-problems.md#typst-versions) says what is known about other versions.
 
