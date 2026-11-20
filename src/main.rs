@@ -1733,7 +1733,12 @@ fn compose(
 fn pdf_pages(path: &Path) -> Option<usize> {
     let pdf = std::fs::read(path).ok()?;
     let count = |pat: &[u8]| pdf.windows(pat.len()).filter(|w| *w == pat).count();
-    let pages = count(b"/Type /Page") + count(b"/Type/Page") - count(b"/Type /Pages") - count(b"/Type/Pages");
+    let pages = ["/Type /", "/Type/"].map(|t| {
+        let t = t.as_bytes();
+        let n = |name: &[u8]| count(&[t, name].concat());
+        n(b"Page") - n(b"Pages") - n(b"PageLabel")
+    });
+    let pages = pages[0] + pages[1];
     (pages > 0).then_some(pages)
 }
 
@@ -2055,7 +2060,19 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{balanced_cuts, pick, reviewed_ref};
+    use super::{balanced_cuts, pdf_pages, pick, reviewed_ref};
+
+    #[test]
+    fn page_count_ignores_page_labels_and_the_page_tree() {
+        let path = std::env::temp_dir().join(format!("typst-redline-pages-{}.pdf", std::process::id()));
+        std::fs::write(
+            &path,
+            "<< /Type /Pages /Kids [] >> << /Type /Page >> << /Type/Page >> << /Type/Page >> << /Type/PageLabel >> << /Type /PageLabel >>",
+        )
+        .unwrap();
+        assert_eq!(pdf_pages(&path), Some(3));
+        std::fs::remove_file(&path).unwrap();
+    }
 
     #[test]
     fn picker_yields_the_chosen_file_since_before_the_chosen_commit() {

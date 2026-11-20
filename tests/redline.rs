@@ -2515,7 +2515,7 @@ fn changed_drawing_that_needs_a_finite_width_compiles() {
 
 fn pdf_pages(path: &Path) -> usize {
     let pdf = String::from_utf8_lossy(&std::fs::read(path).unwrap()).replace("/Type /Page", "/Type/Page");
-    pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count()
+    pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count() - pdf.matches("/Type/PageLabel").count()
 }
 
 #[test]
