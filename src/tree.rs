@@ -165,15 +165,19 @@ fn ls(repo: &Path, prefix: &str, args: &[&str]) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// Version control metadata of a working tree, never part of a version.
+const VCS_ENTRIES: [&str; 6] = [".git", ".jj", ".hg", ".svn", "_FOSSIL_", ".fslckout"];
+
 fn walk(dir: &Path, rel: &str, out: &mut Vec<String>) -> std::io::Result<()> {
     for e in std::fs::read_dir(dir)? {
         let e = e?;
         let name = e.file_name().to_string_lossy().to_string();
         let path = format!("{rel}{name}");
+        if VCS_ENTRIES.contains(&name.as_str()) {
+            continue;
+        }
         if e.file_type()?.is_dir() {
-            if name != ".git" {
-                walk(&e.path(), &format!("{path}/"), out)?;
-            }
+            walk(&e.path(), &format!("{path}/"), out)?;
         } else {
             out.push(path);
         }
@@ -196,4 +200,27 @@ pub fn output(cmd: &mut Command) -> Result<Vec<u8>, String> {
         return Err(format!("git: {msg}"));
     }
     Ok(out.stdout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn directory_listing_leaves_out_version_control_metadata() {
+        let dir = std::env::temp_dir().join(format!("typst-redline-vcs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".hg")).unwrap();
+        std::fs::write(dir.join(".hg/store"), "").unwrap();
+        std::fs::write(dir.join(".fslckout"), "").unwrap();
+        std::fs::write(
+            dir.join("main.typ"),
+            "Text.
+",
+        )
+        .unwrap();
+        let listed = Tree::Dir(dir.clone()).list().unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(listed, ["main.typ"]);
+    }
 }
