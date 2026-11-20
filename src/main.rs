@@ -1715,14 +1715,13 @@ fn read_deps(dir: &Path) -> Option<Vec<String>> {
 }
 
 /// Run `typst <cmd>` on the project in `dir` with the user's arguments for
-/// typst, then `args`. A query gets only the arguments that set up the
-/// document's world, not those of the export.
+/// typst, then `args`. A query gets them without those of the export.
 fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<Output, String> {
     Command::new(&a.typst)
         .args([cmd, "--root"])
         .arg(dir)
         .args(if cmd == "query" {
-            world_args(&a.typst_args)
+            without_export_args(&a.typst_args)
         } else {
             a.typst_args.clone()
         })
@@ -1736,30 +1735,36 @@ fn typst(a: &Args, dir: &Path, cmd: &str, args: &[&dyn AsRef<OsStr>]) -> Result<
         })
 }
 
-/// The arguments among `args` for `typst compile` that `typst query` takes
-/// too, with their values.
-fn world_args(args: &[String]) -> Vec<String> {
-    const WITH_VALUE: [&str; 9] = [
-        "--input",
-        "--font-path",
-        "--package-path",
-        "--package-cache-path",
-        "--creation-timestamp",
-        "-j",
-        "--jobs",
-        "--features",
-        "--diagnostic-format",
+/// `args` for `typst compile` without those that only `compile` takes, which
+/// `typst query` rejects or reads otherwise. Any other goes through, because
+/// a query without an argument that sets up the document could silently read
+/// another document than the compile.
+fn without_export_args(args: &[String]) -> Vec<String> {
+    const WITH_VALUE: [&str; 7] = [
+        "-f",
+        "--format",
+        "--pages",
+        "--pdf-standard",
+        "--ppi",
+        "--deps",
+        "--deps-format",
     ];
-    const FLAGS: [&str; 2] = ["--ignore-system-fonts", "--ignore-embedded-fonts"];
+    const OPTIONAL_VALUE: [&str; 2] = ["--open", "--timings"];
+    const FLAGS: [&str; 2] = ["--no-pdf-tags", "--pretty"];
     let mut kept = vec![];
-    let mut it = args.iter();
+    let mut it = args.iter().peekable();
     while let Some(arg) = it.next() {
-        let name = arg.split('=').next().unwrap_or_default();
-        if FLAGS.contains(&name) || WITH_VALUE.contains(&name) {
-            kept.push(arg.clone());
-            if WITH_VALUE.contains(&name) && !arg.contains('=') {
-                kept.extend(it.next().cloned());
+        let (name, inline) = arg.split_once('=').map_or((arg.as_str(), false), |(n, _)| (n, true));
+        if WITH_VALUE.contains(&name) {
+            if !inline {
+                it.next();
             }
+        } else if OPTIONAL_VALUE.contains(&name) {
+            if !inline {
+                it.next_if(|v| !v.starts_with('-'));
+            }
+        } else if !FLAGS.contains(&name) {
+            kept.push(arg.clone());
         }
     }
     kept
@@ -2303,7 +2308,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{balanced_cuts, pick, reviewed_ref};
+    use super::{balanced_cuts, pick, reviewed_ref, without_export_args};
 
     #[test]
     fn picker_yields_the_chosen_file_since_before_the_chosen_commit() {
@@ -2385,5 +2390,15 @@ mod tests {
         }
         let distinct: std::collections::HashSet<_> = names.iter().collect();
         assert_eq!(distinct.len(), names.len());
+    }
+
+    #[test]
+    fn a_query_gets_every_argument_but_those_of_the_export() {
+        let args = "--ppi 100 --font-path f --open --no-pdf-tags --pages=2 --future x --input a=b --open viewer";
+        let args: Vec<String> = args.split(' ').map(String::from).collect();
+        assert_eq!(
+            without_export_args(&args),
+            ["--font-path", "f", "--future", "x", "--input", "a=b"]
+        );
     }
 }
