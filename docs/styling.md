@@ -58,6 +58,7 @@ Two style files apply without an option, if they exist: the user's `typst-redlin
 | `del-fill` | light red | Behind deleted text where the text is light, as on a dark background; `none` for none |
 | `underline` | `0.5pt` | Line under inserted words; `none` for none |
 | `strike` | `0.065em` | Line through deleted text; `none` for none |
+| `gap` | `0.25em` | Space between deleted content and the new content that replaces it |
 | `ins-frame`, `del-frame` | `0.6pt`, `(thickness: 0.6pt, dash: "dashed")` | Frames of inserted and deleted formulas, figures and other blocks; `none` for none |
 | `block-color` | `true` | Whether changed blocks take the colour of their mark: new ones coloured, old ones tinted or crossed out |
 | `outset` | `(x: 0.4em, top: 0.3em, bottom: 0.5em)` | How far frames stand outside their block, a length or a dictionary as `rect`'s `outset` takes |
@@ -69,7 +70,7 @@ Two style files apply without an option, if they exist: the user's `typst-redlin
 | `number` | grey | Change numbers in the margin and on the summary |
 | `steps` | six colours | Colours of `--each-commit` and `--steps`, which replace `ins` and `del` |
 
-`--graphics-markup new-only` sets `del-blocks: false`, and `--graphics-markup none` also `block-color: false` and both frames to `none`; `both`, the default, sets nothing. latexdiff's default is `new-only`, but there it is an option of its own, so the types below leave graphics markup at `both`.
+`--graphics-markup new-only` sets `del-blocks: false`, and `--graphics-markup none` also `block-color: false` and both frames to `none`; `both`, the default, sets nothing. latexdiff's default is `new-only`, but there it is an option of its own, so the types below leave graphics markup at `both`. These keys and `--graphics-markup` act on formulas shown whole, in frames; the changed parts marked inside a formula take `ins`, `del`, `strike` and `del-text` as text does.
 
 A stroke takes what it leaves out from its default, and its colour from its mark (`move` for `move-stroke`): `strike: 1pt` is a thicker strike-through in the colour of `del`, `del-frame: (dash: "dotted")` a dotted frame of the default thickness, and `del: green` also makes the strike-through green. An unknown key is an error that lists the keys, and so is a value of a type the key does not take, such as `bars: 1`.
 
