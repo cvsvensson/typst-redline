@@ -19,6 +19,7 @@ The document is the `.typ` file the user names. Otherwise, take the one that is 
   - Files outside the document's folder (`#include "../x.typ"`): add `--root <folder holding all of them>`.
   - Who changed what: `--each-commit` colours each change by its commit (at most 6); for more commits, `--steps <n>` or `--steps <rev>,<rev>` colours them in groups.
   - Slides: add `--layout side-by-side` (needs Typst 0.14 or later).
+  - A long document with few changes: add `--only-changes` to keep only the pages with marks and the summary.
   - What changed since the user last reviewed it: `--since reviewed`; once they have read it, `typst-redline <file.typ> --mark-reviewed` records the last commit as reviewed.
 - `typst-redline --help` lists the rest.
 

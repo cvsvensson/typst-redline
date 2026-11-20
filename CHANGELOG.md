@@ -12,6 +12,7 @@ First release. `typst-redline` makes a PDF of the new version of a Typst documen
 - Shows moved paragraphs, list items and sections once, with a note and the same number at both places (`--no-moves` turns this off).
 - A summary at the end, on pages of its own without the document's header and footer, counts the changes by section with their numbers and pages, lists by number every change it cannot mark in place, such as a changed title string, a `#set` rule or a changed label, and, for git comparisons, the commits. A line at the top of the first page points to it.
 - With the deletions removed, the marked document has the new version's text, layout and numbering; the summary's pages do not count in the document's page total.
+- `--only-changes` keeps only the pages with marks and the summary, with their printed page numbers.
 - `--layout side-by-side` shows each page that a change covers next to its old page, for slides in particular, and ends with the same summary.
 - `--each-commit` and `--steps` colour each change by the commit or group of commits that made it.
 - `--mark-reviewed` and `--since reviewed` show what changed since a document was last read.

@@ -607,6 +607,7 @@ async function showChanges(clicked?: vscode.Uri, chosen?: Base, several = false)
     ...rootArgs,
     ...(typst ? ["--typst", typst] : []),
     ...viewArgs,
+    ...(config.get<boolean>("onlyChanges") ? ["--only-changes"] : []),
     ...extra,
   ];
   const coloured = view.colours !== "none" && !("rev" in base && base.ends);

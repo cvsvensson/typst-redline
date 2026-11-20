@@ -2515,7 +2515,7 @@ fn changed_drawing_that_needs_a_finite_width_compiles() {
 
 fn pdf_pages(path: &Path) -> usize {
     let pdf = String::from_utf8_lossy(&std::fs::read(path).unwrap()).replace("/Type /Page", "/Type/Page");
-    pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count()
+    pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count() - pdf.matches("/Type/PageLabel").count()
 }
 
 #[test]
@@ -3160,6 +3160,25 @@ fn side_by_side_shows_a_pure_move() {
     let pages = pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count();
     // The overview, the pages that show the move and the summary.
     assert_eq!(pages, 3);
+}
+
+#[test]
+fn only_changes_keeps_the_marked_pages_and_the_summary() {
+    if !typst_available() {
+        return;
+    }
+    let dir = temp_dir("only-changes");
+    let doc = |word: &str| {
+        let pages: Vec<String> = (1..=5)
+            .map(|i| format!("Page {i} {}.", if i == 3 { word } else { "stays" }))
+            .collect();
+        format!("#set page(height: 6cm)\n{}\n", pages.join("\n#pagebreak()\n"))
+    };
+    std::fs::write(dir.join("old.typ"), doc("before")).unwrap();
+    std::fs::write(dir.join("new.typ"), doc("after")).unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ", "-o", "out.pdf", "--only-changes"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(pdf_pages(&dir.join("out.pdf")), 2);
 }
 
 #[test]

@@ -100,6 +100,12 @@
           "scope": "resource",
           "description": "Project root passed as --root, absolute or relative to the workspace folder of the file. Empty: that workspace folder, or the git repository of the file if the workspace folder contains it, or the file's directory if it is in no workspace folder."
         },
+        "typstRedline.onlyChanges": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Keep only the pages with marks and the summary in the marked view (`--only-changes`)."
+        },
         "typstRedline.extraArgs": {
           "type": "array",
           "items": { "type": "string" },

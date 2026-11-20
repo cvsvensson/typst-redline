@@ -85,6 +85,10 @@ A change inside a content argument in brackets, such as a template's `abstract: 
 
 The summary is set in the document's font, without its template, header, footer, foreground or background, on pages at least as wide as the document's. Its pages do not count in the document's page total, so a footer such as *page 3 of 12* reads as in the new version.
 
+## Only the changed pages
+
+With `--only-changes`, the PDF has only the pages that carry a mark, including the old place of moved text, and the summary. A page whose only change is listed on the summary, such as one that a changed `#set` rule redraws, is left out. The pointer line on the first page, if that page is kept, says that the summary is at the end, and pages without a printed number are named by their place in the full PDF.
+
 ## Who changed what
 
 The same comparison with `--each-commit`: each change has the colour of the commit that made it, and the commits are listed in their colours in the bottom margin and on the summary page.

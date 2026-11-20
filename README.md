@@ -77,6 +77,14 @@ The last page, or pages, list every change by its number, section by section, an
 
 <img src="docs/report-summary.png" width="480" alt="The summary page: a sentence with the number of changes, a table of changed sections with the numbers of their changes, counts and pages, a changed title shown as old and new text, a new bibliography entry, the commits in the range, and the legend">
 
+## Only the changed pages
+
+`--only-changes` leaves out the pages without a mark and keeps the summary, for a long document with a few changes. The pages keep the numbers printed on them; a page without a printed number is named by its place in the full PDF, such as *page 8 of the full PDF*. It needs Typst 0.12 or later.
+
+```
+typst-redline thesis.typ --since sent-to-anna --only-changes
+```
+
 ## Slides and side by side
 
 `--layout side-by-side` shows each changed page of the old version next to the same page of the new version, leaves out pages without changes, and ends with the summary. Use it for slides: in the default layout, deleted content takes room on the page, so a full slide overflows. It needs Typst 0.14 or later and an old version that compiles; the default layout falls back to coarser marks instead.

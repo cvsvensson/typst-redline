@@ -48,10 +48,11 @@ Each of these was tried with the current version. Within each group, the ones a 
 ## Files and the command line
 
 - Package files are not checked for changes.
+- `--only-changes` leaves out a page whose only change is listed on the summary, such as a page that a changed `#set` rule or a reflow redraws.
 - Two plain files whose projects need different roots, such as two copies of a project that use paths starting with `/`, cannot be compared, because `--root` is one folder for both; comparing git revisions of the project works.
 
 ## Typst versions
 
 - The tests run with Typst 0.15.1 and 0.14.2 and also pass with 0.11.1; Typst 0.12 and 0.13 are not tested.
-- With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked.
+- With Typst 0.11, `--only-changes` does not work. With Typst 0.11 to 0.13, side by side does not work, and a changed file that the document reads only through a computed path, such as `#include name + ".typ"`, is neither marked nor listed; the summary says that such files were not checked.
 - With Typst 0.11, the summary is laid out on the document's pages, with its header and footer, right-to-left text gets no bars, and a changed drawing that needs a finite width causes the coarser marks described above.
