@@ -1,4 +1,5 @@
-// typst-redline: how changes look. To restyle, pass a file of your own with
+// typst-redline: how changes look. --style and --type change the values in
+// `redline-defaults`; to restyle otherwise, pass a file of your own with
 // --preamble. The marked files import four names from it:
 // - redline-ins(body, block: false): inserted content; `block` when it is a
 //   whole paragraph, item, heading or code expression.
@@ -59,54 +60,108 @@
 // the old version has. The composite of both calls
 // redline-side-by-side(info) (see there).
 
-#let redline-style = {
-  let (ins, del) = (rgb("#1565c0"), rgb("#c62828"))
-  (
-    ins: ins,
-    ins-fill: rgb("#d8eaff"),
-    del: del,
-    // Behind deleted text on a dark background.
-    del-fill: rgb("#fde4e4"),
-    // As thick as the text is large, so that it does not cover small text.
-    strike: 0.065em + del,
-    // Frames of block-level elements, this far outside them. A block ends
-    // at the baseline of its last line: the frame clears the descenders.
-    ins-frame: 0.6pt + ins,
-    del-frame: (paint: del, thickness: 0.6pt, dash: "dashed"),
-    outset: (x: 0.4em, top: 0.3em, bottom: 0.5em),
-    // Change bars sit this far outside the text area, at most half the
-    // margin; deletion bars one lane further out, so that the two never
-    // touch.
-    bar-gap: 0.5cm,
-    bar-width: 2pt,
-    del-bar-width: 1.5pt,
-    lane: 3.5pt,
-    // Brackets and lines of moved text.
-    move: luma(110),
-    move-stroke: 0.8pt,
-    // The numbers of changes, in the margin and on the summary.
-    number: luma(110),
-    // With --each-commit, the colour of each commit: Okabe–Ito hues, darkened
-    // where needed to read as text on white.
-    steps: (rgb("#0072b2"), rgb("#d55e00"), rgb("#007a5a"), rgb("#a8508a"), rgb("#9a6800"), rgb("#2f8fce")),
-  )
+// The defaults of the style. The binary passes the dictionaries given with
+// --type and --style as `--input redline-type=NAME` and `--input
+// redline-style=(dict, ...)`; their keys replace these, and a dictionary
+// value is merged into a dictionary one. A stroke without a paint takes the
+// colour of its kind of mark (`redline-paint`), so that `del: green` also
+// colours the strike-through.
+#let redline-defaults = (
+  ins: rgb("#1565c0"),
+  // Behind inserted text: `none` for no highlight.
+  ins-fill: rgb("#d8eaff"),
+  del: rgb("#c62828"),
+  // Behind deleted text on a dark background.
+  del-fill: rgb("#fde4e4"),
+  // Under inserted text, or none.
+  underline: 0.5pt,
+  // Through deleted text, or none; as thick as the text is large, so that
+  // it does not cover small text.
+  strike: 0.065em,
+  // Frames of block-level elements, this far outside them. A block ends
+  // at the baseline of its last line: the frame clears the descenders.
+  ins-frame: 0.6pt,
+  del-frame: (thickness: 0.6pt, dash: "dashed"),
+  outset: (x: 0.4em, top: 0.3em, bottom: 0.5em),
+  // Change bars, drawn or not. They sit this far outside the text area, at
+  // most half the margin; deletion bars one lane further out, so that the
+  // two never touch.
+  bars: true,
+  bar-gap: 0.5cm,
+  bar-width: 2pt,
+  del-bar-width: 1.5pt,
+  lane: 3.5pt,
+  // Brackets and lines of moved text.
+  move: luma(110),
+  move-stroke: 0.8pt,
+  // The numbers of changes, in the margin and on the summary.
+  number: luma(110),
+  // With --each-commit, the colour of each commit: Okabe–Ito hues, darkened
+  // where needed to read as text on white.
+  steps: (rgb("#0072b2"), rgb("#d55e00"), rgb("#007a5a"), rgb("#a8508a"), rgb("#9a6800"), rgb("#2f8fce")),
+)
+
+// The markup styles of latexdiff's --type that keep deleted text and the
+// layout of the new version. Typst has no wavy underline.
+#let redline-types = (
+  underline: (ins-fill: none, bars: false),
+  culinechbar: (ins-fill: none),
+  color: (ins-fill: none, underline: none, bars: false),
+  cchangebar: (ins-fill: none, underline: none, strike: none),
+  // latexdiff leaves deleted text out.
+  changebar: (ins: black, del: black, ins-fill: none, underline: none),
+)
+
+// The style as given, before strokes take their colours.
+#let redline-given = {
+  let st = redline-defaults
+  let parts = ()
+  let name = sys.inputs.at("redline-type", default: none)
+  if name != none {
+    assert(lower(name) in redline-types, message: "--type " + name + ": no such type; the types are " + redline-types.keys().map(upper).join(", "))
+    parts.push(redline-types.at(lower(name)))
+  }
+  let given = sys.inputs.at("redline-style", default: none)
+  if given != none { parts += eval(given) }
+  for part in parts {
+    assert(type(part) == dictionary, message: "--style: " + repr(part) + " is not a dictionary such as (del: green)")
+    for (k, v) in part {
+      assert(k in st, message: "--style: no key " + k + "; the keys are " + st.keys().join(", "))
+      st.insert(k, if type(st.at(k)) == dictionary and type(v) == dictionary { st.at(k) + v } else { v })
+    }
+  }
+  st
 }
 
-// The colours of marks in one colour.
-#let redline-colours(c) = (
+// Stroke `s` in colour `c` unless it has a paint of its own.
+#let redline-paint(s, c) = if s == none { none } else {
+  let s = stroke(s)
+  if s.paint != auto { return s }
+  let given = (thickness: s.thickness, cap: s.cap, join: s.join, dash: s.dash, miter-limit: s.miter-limit)
+  stroke(paint: c, ..given.pairs().filter(((_, v)) => v != auto).to-dict())
+}
+
+#let redline-resolve(st) = st + (
+  underline: redline-paint(st.underline, st.ins),
+  strike: redline-paint(st.strike, st.del),
+  ins-frame: redline-paint(st.ins-frame, st.ins),
+  del-frame: redline-paint(st.del-frame, st.del),
+)
+
+#let redline-style = redline-resolve(redline-given)
+
+// The style with marks in one colour.
+#let redline-colours(c) = redline-resolve(redline-given + (
   ins: c,
-  ins-fill: c.lighten(80%),
+  ins-fill: if redline-given.ins-fill != none { c.lighten(80%) },
   del: c,
   del-fill: c.lighten(85%),
-  strike: 0.065em + c,
-  ins-frame: 0.6pt + c,
-  del-frame: (paint: c, thickness: 0.6pt, dash: "dashed"),
-)
+))
 
 // The style of the marks of a step, or the plain style for none.
 #let redline-step-style(step) = if step == none { redline-style } else {
   let cs = redline-style.steps
-  redline-style + redline-colours(cs.at(calc.rem(step - 1, cs.len())))
+  redline-colours(cs.at(calc.rem(step - 1, cs.len())))
 }
 
 // The tool's own bookkeeping: an update of the state "redline", which the
@@ -461,7 +516,7 @@
 #let redline-ins-rules(body, block, st: redline-style) = {
   if block { return context redline-fill(if redline-light-text() { st.ins.lighten(60%) } else { st.ins }, body) }
   show: redline-fill.with(st.ins)
-  let stroke = (bottom: 0.5pt + st.ins)
+  let stroke = (bottom: st.underline)
   // A box keeps a fill behind math but stops it from breaking across lines.
   // It reaches as far up and down as the highlight of the text around it,
   // from the ascender to the descender of the text's font, which inside
@@ -644,10 +699,10 @@
     let s = measure(it)
     box({
       it
-      place(top + left, dy: s.height / 2, line(length: s.width, stroke: st.strike))
+      if st.strike != none { place(top + left, dy: s.height / 2, line(length: s.width, stroke: st.strike)) }
     })
   }
-  let struck = redline-fill(st.del, strike(stroke: st.strike, body))
+  let struck = redline-fill(st.del, if st.strike == none { body } else { strike(stroke: st.strike, body) })
   // On a dark background, a light one of its own keeps it legible.
   context if redline-light-text() { highlight(fill: st.del-fill, struck) } else { struck }
 }
@@ -1110,7 +1165,7 @@
   }
   // A deletion bar is thinner and dashed, with whole dashes at its ends and
   // at least three, so that a short one does not read as a colon.
-  for (x, y0, y1, ins, paint) in merged {
+  for (x, y0, y1, ins, paint) in merged.filter(_ => st.bars) {
     let len = calc.max(y1 - y0, 0pt)
     let k = calc.max(3, calc.round((len + 1.5pt) / 4.5pt))
     let space = calc.min(1.5pt, len / (2 * k))
@@ -1745,7 +1800,7 @@
 // Each kind of mark drawn as on the pages, with a few words.
 #let redline-marks-legend(info) = {
   let steps = info.at("history", default: (steps: false)).steps
-  let st = if steps { redline-style + redline-colours(luma(70)) } else { redline-style }
+  let st = if steps { redline-colours(luma(70)) } else { redline-style }
   let frame(stroke) = box(width: 1.4em, height: 0.75em, stroke: stroke)
   let bar(paint, width, dash) = box(height: 0.9em, baseline: 0.1em, line(angle: 90deg, length: 0.9em, stroke: (paint: paint, thickness: width, dash: dash)))
   let items = (
@@ -1754,7 +1809,7 @@
     (frame(st.ins-frame), [inserted block]),
     (frame(st.del-frame), [deleted block]),
     ..if not steps { ((text(fill: st.ins)[Text], [new paragraph]),) },
-    ([#bar(st.ins, st.bar-width, none)#h(3pt)#bar(st.del, st.del-bar-width, (2.5pt, 1.5pt))], [changed lines]),
+    ..if st.bars { (([#bar(st.ins, st.bar-width, none)#h(3pt)#bar(st.del, st.del-bar-width, (2.5pt, 1.5pt))], [changed lines]),) },
     (text(fill: redline-style.number)[3], [change number]),
   )
   if info.at("moved", default: 0) > 0 {
@@ -1948,7 +2003,7 @@
   let row-page(ps, r) = if ps.len() > 0 { ps.at(calc.min(r, ps.len() - 1)) }
   let hist = info.at("history", default: none)
   let steps = hist != none and hist.steps
-  let sample = if steps { st + redline-colours(luma(70)) } else { st }
+  let sample = if steps { redline-colours(luma(70)) } else { st }
   set page(width: auto, height: auto, margin: gap)
   set text(size: size)
   // The first page is as large as what it says.
