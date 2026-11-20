@@ -2202,8 +2202,11 @@ fn pick(
                 None => files[i].clone(),
             })
             .collect();
-        match choose(input, out, true, "Typst files in this folder:", &entries).map_err(io)? {
-            Some(k) => files[order[k]].clone(),
+        let one = |k: &[usize], side| {
+            (k.len() > 1 || side).then(|| format!("Give one number from 1 to {}, or q to quit.", entries.len()))
+        };
+        match choose(input, out, true, "Typst files in this folder:", &entries, one).map_err(io)? {
+            Some((k, _)) => files[order[k[0]]].clone(),
             None => return Ok(None),
         }
     };
@@ -2269,26 +2272,53 @@ fn pick(
         });
     }
     let labels: Vec<&str> = entries.iter().map(|(l, _)| l.as_str()).collect();
-    let title = format!("Show the changes to {file}.\nA commit stands for its own change and every change after it.");
-    let Some(k) = choose(input, out, documents == 1, &title, &labels).map_err(io)? else {
+    let title = format!(
+        "Show the changes to {file}.\nA commit stands for its own change and every change after it.\n\
+         Several numbers colour each one's changes on their own; add s for side by side."
+    );
+    let reviewed = entries[0].1.as_deref() == Some("reviewed");
+    let check = |k: &[usize], _| {
+        if k.len() > MAX_STEPS {
+            Some(format!("Give at most {MAX_STEPS} numbers."))
+        } else if reviewed && k.len() > 1 && k[0] == 0 {
+            Some("The last reviewed version can only be shown on its own.".into())
+        } else {
+            None
+        }
+    };
+    let Some((k, side)) = choose(input, out, documents == 1, &title, &labels, check).map_err(io)? else {
         return Ok(None);
     };
-    let since = entries.swap_remove(k).1;
-    Ok(Some(
-        [vec![file], since.map_or(vec![], |s| vec!["--since".into(), s])].concat(),
-    ))
+    // The entries are newest first; the oldest picked one starts the
+    // comparison and each newer one starts a step.
+    let mut bases = k.iter().rev().map(|&i| entries[i].1.clone());
+    let mut args = vec![file];
+    if let Some(since) = bases.next().flatten() {
+        args.extend(["--since".into(), since]);
+    }
+    let steps: Vec<String> = bases.map(|b| b.unwrap_or("HEAD".into())).collect();
+    if !steps.is_empty() {
+        args.extend(["--steps".into(), steps.join(",")]);
+    }
+    if side {
+        args.extend(["--layout".into(), "side-by-side".into()]);
+    }
+    Ok(Some(args))
 }
 
 /// Print `title` and the numbered `entries` on `out`, after how to get help
-/// and quit if this is the `first` question, and read the number of one from
-/// `input`; Enter alone takes the first. `None` if the input ends or is `q`.
+/// and quit if this is the `first` question, and read from `input` the
+/// numbers of entries, in increasing order, and whether `s` is among them;
+/// Enter alone takes the first. `check` says what is wrong with an answer.
+/// `None` if the input ends or is `q`.
 fn choose(
     input: &mut impl BufRead,
     out: &mut impl Write,
     first: bool,
     title: &str,
     entries: &[impl AsRef<str>],
-) -> std::io::Result<Option<usize>> {
+    check: impl Fn(&[usize], bool) -> Option<String>,
+) -> std::io::Result<Option<(Vec<usize>, bool)>> {
     if first {
         writeln!(out, "typst-redline --help lists the options; q quits.")?;
     }
@@ -2304,18 +2334,33 @@ fn choose(
             writeln!(out)?;
             return Ok(None);
         }
-        match line.trim() {
-            "" => return Ok(Some(0)),
-            "q" | "Q" => return Ok(None),
-            s => {
-                if let Ok(n @ 1..) = s.parse::<usize>()
-                    && n <= entries.len()
-                {
-                    return Ok(Some(n - 1));
-                }
+        if matches!(line.trim(), "q" | "Q") {
+            return Ok(None);
+        }
+        let (mut picked, mut side, mut valid) = (vec![], false, true);
+        for w in line
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|w| !w.is_empty())
+        {
+            match (w, w.parse::<usize>()) {
+                ("s" | "S", _) => side = true,
+                (_, Ok(n @ 1..)) if n <= entries.len() => picked.push(n - 1),
+                _ => valid = false,
             }
         }
-        writeln!(out, "Give a number from 1 to {}, or q to quit.", entries.len())?;
+        if picked.is_empty() {
+            picked.push(0);
+        }
+        picked.sort();
+        picked.dedup();
+        let problem = match valid {
+            true => check(&picked, side),
+            false => Some(format!("Give a number from 1 to {}, or q to quit.", entries.len())),
+        };
+        match problem {
+            None => return Ok(Some((picked, side))),
+            Some(p) => writeln!(out, "{p}")?,
+        }
     }
 }
 
@@ -2462,6 +2507,15 @@ mod tests {
         std::fs::write(dir.join("a-chapter.typ"), "Changed.\n").unwrap();
         let picked = pick(&mut "2\n2\n".as_bytes(), &mut vec![], &dir, None, false).unwrap();
         assert_eq!(picked.unwrap(), ["b.typ", "--since", before.as_str()]);
+        // Several numbers make a step of each; s asks for side by side.
+        let picked = pick(&mut "2\n1, 2\n".as_bytes(), &mut vec![], &dir, None, false).unwrap();
+        assert_eq!(
+            picked.unwrap(),
+            ["b.typ", "--since", before.as_str(), "--steps", "HEAD"]
+        );
+        let picked = pick(&mut "2\n2 s\n".as_bytes(), &mut vec![], &dir, None, false).unwrap();
+        let side = ["b.typ", "--since", before.as_str(), "--layout", "side-by-side"];
+        assert_eq!(picked.unwrap(), side);
         // With the root above it, a document includes files outside its folder.
         std::fs::create_dir(dir.join("sub")).unwrap();
         std::fs::write(dir.join("sub/main.typ"), "#include \"/b.typ\"\n").unwrap();

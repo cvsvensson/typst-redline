@@ -40,6 +40,7 @@ Using paper.typ, the only Typst document in this folder.
 typst-redline --help lists the options; q quits.
 Show the changes to paper.typ.
 A commit stands for its own change and every change after it.
+Several numbers colour each one's changes on their own; add s for side by side.
    1  the last reviewed version
    2  changes since the last commit
    3  8e8568b  2026-11-19  Revise the body
@@ -48,7 +49,7 @@ Number [1]: 4
 typst-redline paper.typ --since 833bb8f
 ```
 
-Enter takes the first entry and `q` quits. Other options, such as `--layout side-by-side`, apply as given.
+Enter takes the first entry and `q` quits. Several numbers, such as `2 4`, show the changes from the oldest of them on and colour each one's changes on their own, as `--steps` does: here `--since 833bb8f --steps HEAD`. The last reviewed version can only be shown alone. An `s` in the answer, alone or with numbers, adds `--layout side-by-side`. Other options, such as `--layout side-by-side`, apply as given.
 
 Without git, compare two copies; quote paths that contain spaces:
 
