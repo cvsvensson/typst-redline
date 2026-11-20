@@ -79,6 +79,8 @@
   // Through deleted text, or none; as thick as the text is large, so that
   // it does not cover small text.
   strike: 0.065em,
+  // Between deleted content and the new content that replaces it.
+  gap: 0.25em,
   // Frames of block-level elements, this far outside them. A block ends
   // at the baseline of its last line: the frame clears the descenders.
   ins-frame: 0.6pt,
@@ -961,25 +963,35 @@
   parbreak()
 }
 
-// A change inside a formula: `body` is an inline equation whose body is laid
-// out as part of the formula around it, in its style and spacing. Strikes,
+// The look of math `b` inserted or deleted inside a formula. Strikes,
 // highlights and boxes do not reach into math, so deleted math is crossed
 // out with a line, each piece between line breaks and alignment points on
-// its own, and both are coloured; the bar marks the line. Nothing deleted
-// leaves nothing in the formula.
-#let redline-math(kind, body, st, step, id) = {
-  let b = if type(body) == content and body.func() == math.equation { body.body } else { body }
+// its own, and both are coloured. A deleted piece is ordinary math, so that
+// an operator inserted after it is spaced as one; `gap` sets it apart
+// inside, as a space after it would make that operator a sign.
+#let redline-math-look(kind, b, st, gap: false) = {
   let breaks = (linebreak, $&$.body.func())
-  let cross(run) = if run.any(c => c != [ ]) { math.cancel(redline-neutral(run.join()), stroke: st.strike) } else { run.join() }
+  let cross(run, gap) = if run.any(c => c != [ ]) or gap {
+    let c = redline-neutral(run.join())
+    math.class("normal", if st.strike != none { math.cancel(c, stroke: st.strike) } else { c } + if gap { h(st.gap) })
+  }
   let shown = if kind == "ins" or b == [] { b } else {
     let (out, run) = ([], ())
     for c in if b.func() == [].func() { b.children } else { (b,) } {
-      if c.func() in breaks { out += cross(run) + c; run = () } else { run.push(c) }
+      if c.func() in breaks { out += cross(run, false) + c; run = () } else { run.push(c) }
     }
-    out + cross(run)
+    out + cross(run, gap)
   }
-  redline-tag(kind, -0.8em, step: step, id: id)
   redline-fill(if kind == "del" { st.del } else { st.ins }, shown)
+}
+
+// A change inside a formula: `body` is an inline equation whose body is laid
+// out as part of the formula around it, in its style and spacing; the bar
+// marks the line. Nothing deleted leaves nothing in the formula.
+#let redline-math(kind, body, st, step, id, gap: false) = {
+  let b = if type(body) == content and body.func() == math.equation { body.body } else { body }
+  redline-tag(kind, -0.8em, step: step, id: id)
+  redline-math-look(kind, b, st, gap: gap)
   context redline-tag("end", 0.3em, width: 0pt)
 }
 
@@ -1042,7 +1054,7 @@
   if redline-side != none and move != none { return }
   if redline-side != none { return redline-side-mark("del", body, id: id, block: block or heading != none or item != none) }
   if move != none { return redline-move-line(move, body, step) }
-  if math { return redline-math("del", body, st, step, id) + if gap { h(0.2em) } }
+  if math { return redline-math("del", if st.del-text { body } else { [] }, st, step, id, gap: gap and st.del-text) }
   let block = block or heading != none or item != none
   let body = if st.del-text and st.del-blocks { body } else { redline-kept(body, block, st) }
   let (item, gap) = if body == [] { (none, false) } else { (item, gap) }
@@ -1080,7 +1092,7 @@
   // Line numbers belong to the lines of the new version.
   if apart and sys.version >= version(0, 12, 0) { set par.line(numbering: none); mark } else { mark }
   redline-restore(start)
-  if apart { parbreak() } else if gap and not unseen { h(0.25em) }
+  if apart { parbreak() } else if gap and not unseen { h(st.gap) }
 }
 
 // A change bar `len` long in `paint`, unless the style gives bars a colour.
@@ -1939,6 +1951,10 @@
   let items = (
     (redline-ins-rules([text], false, st: st), [inserted text]),
     ..if st.del-text or side { ((redline-del-rules(st: st)[text], [deleted text]),) },
+    ..if info.at("math", default: false) {(
+      (math.equation(redline-math-look("ins", $x^2$.body, st)), [inserted in a formula]),
+      ..if st.del-text or side { ((math.equation(redline-math-look("del", $x^2$.body, st)), [deleted in a formula]),) },
+    )},
     ..if st.ins-frame != none { ((frame(st.ins-frame), [inserted block]),) },
     ..if (st.del-blocks or side) and st.del-frame != none { ((frame(st.del-frame), [deleted block]),) },
     ..if not steps { ((text(fill: st.ins)[Text], [new paragraph]),) },

@@ -210,6 +210,12 @@ fn side_by_side_pairs_a_line_inserted_in_an_aligned_formula() {
 }
 
 #[test]
+fn legend_shows_marks_inside_formulas_where_there_are_some() {
+    assert!(body("math-parts").contains(" math: true,"));
+    assert!(!body("display-label").contains(" math: true,"));
+}
+
+#[test]
 fn rewritten_formula_and_deleted_line_break_are_marked_whole() {
     let out = body("math-parts");
     assert!(

@@ -74,7 +74,7 @@ From the top:
 - **Not marked in place**: each change that has no mark on the pages, after its number, said in words with old in red and new in blue where it can be, and its source. Bibliography entries that appear, disappear or change are listed here too.
 - **What this PDF shows differently**: notes on where this PDF differs from a plain proof, for example pages without bars or coarser marks; see [Known problems](known-problems.md).
 - **Commits**: for a comparison with git, the commits between the two versions that change the document or a file it reads.
-- **How changes are marked**: the legend, a sample of each kind of mark.
+- **How changes are marked**: the legend, a sample of each kind of mark; those of marks inside formulas and of moved text only where the document has them.
 
 What is listed rather than marked:
 

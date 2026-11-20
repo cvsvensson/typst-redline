@@ -58,6 +58,7 @@ Two style files apply without an option, if they exist: the user's `typst-redlin
 | `del-fill` | light red | Behind deleted text where the text is light, as on a dark background; `none` for none |
 | `underline` | `0.5pt` | Line under inserted words; `none` for none |
 | `strike` | `0.065em` | Line through deleted text; `none` for none |
+| `gap` | `0.25em` | Space between deleted content and the new content that replaces it |
 | `ins-frame`, `del-frame` | `0.6pt`, `(thickness: 0.6pt, dash: "dashed")` | Frames of inserted and deleted formulas, figures and other blocks; `none` for none |
 | `block-color` | `true` | Whether changed blocks take the colour of their mark: new ones coloured, old ones tinted or crossed out |
 | `outset` | `(x: 0.4em, top: 0.3em, bottom: 0.5em)` | How far frames stand outside their block, a length or a dictionary as `rect`'s `outset` takes |

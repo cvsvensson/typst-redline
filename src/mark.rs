@@ -464,6 +464,8 @@ struct Writer<'a> {
     hoisted: Option<String>,
     /// The edges of the change being written that touch CJK text.
     bare: Bare,
+    /// Changes are marked inside a formula somewhere.
+    math_marks: bool,
 }
 
 /// The edges of a change at which a CJK character meets the text on the
@@ -665,6 +667,7 @@ impl<'a> Writer<'a> {
             arrived: HashMap::new(),
             content_code: false,
             hoisted: None,
+            math_marks: false,
             bare: Bare::default(),
         }
     }
@@ -1159,7 +1162,7 @@ impl<'a> Writer<'a> {
             match self.ctx.moves.len() {
                 0 => String::new(),
                 n => format!(" moved: {n},"),
-            },
+            } + if self.math_marks { " math: true," } else { "" },
             bib.to_typst(),
         )
     }
@@ -2152,13 +2155,14 @@ impl<'a> Writer<'a> {
     /// most of the formula changed, which reads better as the formula
     /// replaced whole, or a change cannot be marked inside it.
     fn diff_math(&mut self, o: &SyntaxNode, n: &SyntaxNode) -> bool {
-        let outer = std::mem::take(&mut self.bare);
+        let (outer, count) = (std::mem::take(&mut self.bare), self.changes.len());
         let mut kept = 0;
         let ok = self.attempt(|w| {
             w.math_nodes(o, n, &mut kept)
                 && 2 * kept >= math_size(std::slice::from_ref(o)).max(math_size(std::slice::from_ref(n)))
         });
         self.bare = outer;
+        self.math_marks |= self.changes.len() > count;
         ok
     }
 
