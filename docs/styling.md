@@ -60,11 +60,12 @@ Two style files apply without an option, if they exist: the user's `typst-redlin
 | `strike` | `0.065em` | Line through deleted text; `none` for none |
 | `gap` | `0.25em` | Space between deleted content and the new content that replaces it |
 | `ins-frame`, `del-frame` | `0.6pt`, `(thickness: 0.6pt, dash: "dashed")` | Frames of inserted and deleted formulas, figures and other blocks; `none` for none |
+| `cross` | `0.75pt` | Lines that cross out deleted pictures, in a lighter `del`; `none` for none |
 | `block-color` | `true` | Whether changed blocks take the colour of their mark: new ones coloured, old ones tinted or crossed out |
 | `outset` | `(x: 0.4em, top: 0.3em, bottom: 0.5em)` | How far frames stand outside their block, a length or a dictionary as `rect`'s `outset` takes |
 | `del-text`, `del-blocks` | `true`, `true` | Whether deleted text, and deleted formulas, figures, tables, code blocks and drawings, are shown; `false` leaves them out, and their bar and number stay |
 | `bars` | `auto` | Change bars: `auto` in the colour of their mark, a colour for all bars, or `none`; the change numbers stay |
-| `bar-width`, `del-bar-width` | `2pt`, `1.5pt` | Thickness of insertion and deletion bars |
+| `bar-width`, `del-bar-width` | `2pt`, `1.5pt` | Thickness of insertion and deletion bars; the dashes of a deletion bar scale with it |
 | `bar-gap`, `lane` | `0.5cm`, `3.5pt` | Distance of the bars from the text, and between bars of different kinds |
 | `move`, `move-stroke` | grey, `0.8pt` | Brackets and lines of moved text |
 | `number` | grey | Change numbers in the margin and on the summary |
@@ -72,7 +73,7 @@ Two style files apply without an option, if they exist: the user's `typst-redlin
 
 `--graphics-markup new-only` sets `del-blocks: false`, and `--graphics-markup none` also `block-color: false` and both frames to `none`; `both`, the default, sets nothing. latexdiff's default is `new-only`, but there it is an option of its own, so the types below leave graphics markup at `both`. These keys and `--graphics-markup` act on formulas shown whole, in frames; the changed parts marked inside a formula take `ins`, `del`, `strike` and `del-text` as text does.
 
-A stroke takes what it leaves out from its default, and its colour from its mark (`move` for `move-stroke`): `strike: 1pt` is a thicker strike-through in the colour of `del`, `del-frame: (dash: "dotted")` a dotted frame of the default thickness, and `del: green` also makes the strike-through green. An unknown key is an error that lists the keys, and so is a value of a type the key does not take, such as `bars: 1`.
+A stroke takes what it leaves out from its default, and its colour from its mark (`move` for `move-stroke`, a lighter `del` for `cross`): `strike: 1pt` is a thicker strike-through in the colour of `del`, `del-frame: (dash: "dotted")` a dotted frame of the default thickness, and `del: green` also makes the strike-through green. An unknown key is an error that lists the keys, and so is a value of a type the key does not take, such as `bars: 1`.
 
 ## latexdiff types
 

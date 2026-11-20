@@ -4089,24 +4089,38 @@ fn set_rule_of_a_show_rule_is_listed_with_it() {
     assert_eq!(texts, ["show emph: set text(fill: blue)"]);
 }
 
-#[test]
-fn a_style_colours_the_strike_through_too() {
-    let r = redline_of("Old words.\n", "New words.\n");
+/// The first page of the marked document as SVG, with the style `style`.
+fn styled_svg(name: &str, style: &str, old: &str, new: &str) -> Option<String> {
+    let r = redline_of(old, new);
     let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
-    let Some(dir) = compile("style-input", &files) else {
-        return;
-    };
+    let dir = compile(name, &files)?;
     let out = Command::new("typst")
         .args(["compile", "--root"])
         .arg(&*dir)
-        .args(["--input", r##"redline-style=(("test", (del: rgb("#00c000"))),)"##])
+        .args(["--input", &format!("redline-style=((\"test\", {style}),)")])
         .arg(dir.join("main.typ"))
         .arg(dir.join("page-{n}.svg"))
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let svg = std::fs::read_to_string(dir.join("page-1.svg")).unwrap();
-    assert!(svg.contains(r##"stroke="#00c000""##));
+    Some(std::fs::read_to_string(dir.join("page-1.svg")).unwrap())
+}
+
+#[test]
+fn a_style_colours_the_strike_through_too() {
+    let style = r##"(del: rgb("#00c000"))"##;
+    if let Some(svg) = styled_svg("style-input", style, "Old words.\n", "New words.\n") {
+        assert!(svg.contains(r##"stroke="#00c000""##));
+    }
+}
+
+#[test]
+fn a_style_sets_the_cross_over_a_deleted_picture() {
+    let old = "Text.\n\n#rect(width: 2cm, height: 2cm)\n";
+    let style = r##"(cross: rgb("#00c000"))"##;
+    if let Some(svg) = styled_svg("style-cross", style, old, "Text.\n") {
+        assert!(svg.contains(r##"stroke="#00c000""##));
+    }
 }
 
 #[test]
