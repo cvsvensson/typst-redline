@@ -3977,7 +3977,11 @@ fn an_unknown_style_key_or_a_value_of_another_type_is_an_error() {
             ["--style", "bars=1"],
             "error: --style bars=1: bars takes auto, color or none",
         ),
-        (["-t", "wavy"], "error: --type wavy: no such type"),
+        (["-t", "wavy"], "error: --type wavy: no type wavy"),
+        (
+            ["--graphics-markup", "all"],
+            "error: --graphics-markup all: no graphics-markup all",
+        ),
     ] {
         let out = cli(&dir, &[&["old.typ", "new.typ"], &args[..]].concat());
         let stderr = String::from_utf8_lossy(&out.stderr);

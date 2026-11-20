@@ -60,10 +60,10 @@
 // the old version has. The composite of both calls
 // redline-side-by-side(info) (see there).
 
-// The defaults of the style. The binary passes style files, --type and
-// --style as `--input redline-style=((label, part), ...)`, where a part is a
-// dictionary of keys or a string that names one of `redline-types`, as a
-// dictionary's key `type` does; their keys replace these in order. A stroke takes the
+// The defaults of the style. The binary passes style files, --type,
+// --graphics-markup and --style as `--input redline-style=((label, part),
+// ...)`, where a part is a dictionary of keys, some of which can name a set
+// of others (`redline-presets`); their keys replace these in order. A stroke takes the
 // fields it leaves out from its default, and its paint from the colour that
 // `redline-strokes` names, so that `del: green` also colours the
 // strike-through.
@@ -121,6 +121,19 @@
   changebar: (ins: black, del: black, ins-fill: none, underline: none, del-text: false, del-blocks: false),
 )
 
+// latexdiff's --graphics-markup for changed formulas, figures, tables, code
+// blocks and drawings.
+#let redline-graphics = (
+  both: (:),
+  new-only: (del-blocks: false),
+  "none": (del-blocks: false, block-color: false, ins-frame: none, del-frame: none),
+)
+
+// Keys that name a set of other keys, which apply first, in any case and
+// also in latexdiff's other spellings.
+#let redline-presets = (type: redline-types, graphics-markup: redline-graphics)
+#let redline-aliases = ("0": "none", "off": "none", "1": "new-only", "2": "both")
+
 // Keys that hold a stroke, with the key of the colour it takes when it has
 // none of its own.
 #let redline-strokes = (underline: "ins", strike: "del", ins-frame: "ins", del-frame: "del", move-stroke: "move")
@@ -140,17 +153,17 @@
   let st = redline-defaults
   let given = sys.inputs.at("redline-style", default: none)
   let parts = if given != none { eval(given) } else { () }
-  let parts = parts.map(((label, part)) => if type(part) == dictionary and "type" in part {
-    let keys = part
-    ((label, keys.remove("type")), (label, keys))
-  } else { ((label, part),) }).join(default: ())
   for (label, part) in parts {
-    let part = if type(part) != str { part } else {
-      assert(lower(part) in redline-types, message: label + ": no such type; the types are " + redline-types.keys().map(upper).join(", "))
-      redline-types.at(lower(part))
-    }
     assert(type(part) == dictionary, message: label + ": " + repr(part) + " is not a dictionary such as (del: green)")
-    for (k, v) in part {
+    let (part, sets) = (part, ())
+    for k in redline-presets.keys().filter(k => k in part) {
+      let named = redline-presets.at(k)
+      let name = lower(str(part.remove(k)))
+      let name = redline-aliases.at(name, default: name)
+      assert(name in named, message: label + ": no " + k + " " + name + "; give " + named.keys().join(", ", last: " or "))
+      sets.push(named.at(name))
+    }
+    for (k, v) in (..sets, part).join() {
       assert(k in st, message: label + ": no key " + k + "; the keys are " + st.keys().join(", "))
       let takes = redline-takes.at(k, default: (type(st.at(k)),))
       assert(type(v) in takes, message: label + ": " + k + " takes " + takes.map(str).join(", ", last: " or ") + ", not " + repr(v))

@@ -109,9 +109,10 @@ struct Args {
     /// The root comes from `TYPST_ROOT`.
     root_env: bool,
     preamble: Option<PathBuf>,
-    /// The values of --style, and those --graphics-markup stands for, in order.
+    /// The values of --style, in order.
     styles: Vec<String>,
     style_type: Option<String>,
+    graphics_markup: Option<String>,
     typst: String,
     keep: bool,
     side_by_side: bool,
@@ -187,6 +188,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         preamble: None,
         styles: vec![],
         style_type: None,
+        graphics_markup: None,
         typst: "typst".into(),
         keep: false,
         side_by_side: false,
@@ -234,21 +236,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             "--show-reviewed" => a.show_reviewed = true,
             "--list-files" => a.list_files = true,
             "--no-moves" => a.no_moves = true,
-            "--graphics-markup" => {
-                // latexdiff's spellings too.
-                let keys: &[&str] = match val()?.to_ascii_lowercase().as_str() {
-                    "both" | "2" => &[],
-                    "new-only" | "1" => &["del-blocks=false"],
-                    "none" | "off" | "0" => &[
-                        "del-blocks=false",
-                        "block-color=false",
-                        "ins-frame=none",
-                        "del-frame=none",
-                    ],
-                    m => return Err(format!("unknown graphics markup {m}; give both, new-only or none")),
-                };
-                a.styles.extend(keys.iter().map(|k| k.to_string()));
-            }
+            "--graphics-markup" => a.graphics_markup = Some(val()?),
             "--only-changes" => a.only_changes = true,
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
@@ -1107,10 +1095,14 @@ fn style_files(a: &Args, new: &Spec) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Whether an error is about a value that a style file, --type or --style
-/// gave, which the preamble's messages start with.
+/// Where the parts of the style come from, in the order they apply: style
+/// files, --type, --graphics-markup and --style. Each part has a label that
+/// starts with one of these, and so does each message about it.
+const STYLE_LABELS: [&str; 4] = ["style file", "--type", "--graphics-markup", "--style"];
+
+/// Whether an error is about a value of the style.
 fn style_error(e: &str) -> bool {
-    ["--style", "--type", "style file "].iter().any(|p| e.starts_with(p))
+    STYLE_LABELS.iter().any(|p| e.starts_with(p))
 }
 
 /// The `--input` argument that passes the style `files`, the name of --type
@@ -1122,20 +1114,30 @@ fn style_inputs(a: &Args, files: &[PathBuf]) -> Result<Vec<String>, String> {
             .map(|code| (label, code))
             .map_err(|e| e.to_string())
     };
+    let [file, type_, graphics, style] = STYLE_LABELS;
     let mut parts = vec![];
     for f in files {
-        let label = format!("style file {}", f.display());
+        let label = format!("{file} {}", f.display());
         parts.push(read(f, label.clone()).map_err(|e| format!("{label}: {e}"))?);
     }
-    parts.extend(a.style_type.iter().map(|t| (format!("--type {t}"), format!("{t:?}"))));
+    for (option, key, value) in [
+        (type_, "type", &a.style_type),
+        (graphics, "graphics-markup", &a.graphics_markup),
+    ] {
+        parts.extend(
+            value
+                .iter()
+                .map(|v| (format!("{option} {v}"), format!("({key}: {v:?})"))),
+        );
+    }
     for s in &a.styles {
-        let label = format!("--style {s}");
+        let label = format!("{style} {s}");
         parts.push(match s.split_once('=') {
             Some((key, value)) if !key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '-') => {
                 (label, format!("({key}: {value})"))
             }
             _ => read(Path::new(s), label).map_err(|e| {
-                format!("--style {s}: {e}; give key=value, such as del=green, or a file that holds a dictionary")
+                format!("{style} {s}: {e}; give key=value, such as del=green, or a file that holds a dictionary")
             })?,
         });
     }

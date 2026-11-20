@@ -13,7 +13,7 @@ with `my-style.typ`:
 (del: rgb("#b00000"), strike: 1pt, bars: none)
 ```
 
-A style file can also start from a latexdiff type, with the key `type`, such as `(type: "UNDERLINE", bars: black)`.
+A style file can also start from a latexdiff type with the key `type`, and set `graphics-markup` as the option does, such as `(type: "UNDERLINE", graphics-markup: "new-only")`.
 
 ## Style files that apply by themselves
 
