@@ -3963,16 +3963,18 @@ fn a_style_colours_the_strike_through_too() {
 }
 
 #[test]
-fn an_unknown_style_key_is_an_error() {
+fn an_unknown_style_key_or_a_value_of_another_type_is_an_error() {
     let dir = temp_dir("style-unknown-key");
     std::fs::write(dir.join("old.typ"), "Old.").unwrap();
     std::fs::write(dir.join("new.typ"), "New.").unwrap();
-    let out = cli(&dir, &["old.typ", "new.typ", "--style", "dell=green"]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.code() == Some(1) && stderr.contains("--style: no key dell"),
-        "{stderr}"
-    );
+    for (style, error) in [
+        ("dell=green", "--style: no key dell"),
+        ("bars=1", "--style bars=1: give a boolean or color"),
+    ] {
+        let out = cli(&dir, &["old.typ", "new.typ", "--style", style]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.code() == Some(1) && stderr.contains(error), "{stderr}");
+    }
 }
 
 #[test]

@@ -121,6 +121,17 @@
   changebar: (ins: black, del: black, ins-fill: none, underline: none, deleted: false),
 )
 
+// Keys that hold a stroke, with the key of the colour it takes when it has
+// none of its own.
+#let redline-strokes = (underline: "ins", strike: "del", ins-frame: "ins", del-frame: "del")
+
+// The types a key takes, where they are more than that of its default.
+#let redline-takes = (
+  ins-fill: (color, type(none)),
+  bars: (bool, color),
+  ..redline-strokes.keys().map(k => (k, (length, color, stroke, dictionary, type(none)))).to-dict(),
+)
+
 // The style as given, before strokes take their colours.
 #let redline-given = {
   let st = redline-defaults
@@ -133,6 +144,8 @@
     assert(type(part) == dictionary, message: "--style: " + repr(part) + " is not a dictionary such as (del: green)")
     for (k, v) in part {
       assert(k in st, message: "--style: no key " + k + "; the keys are " + st.keys().join(", "))
+      let takes = redline-takes.at(k, default: (type(st.at(k)),))
+      assert(type(v) in takes, message: "--style " + k + "=" + repr(v) + ": give a " + takes.map(str).join(", ", last: " or "))
       st.insert(k, if type(st.at(k)) == dictionary and type(v) == dictionary { st.at(k) + v } else { v })
     }
   }
@@ -147,12 +160,7 @@
   stroke(paint: c, ..given.pairs().filter(((_, v)) => v != auto).to-dict())
 }
 
-#let redline-resolve(st) = st + (
-  underline: redline-paint(st.underline, st.ins),
-  strike: redline-paint(st.strike, st.del),
-  ins-frame: redline-paint(st.ins-frame, st.ins),
-  del-frame: redline-paint(st.del-frame, st.del),
-)
+#let redline-resolve(st) = st + redline-strokes.pairs().map(((k, c)) => (k, redline-paint(st.at(k), st.at(c)))).to-dict()
 
 #let redline-style = redline-resolve(redline-given)
 
