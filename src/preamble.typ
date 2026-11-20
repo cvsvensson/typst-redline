@@ -1233,6 +1233,7 @@
     } else { bar-x(s, e, cw, g, n, 3) }
   }
   let ends = query(<redline-move>)
+  let bracketed = false
   let (lo, hi) = (0, ends.len())
   while lo < hi {
     let mid = calc.quo(lo + hi, 2)
@@ -1263,6 +1264,7 @@
       if first { place(redline-top-left, dx: x, dy: from, line(length: tick, stroke: stroke)) }
       if last { place(redline-top-left, dx: x, dy: to, line(length: tick, stroke: stroke)) }
     }
+    bracketed = true
     let ((x, right-side, edge), _, y1, ..) = pieces.first()
     let (x0, x1) = if right-side { (x - 3pt, edge - 2pt) } else { (edge + 2pt, x + 3pt) }
     let other = redline-move-find("from", v.id)
@@ -1381,6 +1383,8 @@
     let tw = measure(t).width
     place(redline-top-left, dx: if r { calc.min(anchor(r), w - tw - edge(r)) } else { calc.max(anchor(r) - tw, edge(r)) }, dy: calc.max(y, 1pt), t)
   }
+  // For --only-changes: a page with a bar, bracket or number of a change.
+  if redline-only-changes and (merged.len() > 0 or bracketed or lines.len() > 0) { redline-meta(none, <redline-marked-page>) }
   // The legend goes at the bottom edge of the page, as the pointer line goes
   // at the top edge, if it stays clear of the footer. The side-by-side
   // layout has one under each pair of pages instead. The footer lies in the
@@ -1807,23 +1811,9 @@
   let unbarred = query(selector(<redline-tag>).or(<redline-move>)).map(t => t.location().page()).dedup().filter(p => p not in drawn)
   redline-ints(unbarred, <redline-unbarred>)
   if redline-only-changes and redline-side == none {
-    // The first page of the summary, then each page that a mark, a bar or a
-    // bracket covers, or that holds the old place of moved text.
-    let span(a, b) = range(calc.min(a, b), calc.max(a, b) + 1)
-    let tags = query(<redline-tag>)
-    let marked = range(calc.quo(tags.len(), 2)).map(i => {
-      let (a, b) = (tags.at(2 * i), tags.at(2 * i + 1))
-      span(redline-start-at(a.location(), redline-value(a).at(6, default: none)).page(), b.location().page())
-    }).flatten()
-    for t in query(<redline-move>) {
-      let s = redline-move-start(redline-value(t).id)
-      marked += span(if s == none { t.location().page() } else { s.page() }, t.location().page())
-    }
-    let nums = query(<redline-numbers>).map(redline-value)
-    for k in nums.at(0, default: (:)).keys().filter(k => k.starts-with("m")) {
-      let from = redline-move-find("from", k.slice(1))
-      if from != none { marked.push(from.location().page()) }
-    }
+    // The first page of the summary, then each page with a mark, as
+    // redline-page-bars finds it or where it draws no bars.
+    let marked = query(<redline-marked-page>).map(m => m.location().page()) + unbarred
     let start = query(<redline-summary>).map(m => m.location().page())
     redline-ints((start.at(0, default: 0), ..marked.sorted().dedup()), <redline-marked>)
   }
