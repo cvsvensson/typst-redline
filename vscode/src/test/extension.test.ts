@@ -65,7 +65,11 @@ suite("Typst Redline commands", () => {
   }
 
   const hash = (subject: string) => git(path.dirname(file), "log", "--format=%h", "-n", "1", `--grep=^${subject}$`);
-  const labels = (list: Item[]) => list.map((i) => i.label);
+  // A commit is listed by its hash; the test names it by its subject.
+  const name = (i: Item) => (/^[0-9a-f]{7,} · /.test(i.label) ? i.description! : i.label);
+  const isDate = (i: Item) => /^\d{4}-\d\d-\d\d$/.test(i.label);
+  // Leaves out the date headings.
+  const labels = (list: Item[]) => list.filter((i) => !isDate(i)).map(name);
   const show = () => vscode.commands.executeCommand("typstRedline.showChanges");
 
   async function setView(...choice: string[]) {
@@ -99,7 +103,7 @@ suite("Typst Redline commands", () => {
           }
           if (list.canSelectMany) {
             const t = ticks.shift();
-            list.selectedItems = t ? list.items.filter((i: Item) => t.includes(i.label)) : [];
+            list.selectedItems = t ? list.items.filter((i: Item) => t.includes(name(i))) : [];
             return t ? list.accept() : list.hide();
           }
           const label = picks.shift();
@@ -107,7 +111,7 @@ suite("Typst Redline commands", () => {
           const item =
             label === ""
               ? list.activeItems[0]
-              : label !== undefined && (items.find((i) => i.label === label) ?? items.find((i) => i.label.includes(label)));
+              : label !== undefined && (items.find((i) => name(i) === label) ?? items.find((i) => name(i).includes(label)));
           if (!item) {
             return list.hide();
           }
@@ -203,11 +207,20 @@ suite("Typst Redline commands", () => {
     }
   });
 
-  test("lists commits that have a parent by their subject as written, then the other choices", async () => {
+  test("lists commits that have a parent by hash and lines changed under a heading for their day, then the other choices", async () => {
     picks = [];
     await show();
     const words = labels(lists[0]).map((l) => l.replace(/^\$\([^)]*\) /, ""));
     assert.deepStrictEqual(words, ["third – ändrad “här”", "second", "", "Another file...", "Several commits...", "Between two commits..."]);
+    const day = git(path.dirname(file), "log", "-1", "--date=short", "--format=%ad");
+    assert.deepStrictEqual(
+      lists[0].slice(0, 3).map((i) => [i.label, i.kind]),
+      [
+        [day, vscode.QuickPickItemKind.Separator],
+        [`${hash("third.*")} · +1 −1`, vscode.QuickPickItemKind.Default],
+        [`${hash("second")} · +1 −1`, vscode.QuickPickItemKind.Default],
+      ],
+    );
   });
 
   test("Enter shows the newest commit's change, and the PDF opens beside the editor", async () => {
@@ -243,7 +256,7 @@ suite("Typst Redline commands", () => {
       "Typst Redline: Show Changes (view: Marked, coloured by commit, 4 steps)",
     ]);
     assert.strictEqual(lists.length, 1);
-    assert.strictEqual(actives[0]?.label, "third – ändrad “här”");
+    assert.strictEqual(actives[0] && name(actives[0]), "third – ändrad “här”");
     assert.deepStrictEqual(runs[0].slice(5), ["--steps", "4"]);
     picks = [];
     await show();
@@ -414,7 +427,7 @@ suite("Typst Redline commands", () => {
     picks = [];
     await show();
     // Neither the commit nor the change of a file the document does not use is listed.
-    assert.strictEqual(actives[0]?.label, "third – ändrad “här”");
+    assert.strictEqual(actives[0] && name(actives[0]), "third – ändrad “här”");
     assert.ok(!labels(lists[0]).some((l) => /add notes|last commit/.test(l)));
     fs.writeFileSync(file, "= Title\n\nUncommitted.\n");
     picks = [""];
