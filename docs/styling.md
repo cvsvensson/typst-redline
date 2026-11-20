@@ -48,7 +48,7 @@ with `my-style.typ`:
 | `number` | grey | Change numbers in the margin and on the summary |
 | `steps` | six colours | Colours of `--each-commit` and `--steps`, which replace `ins` and `del` |
 
-`--graphics-markup new-only` sets `del-blocks: false`, and `--graphics-markup none` also `block-colour: false` and both frames to `none`; latexdiff's default is `new-only`, and the types below leave it as it is.
+`--graphics-markup new-only` sets `del-blocks: false`, and `--graphics-markup none` also `block-colour: false` and both frames to `none`; `both`, the default, leaves them as they are. latexdiff's default is `new-only`, but there it is an option of its own, so the types below leave graphics markup at `both`.
 
 A stroke without a colour, such as `strike: 1pt` or `del-frame: (thickness: 1pt, dash: "dotted")`, takes the colour of its mark, so `del: green` also makes the strike-through green. A dictionary value is merged into the default: `outset: (x: 0pt)` keeps `top` and `bottom`. An unknown key is an error that lists the keys, and so is a value of a type the key does not take, such as `bars: 1`.
 

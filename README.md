@@ -33,8 +33,6 @@ typst-redline paper.typ --since v1         # changes since a tag, branch or comm
 typst-redline paper.typ --since v1..v2     # changes between two commits
 ```
 
-As in latexdiff-vc, `-r v1` is `--since v1` and `-r v1 -r v2` is `--since v1 --to v2`.
-
 Run `typst-redline` without a file in a terminal and it asks which file and which version to compare with, then prints the command it runs and runs it. Files that another file in the folder includes come last, and with one document there is no file question. The versions are the last reviewed version, the changes since the last commit, and the newest commits that change the document's files, each where it applies:
 
 ```
@@ -58,14 +56,42 @@ Without git, compare two copies; quote paths that contain spaces:
 typst-redline "thesis v1/thesis.typ" "thesis v2/thesis.typ"
 ```
 
-The PDF is written next to the file, or next to the new file when you give two, as `<name>.redline.pdf`, and its path is printed. `-o out.pdf` writes it elsewhere. With one file, the new version is the file as it is on disk, uncommitted changes included, unless `--to <revision>` names another.
+The PDF is written next to the file, or next to the new file when you give two, as `<name>.redline.pdf`, and its path is printed. With one file, the new version is the file as it is on disk, uncommitted changes included, unless `--to <revision>` names another.
 
-If the document reads files outside its own folder, such as `#include "../shared/intro.typ"`, pass the folder that holds all of its files with `--root`, for example `typst-redline thesis/main.typ --root .` from that folder. Without `--root`, the `TYPST_ROOT` environment variable is used if it is set, and otherwise the folder of the file. `--typst <path>` picks another `typst` than the one on `PATH`, and arguments after `--` go to `typst compile`, for example `-- --font-path fonts`. `-L <text>` names the old version in the PDF, and a second `-L` the new one. `--keep-typ` keeps the marked Typst source and prints where it is, and `--list-files` prints the paths of the files the document is made of. `typst-redline --help` lists every option.
+### Options
+
+`typst-redline --help` lists them too.
+
+**Versions**
+- `--since <rev>` and `--to <rev>`, as above. As in latexdiff-vc, `-r v1` is `--since v1` and `-r v1 -r v2` is `--since v1 --to v2`.
+- `-L <text>` names the old version in the PDF, and a second `-L` the new one.
+- `--root <dir>`: the folder that holds all of the document's files, for a document that reads files outside its own folder, such as `#include "../shared/intro.typ"`; for example `typst-redline thesis/main.typ --root .`. Without it, the `TYPST_ROOT` environment variable is used if it is set, and otherwise the folder of the file.
+
+**What to mark**
+- `--no-moves` shows moved text as deleted at its old place and inserted at its new place.
+- `--each-commit` and `--steps <revs|n>` colour each change by the commit, or group of commits, that made it ([picture](docs/gallery.md#who-changed-what), [details](docs/git.md)).
+
+**How marks look** ([docs/styling.md](docs/styling.md) has the details and pictures)
+- `-t UNDERLINE`, `-t CHANGEBAR` and three other latexdiff markup types start from latexdiff's look.
+- `--style key=value` changes one setting, such as `--style del=green` or `--style ins-fill=none` for no highlight, and `--style my-style.typ` several from a file that holds a dictionary such as `(del: green, bars: false)`.
+- `--graphics-markup new-only` leaves out the old version of a changed formula, figure, table, code block or drawing, and `none` also shows the new one without frame or colour; the bar and the number stay.
+- `-p my-preamble.typ` replaces the styling whole; `--show-preamble` prints the built-in one to start from.
+
+**Output**
+- `-o out.pdf` writes the PDF elsewhere.
+- `--layout side-by-side`: [below](#slides-and-side-by-side).
+- `--only-changes` keeps only the pages with marks and the summary, for a long document with a few changes. The pages keep the numbers printed on them, and the summary and margin notes name pages by those numbers. It needs Typst 0.12 or later.
+- `--keep-typ` keeps the marked Typst source and prints where it is.
+- `--typst <path>` picks another `typst` than the one on `PATH`, and arguments after `--` go to `typst compile`, for example `-- --font-path fonts`.
+
+**Without a PDF**
+- `--mark-reviewed` and `--show-reviewed`: [recipes](#recipes-with-git).
+- `--list-files` prints the paths of the files the document is made of.
 
 ## What is marked
 
 - Deleted text is struck out in red and new text highlighted in blue, also in headings, lists, captions and footnotes.
-- A changed formula, figure, table, code block or drawing is shown whole: the old one in a dashed red frame, the new one in a blue frame. `--graphics-markup new-only` leaves the old one out, and `--graphics-markup none` also shows the new one without frame or colour; the bar and the number stay, and the summary lists the change as before.
+- A changed formula, figure, table, code block or drawing is shown whole: the old one in a dashed red frame, the new one in a blue frame.
 - A bar in the margin points to every changed line, dashed for deletions and solid for insertions, with a number for each change that the summary page uses too.
 - A moved paragraph or section is shown once, at its new place, with a "moved" note; at its old place a grey line links to it.
 - Changes in included files and replaced images are marked; with git, the old version of each file comes from the old commit.
@@ -78,14 +104,6 @@ The [gallery](docs/gallery.md) has a picture and the details of each. With the d
 The last page, or pages, list every change by its number, section by section, and say in words what is not marked on the pages, with its source. A line at the top of the first page, where its top margin has room for it, says where the summary is and how many changes it lists that are not marked on the pages. The [gallery](docs/gallery.md#the-summary-page) describes each part.
 
 <img src="docs/report-summary.png" width="480" alt="The summary page: a sentence with the number of changes, a table of changed sections with the numbers of their changes, counts and pages, a changed title shown as old and new text, a new bibliography entry, the commits in the range, and the legend">
-
-## Only the changed pages
-
-`--only-changes` leaves out the pages without a mark and keeps the summary, for a long document with a few changes. The pages keep the numbers printed on them, and the summary and margin notes name pages by those numbers; a page without a printed number is named by its place in the full PDF, such as *page 8 of the full PDF*. It needs Typst 0.12 or later.
-
-```
-typst-redline thesis.typ --since sent-to-anna --only-changes
-```
 
 ## Slides and side by side
 
@@ -115,10 +133,6 @@ The ones you are most likely to meet; [docs/known-problems.md](docs/known-proble
 - Deleted code that uses a name which meant something else at its place, such as a loop variable or a function parameter, is shown by that name, such as *[unit]*, not as it looked.
 - Deleted content is laid out under the new version's show and set rules, and a reference in it to a label that the new version lacks shows the label, not the number the old version printed.
 - Typst 0.12 and 0.13 are not tested; before Typst 0.14, side by side does not work and a file read only through a computed path, such as `#include name + ".typ"`, is not checked for changes.
-
-## Styling
-
-`--style key=value` changes one setting, such as `--style del=green` or `--style ins-fill=none` for no highlight, and `--style my-style.typ` several from a file that holds a dictionary such as `(del: green, bars: false)`. `-t UNDERLINE`, `-t CHANGEBAR` and three other latexdiff markup types start from latexdiff's look. [docs/styling.md](docs/styling.md) lists the keys and types, and how to replace the styling whole with `--preamble`.
 
 ## VS Code
 

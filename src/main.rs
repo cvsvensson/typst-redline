@@ -32,30 +32,19 @@ tag or other revision, which then takes its place. --show-reviewed prints the
 hash of the commit that --since reviewed compares with, or nothing if there is
 none; outside a git repository it is an error.
 
-Options:
-  -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
+Versions:
+  --since <rev>, --to <rev>
+                        The old and the new version of one file (see above)
+  -r <rev>              As in latexdiff-vc: -r A is --since A, and
+                        -r A -r B is --since A --to B
+  -L, --label <text>    Name the old version in the PDF; given twice, the old
+                        and then the new version
   --root <dir>          Project root (default: TYPST_ROOT, else the directory
                         of each file)
-  --style <key=value|file.typ>
-                        Change how changes look: one setting, such as
-                        --style del=green or --style strike=none, or several
-                        from a file holding a dictionary such as
-                        (del: green, bars: false). Repeatable; later values
-                        win. The keys are in docs/styling.md and at the top
-                        of --show-preamble
-  -t, --type <name>     Start from a latexdiff markup type: UNDERLINE, COLOR,
-                        CULINECHBAR, CCHANGEBAR or CHANGEBAR. Types that
-                        change fonts or move deleted text are not offered
-  -p, --preamble <file> Replace the built-in change styling
-  --show-preamble       Print the built-in preamble, to start one of your own
-  --layout <layout>     inline (default): the new version with changes marked;
-                        side-by-side: changed pages of the old and the new
-                        version next to each other (needs Typst 0.14 or later,
-                        and an old version that compiles)
-  --only-changes        Keep only the pages with marks and the summary, with
-                        the page numbers of the full document (needs Typst
-                        0.12 or later; side-by-side shows only those pages
-                        anyway)
+
+What to mark:
+  --no-moves            Show moved text as deleted at its old place and
+                        inserted at its new place
   --each-commit         Colour each change by the commit that made it, for at
                         most 6 commits between the two versions (one file
                         only)
@@ -65,29 +54,46 @@ Options:
                         tool splits the commits, and then the uncommitted
                         changes, into n steps that change about the same
                         amount of the document (one file only)
-  -r <rev>              As in latexdiff-vc: -r A is --since A, and
-                        -r A -r B is --since A --to B
-  -L, --label <text>    Name the old version in the PDF; given
-                        twice, the old and then the new version
-  --no-moves            Show moved text as deleted at its old place and
-                        inserted at its new place
-  --graphics-markup <m> How a changed formula, figure, table, code block or
-                        drawing is shown, as in latexdiff: both (default):
-                        the old one in a dashed red frame, then the new one
-                        in a blue frame; new-only: only the new one; none:
-                        only the new one, without frame or colour. A left-out
-                        old one keeps its bar and number; side by side shows
-                        it on the old page. Sets the style keys del-blocks,
-                        block-colour and, for none, the frames
+
+How marks look:
+  -t, --type <name>     Start from a latexdiff markup type: UNDERLINE, COLOR,
+                        CULINECHBAR, CCHANGEBAR or CHANGEBAR
+  --style <key=value|file.typ>
+                        Change one setting, such as --style del=green or
+                        --style strike=none, or several from a file holding a
+                        dictionary such as (del: green, bars: false).
+                        Repeatable; later values win. The keys are in
+                        docs/styling.md and at the top of --show-preamble
+  --graphics-markup <both|new-only|none>
+                        A changed formula, figure, table, code block or
+                        drawing, as in latexdiff: both (default) shows the
+                        old one and the new one framed, new-only only the new
+                        one, none only the new one without frame or colour
+  -p, --preamble <file> Replace the built-in styling whole
+  --show-preamble       Print the built-in preamble, to start one of your own
+
+Output:
+  -o, --output <pdf>    Output PDF (default: <name>.redline.pdf next to the new file)
+  --layout <layout>     inline (default): the new version with changes marked;
+                        side-by-side: changed pages of the old and the new
+                        version next to each other (needs Typst 0.14 or later,
+                        and an old version that compiles)
+  --only-changes        Keep only the pages with marks and the summary, with
+                        the page numbers of the full document (needs Typst
+                        0.12 or later; side-by-side shows only those pages
+                        anyway)
+  --keep-typ            Keep the generated project and print its path on stderr;
+                        the marked source is at the new file's path inside it
   --typst <path>        typst executable (default: typst)
+
+Without a PDF:
   --mark-reviewed       Record HEAD as reviewed for the file (see above)
   --show-reviewed       Print the commit --since reviewed uses (see above)
   --list-files          Print the files the document is made of, one path per
-                        line, and make no PDF
-  --keep-typ            Keep the generated project and print its path on stderr;
-                        the marked source is at the new file's path inside it
+                        line
   -V, --version         Print the version
   -h, --help            Print this help
+
 Arguments after -- are passed to `typst compile`.
 ";
 
@@ -100,7 +106,7 @@ struct Args {
     /// The root comes from `TYPST_ROOT`.
     root_env: bool,
     preamble: Option<PathBuf>,
-    /// The values of --style, in order.
+    /// The values of --style, and those --graphics-markup stands for, in order.
     styles: Vec<String>,
     style_type: Option<String>,
     typst: String,
@@ -754,22 +760,16 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         }
         None => PREAMBLE.to_string(),
     };
-    if a.side_by_side
-        && let Some(v) = version
-        && minor(&v) < (0, 14)
+    let needs = [
+        (a.side_by_side, (0, 14), "the side-by-side layout"),
+        (only_changes, (0, 12), "--only-changes"),
+    ];
+    if let Some(v) = &version
+        && let Some((_, at, what)) = needs.iter().find(|(on, at, _)| *on && minor(v) < *at)
     {
         return Err(format!(
-            "the side-by-side layout needs Typst 0.14 or later, but {} is Typst {v}",
-            a.typst
-        ));
-    }
-    if only_changes
-        && let Some(v) = typst_version(&a.typst)
-        && minor(&v) < (0, 12)
-    {
-        return Err(format!(
-            "--only-changes needs Typst 0.12 or later, but {} is Typst {v}",
-            a.typst
+            "{what} needs Typst {}.{} or later, but {} is Typst {v}",
+            at.0, at.1, a.typst
         ));
     }
     let (old, new) = specs(&a, reviewed).map_err(|e| {
