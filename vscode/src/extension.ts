@@ -226,9 +226,10 @@ async function documentFiles(doc: vscode.TextDocument, root: string) {
 // first or the edge of a shallow clone, has no version before its change and is left out.
 async function commits(dir: string, files: string[]): Promise<{ list: Commit[]; why: string }> {
   try {
-    // A merge's size is its change against the first parent, the change the CLI shows for it.
+    // With --first-parent, -m gives a merge's size against its first parent, the change the CLI
+    // shows for it. --diff-merges=first-parent says the same but needs Git 2.31.
     const log = await git(
-      dir, "log", "--first-parent", "-n", "40", "--numstat", "--diff-merges=first-parent",
+      dir, "log", "--first-parent", "-n", "40", "--numstat", "-m",
       "--date=short", "--format=%x01%h%x09%p%x09%ad%x09%s", "--", ...files,
     );
     const all = log
