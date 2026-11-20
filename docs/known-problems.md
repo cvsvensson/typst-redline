@@ -11,6 +11,7 @@ Each of these was tried with the current version. Within each group, the ones a 
 - In deleted code, a label passed as a named argument or written in math is taken to be attached by the code and is renamed, and one passed positionally is taken to be a reference; a reference made from a label passed as a named argument shows the renamed label, such as *redline-del-label-a*.
 - A figure whose body changed is deleted and inserted whole, caption and all, when it is passed to another call, as in `#align(center, figure(...))`, when it is inline, or when an argument other than its body and content in brackets changed.
 - A raw block with one changed line is deleted and inserted whole.
+- A heading, list item or code line deleted or inserted directly between two lines of text, with no blank line, shows the unchanged text next to it as deleted and inserted again.
 - A citation added to or removed from a group such as `@a @b` marks the whole group.
 - Inserted or deleted text that the document gives a colour of its own, such as a link or a white tag on a dark box, keeps that colour and is marked only by its strike, highlight or bar; under a rule such as `show text: set text(fill: ...)` it takes that rule's colour.
 - Show rules on `strike`, `highlight` or `text` in your document also restyle the marks; a text show rule with a `regex` selector stops matching where a mark cuts its match, and for a string selector, such as `#show "Typst": smallcaps`, the mark is widened to cover the match.
