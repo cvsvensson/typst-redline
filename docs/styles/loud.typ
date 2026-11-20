@@ -1,0 +1,22 @@
+// Every mark made as loud as the keys allow: neon highlight, thick lines,
+// wide bars, heavy frames.
+(
+  ins: rgb("#006400"),
+  ins-fill: rgb("#a6ff4d"),
+  underline: 2pt,
+  del: rgb("#d4006a"),
+  del-fill: rgb("#ffd0e6"),
+  strike: 0.2em,
+  gap: 0.4em,
+  ins-frame: 3pt,
+  del-frame: (thickness: 3pt, dash: "dotted"),
+  cross: 3pt,
+  outset: (x: 0.7em, top: 0.5em, bottom: 0.7em),
+  bar-width: 4.5pt,
+  del-bar-width: 4.5pt,
+  bar-gap: 0.6cm,
+  lane: 7pt,
+  move: rgb("#ff8c00"),
+  move-stroke: 2pt,
+  number: black,
+)

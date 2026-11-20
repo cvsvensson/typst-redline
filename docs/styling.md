@@ -25,16 +25,15 @@ Two style files apply without an option, if they exist: the user's `typst-redlin
 
 <table>
 <tr>
-<td><img src="styles/greyscale.png" width="260" alt="The paper page in greys: new words black on grey, deleted words grey and struck through"><br><a href="styles/greyscale.typ"><code>greyscale.typ</code></a>, for printing</td>
-<td><img src="styles/colour-blind.png" width="260" alt="The paper page with new content in blue and deleted content in orange"><br><a href="styles/colour-blind.typ"><code>colour-blind.typ</code></a>, blue and orange</td>
+<td><img src="styles/greyscale.png" width="260" alt="The paper page in greys: new words black on grey, deleted words grey and struck through"><br><a href="styles/greyscale.typ"><code>greyscale.typ</code></a>, greys only</td>
+<td><img src="styles/blue-orange.png" width="260" alt="The paper page with new content in blue and deleted content in orange"><br><a href="styles/blue-orange.typ"><code>blue-orange.typ</code></a>, no red or green</td>
 </tr>
 <tr>
 <td><img src="styles/underline.png" width="260" alt="The paper page with new words underlined without highlight and no bars"><br><a href="styles/underline.typ"><code>underline.typ</code></a>, lines only</td>
-<td><img src="styles/journal.png" width="260" alt="The paper page with new text in dark blue, deleted content left out and black bars"><br><a href="styles/journal.typ"><code>journal.typ</code></a>, for a resubmission</td>
 </tr>
 </table>
 
-`-t UNDERLINE` gives latexdiff's default look; the [latexdiff types](#latexdiff-types) below lists the others. The page of the [gallery](gallery.md)'s paper example with each of them, and with `--style ins=purple --style ins-fill=none`:
+`-t UNDERLINE` is modelled on latexdiff's default type; the [latexdiff types](#latexdiff-types) below lists the others. The page of the [gallery](gallery.md)'s paper example with each of them, and with `--style ins=purple --style ins-fill=none`:
 
 <table>
 <tr>
@@ -77,15 +76,22 @@ A stroke takes what it leaves out from its default, and its colour from its mark
 
 ## latexdiff types
 
-`-t NAME` (or `--type`, any case) starts from one of latexdiff's markup types, with its pure blue and red; `--style` applies after it.
+`-t NAME` (or `--type`, any case) starts from a type named after one of latexdiff's `-t` types and modelled on it, with its pure blue and red; `--style` applies after it.
 
 - `UNDERLINE`: new text blue and underlined, deleted text red and struck through, no bars.
 - `COLOR`: as `UNDERLINE`, without the underline.
 - `CULINECHBAR`: `UNDERLINE` with black change bars.
 - `CCHANGEBAR`: new text blue, deleted text red and not struck through, black change bars.
-- `CHANGEBAR`: black change bars, new text not otherwise marked, deleted content left out.
+- `CHANGEBAR`: change bars, new text not otherwise marked, deleted content left out.
 
-Unlike latexdiff's, the underline is straight, deletion bars are dashed and numbered, and changed formulas and figures keep their frames. The types that change fonts or move deleted text elsewhere, and `INVISIBLE`, are not offered.
+Where they differ from latexdiff's types of the same name:
+
+- Typst has no wavy underline, so the underline is straight.
+- Change bars are numbered, those of deleted text are dashed, and in `CHANGEBAR` they are black where latexdiff's follow the text colour.
+- Changed formulas and figures keep their frames, which latexdiff does not draw.
+- latexdiff's other types are not offered: `CTRADITIONAL`, `TRADITIONAL` and `CFONTCHBAR` (deleted text moved to a footnote or set in other fonts), `CFONT` and `FONTSTRIKE` (other fonts), `BOLD`, `INVISIBLE`, `PDFCOMMENT` and `LUAUNDERLINE`. The keys have no font settings.
+
+The keys, not the types, set the look in detail; the [gallery](gallery.md#a-style-of-its-own) has a style that sets most of them.
 
 ## A preamble of your own
 

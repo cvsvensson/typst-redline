@@ -76,7 +76,7 @@ The PDF is written next to the file, or next to the new file when you give two, 
 - `--math-markup whole` shows every changed formula whole, the old one and the new one, instead of marking its changed parts.
 
 **How marks look** ([docs/styling.md](docs/styling.md) has the details and pictures)
-- `-t UNDERLINE`, `-t CHANGEBAR` and three other latexdiff markup types start from latexdiff's look.
+- `-t UNDERLINE`, `-t CHANGEBAR` and three other types, named after latexdiff's and modelled on them, start from a ready look.
 - `--style key=value` changes one setting, such as `--style del=green` or `--style ins-fill=none` for no highlight, and `--style my-style.typ` several from a file that holds a dictionary such as `(del: green, bars: none)`; [examples](docs/styles). A `.typst-redline.typ` in the project and a `style.typ` in the user's settings apply by themselves ([where](docs/styling.md#style-files-that-apply-by-themselves)).
 - `--graphics-markup new-only` leaves out the old version of a changed formula, figure, table, code block or drawing, and `none` also shows the new one without frame or colour; the bar and the number stay.
 - `-p my-preamble.typ` replaces the styling whole; `--show-preamble` prints the built-in one to start from.
@@ -129,7 +129,7 @@ typst-redline talk.typ --since HEAD~1 --layout side-by-side
 
 ## Known problems
 
-The ones you are most likely to meet; [docs/known-problems.md](docs/known-problems.md) has the full list, each tried with the current version.
+The ones you are most likely to meet; see [docs/known-problems.md](docs/known-problems.md) for more.
 
 - In the default layout, deleted content takes room on the page, so line and page breaks shift, and on a full slide the old and the new version of a figure each take a page of their own; use side by side for slides, or `--graphics-markup new-only`, which leaves the old figure out.
 - Some moved text shows as deleted at one place and inserted at the other, for example a sentence moved within or between paragraphs, or a passage rewritten so much that it keeps less than about 60% of its words.

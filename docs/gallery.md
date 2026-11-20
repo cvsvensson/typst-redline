@@ -1,6 +1,6 @@
 # Gallery
 
-Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again. [Known problems](known-problems.md) lists the cases where the marks fall short, and [Styling](styling.md) shows the paper example in latexdiff's markup types and in colours of its own.
+Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again. [Known problems](known-problems.md) lists the cases where the marks fall short, and [Styling](styling.md) shows the paper example in types modelled on latexdiff's and in styles of its own.
 
 ## Text, formulas and figures
 
@@ -112,3 +112,13 @@ typst-redline old.typ new.typ --layout side-by-side
 Files: [slides/old.typ](slides/old.typ), [slides/new.typ](slides/new.typ).
 
 The first page lists which pages are shown, and the last pages are the same summary as in the default layout, without its legend. Change numbers are on the new pages only. A page that moved is shown next to its old page. A page that a change only listed on the summary draws differently, such as one with renumbered headings, is shown as well. Deleted content looks as it did in the old version, since the old pages are shown as they were.
+
+## A style of its own
+
+The paper page again with [loud.typ](styles/loud.typ), a style file that sets most keys of [Styling](styling.md) to heavy values: a neon highlight, thick lines, heavy frames and wide bars.
+
+```
+typst-redline old.typ new.typ --style loud.typ
+```
+
+<img src="styles/loud.png" width="560" alt="The paper page with neon green highlight on new words, thick pink strike-through on deleted words, a heavy dotted pink frame with a thick cross around the old plot, a heavy green frame around the new figure and wide bars in the margin">
