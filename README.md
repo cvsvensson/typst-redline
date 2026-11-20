@@ -108,7 +108,7 @@ The ones you are most likely to meet; [docs/known-problems.md](docs/known-proble
 
 ## Styling
 
-Colours and other settings are in the `redline-style` dictionary at the top of [src/preamble.typ](src/preamble.typ). Copy that file, edit it, and pass it with `--preamble my-style.typ`; the six colours of `--each-commit` and `--steps` are in `redline-style.steps`. The data the tool passes to the preamble changes between versions, so copy it again after each update.
+`--style key=value` changes one setting, such as `--style del=green` or `--style ins-fill=none` for no highlight, and `--style my-style.typ` several from a file that holds a dictionary such as `(del: green, bars: false)`. `-t UNDERLINE`, `-t CHANGEBAR` and three other latexdiff markup types start from latexdiff's look. [docs/styling.md](docs/styling.md) lists the keys and types, and how to replace the styling whole with `--preamble`.
 
 ## VS Code
 

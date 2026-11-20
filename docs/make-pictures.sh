@@ -23,6 +23,13 @@ picture() {
 run "$docs/paper" old.typ new.typ
 picture 1 paper
 
+for t in UNDERLINE COLOR CULINECHBAR CCHANGEBAR CHANGEBAR; do
+  run "$docs/paper" old.typ new.typ -t $t
+  picture 1 "paper-$(echo $t | tr A-Z a-z)" 120
+done
+run "$docs/paper" old.typ new.typ --style ins=purple --style ins-fill=none
+picture 1 paper-style 120
+
 run "$docs/moved" old.typ new.typ
 picture 1 moved
 

@@ -861,8 +861,15 @@ fn query(dir: &Path, label: &str) -> String {
 /// The `field` of the elements that `selector` finds in the compiled project
 /// in `dir`.
 fn query_field(dir: &Path, selector: &str, field: &str) -> String {
+    query_with(dir, &[], selector, field)
+}
+
+/// `query_field` with `--input` arguments such as `redline-style=...`.
+fn query_with(dir: &Path, inputs: &[&str], selector: &str, field: &str) -> String {
     let out = Command::new("typst")
-        .args(["query", "--root"])
+        .arg("query")
+        .args(inputs.iter().flat_map(|i| ["--input", i]))
+        .arg("--root")
         .arg(dir)
         .arg(dir.join("main.typ"))
         .args([selector, "--field", field])
@@ -3826,4 +3833,93 @@ fn set_rule_of_a_show_rule_is_listed_with_it() {
     );
     let texts: Vec<&str> = r.changes.iter().map(|c| c.text.as_str()).collect();
     assert_eq!(texts, ["show emph: set text(fill: blue)"]);
+}
+
+#[test]
+fn a_style_colours_the_strike_through_too() {
+    let r = redline_of("Old words.\n", "New words.\n");
+    let files = [r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat();
+    let Some(dir) = compile("style-input", &files) else {
+        return;
+    };
+    let out = Command::new("typst")
+        .args(["compile", "--root"])
+        .arg(&*dir)
+        .args(["--input", r##"redline-style=((del: rgb("#00c000")),)"##])
+        .arg(dir.join("main.typ"))
+        .arg(dir.join("page-{n}.svg"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let svg = std::fs::read_to_string(dir.join("page-1.svg")).unwrap();
+    assert!(svg.contains(r##"stroke="#00c000""##));
+}
+
+#[test]
+fn an_unknown_style_key_is_an_error() {
+    let dir = temp_dir("style-unknown-key");
+    std::fs::write(dir.join("old.typ"), "Old.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New.").unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ", "--style", "dell=green"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() == Some(1) && stderr.contains("--style: no key dell"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_latexdiff_type_and_a_style_file_apply() {
+    let dir = temp_dir("style-type");
+    std::fs::write(dir.join("old.typ"), "Old.").unwrap();
+    std::fs::write(dir.join("new.typ"), "New.").unwrap();
+    std::fs::write(dir.join("s.typ"), "(bars: false, strike: none) // mine").unwrap();
+    let out = cli(&dir, &["old.typ", "new.typ", "-t", "CChangeBar", "--style", "s.typ"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(dir.join("new.redline.pdf").exists());
+}
+
+#[test]
+fn show_preamble_prints_the_preamble() {
+    let out = cli(Path::new("."), &["--show-preamble"]);
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), PREAMBLE);
+}
+
+/// With the style `style`, the `<probe>` values of the marked document, the
+/// ids of its marks not laid out, and the `<probe>` values of the new
+/// version.
+fn styled_probes(name: &str, style: &str, old: &str, new: &str) -> Option<[String; 3]> {
+    let plain = compile(&format!("{name}-new"), &[("main.typ".into(), new.into())])?;
+    let r = redline_of(old, new);
+    let dir = compile(name, &[r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat())?;
+    let input = format!("redline-style=({style},)");
+    Some([
+        query_with(&dir, &[&input], "<probe>", "value"),
+        query_with(&dir, &[&input], "<redline-lost>", "key"),
+        query(&plain, "<probe>"),
+    ])
+}
+
+#[test]
+fn deleted_content_left_out_keeps_its_mark() {
+    let show = "#show rect: it => [#metadata(it.width)<probe>#it]
+";
+    let old = format!(
+        "{show}Some old words.
+
+A paragraph #rect(width: 1cm) that goes.
+
+End.
+"
+    );
+    let new = format!(
+        "{show}Some new words.
+
+End.
+"
+    );
+    if let Some([marked, lost, new]) = styled_probes("deleted-out", "(deleted: false)", &old, &new) {
+        assert_eq!((marked, lost), (new, "[]".into()));
+    }
 }

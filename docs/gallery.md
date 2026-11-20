@@ -1,6 +1,6 @@
 # Gallery
 
-Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again. [Known problems](known-problems.md) lists the cases where the marks fall short.
+Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again. [Known problems](known-problems.md) lists the cases where the marks fall short, and [Styling](styling.md) shows the paper example in latexdiff's markup types and in colours of its own.
 
 ## Text, formulas and figures
 
