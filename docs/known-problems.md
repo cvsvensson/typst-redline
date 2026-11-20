@@ -49,6 +49,7 @@ Each of these was tried with the current version. Within each group, the ones a 
 
 - Package files are not checked for changes.
 - Two plain files whose projects need different roots, such as two copies of a project that use paths starting with `/`, cannot be compared, because `--root` is one folder for both; comparing git revisions of the project works.
+- Jujutsu works in a repository colocated with git, with git commit hashes or bookmarks as revisions, not jj change ids or revsets. A repository that is not colocated, and other version control such as Mercurial or Subversion, are not read; compare two copies of the files instead.
 
 ## Typst versions
 
