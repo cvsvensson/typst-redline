@@ -2514,8 +2514,15 @@ fn changed_drawing_that_needs_a_finite_width_compiles() {
 }
 
 fn pdf_pages(path: &Path) -> usize {
-    let pdf = String::from_utf8_lossy(&std::fs::read(path).unwrap()).replace("/Type /Page", "/Type/Page");
-    pdf.matches("/Type/Page").count() - pdf.matches("/Type/Pages").count() - pdf.matches("/Type/PageLabel").count()
+    let pdf = std::fs::read(path).unwrap();
+    let ends_name = |b: &u8| b.is_ascii_whitespace() || b"/<>[]()%".contains(b);
+    (0..pdf.len())
+        .filter(|&i| pdf[i..].starts_with(b"/Type"))
+        .filter(|&i| {
+            let rest = pdf[i + 5..].trim_ascii_start();
+            rest.starts_with(b"/Page") && rest.get(5).is_none_or(ends_name)
+        })
+        .count()
 }
 
 #[test]

@@ -1732,13 +1732,12 @@ fn compose(
 /// The number of pages of a PDF that typst wrote, if it has any.
 fn pdf_pages(path: &Path) -> Option<usize> {
     let pdf = std::fs::read(path).ok()?;
-    let count = |pat: &[u8]| pdf.windows(pat.len()).filter(|w| *w == pat).count();
-    let pages = ["/Type /", "/Type/"].map(|t| {
-        let t = t.as_bytes();
-        let n = |name: &[u8]| count(&[t, name].concat());
-        n(b"Page") - n(b"Pages") - n(b"PageLabel")
-    });
-    let pages = pages[0] + pages[1];
+    let mut pages = 0;
+    for (i, _) in pdf.windows(5).enumerate().filter(|(_, w)| *w == b"/Type") {
+        let rest = pdf[i + 5..].trim_ascii_start();
+        let ends_name = |b: &u8| b.is_ascii_whitespace() || b"/<>[]()%".contains(b);
+        pages += (rest.starts_with(b"/Page") && rest.get(5).is_none_or(ends_name)) as usize;
+    }
     (pages > 0).then_some(pages)
 }
 
@@ -2067,7 +2066,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("typst-redline-pages-{}.pdf", std::process::id()));
         std::fs::write(
             &path,
-            "<< /Type /Pages /Kids [] >> << /Type /Page >> << /Type/Page >> << /Type/Page >> << /Type/PageLabel >> << /Type /PageLabel >>",
+            "<< /Type /Pages /Kids [] >> << /Type /Page >> << /Type/Page >> << /Type/Page >> << /Type/PageLabel >> << /Type /PageLabel >> << /Type/Pages >>",
         )
         .unwrap();
         assert_eq!(pdf_pages(&path), Some(3));
