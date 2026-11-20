@@ -314,7 +314,9 @@
   // does, and a drawing that fills its width needs finite room. Typst 0.11
   // measures only in unbounded room.
   let room = if sys.version >= version(0, 12, 0) { (width: 2 * size.width) } else { (:) }
-  let natural = measure(if eq { math.equation(block: true, numbering: none, it.body) } else { it }, ..room)
+  // An equation's frame leaves out its number.
+  let bare = if eq { math.equation(block: true, numbering: none, it.body) } else { it }
+  let natural = measure(bare, ..room)
   let h = measure(block(width: size.width, it)).height
   // `measure` cannot resolve a relative width, so it is resolved here. An
   // element whose height depends on the width it gets (fractional columns,
@@ -323,7 +325,7 @@
   let rel = if type(rel) == content { rel.at("width", default: auto) } else { auto }
   let w = if type(rel) == ratio { calc.min(rel * size.width, size.width) } else if type(rel) == relative {
     calc.min(rel.ratio * size.width + rel.length.to-absolute(), size.width)
-  } else if natural.width == 0pt or natural.width > size.width or calc.abs((natural.height - h).to-absolute()) > 0.1pt { size.width } else { natural.width }
+  } else if natural.width == 0pt or natural.width > size.width or calc.abs((natural.height - measure(block(width: size.width, bare)).height).to-absolute()) > 0.1pt { size.width } else { natural.width }
   // A figure's caption can be wider than its body: the frame holds the
   // figure as laid out in this width, its caption wrapped.
   let laid = if sys.version >= version(0, 12, 0) { measure(it, width: size.width).width } else { natural.width }

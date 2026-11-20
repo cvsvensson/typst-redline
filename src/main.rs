@@ -2008,8 +2008,12 @@ fn keep_marked_pages(a: &Args, dir: &Path, entry: &str, to: &Path) -> Result<(),
 /// The number of pages of a PDF that typst wrote, if it has any.
 fn pdf_pages(path: &Path) -> Option<usize> {
     let pdf = std::fs::read(path).ok()?;
-    let count = |pat: &[u8]| pdf.windows(pat.len()).filter(|w| *w == pat).count();
-    let pages = count(b"/Type /Page") + count(b"/Type/Page") - count(b"/Type /Pages") - count(b"/Type/Pages");
+    let mut pages = 0;
+    for (i, _) in pdf.windows(5).enumerate().filter(|(_, w)| *w == b"/Type") {
+        let rest = pdf[i + 5..].trim_ascii_start();
+        let ends_name = |b: &u8| b.is_ascii_whitespace() || b"/<>[]()%".contains(b);
+        pages += (rest.starts_with(b"/Page") && rest.get(5).is_none_or(ends_name)) as usize;
+    }
     (pages > 0).then_some(pages)
 }
 
@@ -2338,9 +2342,21 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{balanced_cuts, pick, reviewed_ref, user_style, without_export_args};
+    use super::{balanced_cuts, pdf_pages, pick, reviewed_ref, user_style, without_export_args};
     use std::ffi::OsString;
     use std::path::PathBuf;
+
+    #[test]
+    fn page_count_ignores_page_labels_and_the_page_tree() {
+        let path = std::env::temp_dir().join(format!("typst-redline-pages-{}.pdf", std::process::id()));
+        std::fs::write(
+            &path,
+            "<< /Type /Pages /Kids [] >> << /Type /Page >> << /Type/Page >> << /Type/Page >> << /Type/PageLabel >> << /Type /PageLabel >> << /Type/Pages >>",
+        )
+        .unwrap();
+        assert_eq!(pdf_pages(&path), Some(3));
+        std::fs::remove_file(&path).unwrap();
+    }
 
     #[test]
     fn picker_yields_the_chosen_file_since_before_the_chosen_commit() {
