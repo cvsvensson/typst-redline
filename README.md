@@ -2,7 +2,7 @@
 
 Like latexdiff, for Typst.
 
-`typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document. It makes a PDF of the new version with deleted text struck out, new text highlighted, changed parts of formulas coloured, changed figures framed, and bars and change numbers in the margin; a summary at the end lists every change, including those it cannot mark on the page. AI agents wrote this tool.
+`typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document. It makes a PDF of the new version with changes marked, bars and change numbers in the margin; a summary at the end lists every change, including those it cannot mark on the page. AI agents wrote this tool.
 
 <img src="docs/paper.png" width="480" alt="A paper page: a deleted word struck out in red, new words highlighted in blue, a new term of a formula in blue, the old plot crossed out in a dashed red frame above the new one in a blue frame, a new paragraph in blue, and bars in the margin next to each changed line, with the number of each change beside them">
 
@@ -12,7 +12,9 @@ The [gallery](docs/gallery.md) shows every kind of mark, each with the files it 
 
 `typst-redline` compiles with the [`typst`](https://github.com/typst/typst#installation) on your `PATH`, and uses [git](https://git-scm.com/downloads) for comparisons with commits; comparing two files needs no git.
 
-Download the archive for your platform from the [Releases page](https://github.com/cvsvensson/typst-redline/releases) (`typst-redline-<target>.tar.gz`, or `.zip` on Windows; targets are `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `x86_64-apple-darwin`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`), unpack it and put `typst-redline` in a folder on your `PATH`. `typst-redline --version` checks that it is found.
+### Command line
+
+Download the archive for your platform from the [Releases page](https://github.com/cvsvensson/typst-redline/releases), unpack it and put `typst-redline` in a folder on your `PATH`. `typst-redline --version` checks that it is found.
 
 Alternatively, install it with [Rust](https://rustup.rs):
 
@@ -22,7 +24,9 @@ cargo install --git https://github.com/cvsvensson/typst-redline
 
 Add `--tag v0.1.0` for a release, or run the command again with `--force` to update; `cargo uninstall typst-redline` removes it.
 
-See below for instructions on the VS Code extension and Claude Code plugin.
+### VS Code extension
+
+The extension is not on the Marketplace, but the [Releases page](https://github.com/cvsvensson/typst-redline/releases) has one `.vsix` per platform, each with `typst-redline` inside. Pick the one for your platform and install it with *Extensions: Install from VSIX...* in vscode; no `PATH` setup is needed.
 
 ## Use
 
@@ -35,7 +39,7 @@ typst-redline paper.typ --since v1         # changes since a tag, branch or comm
 typst-redline paper.typ --since v1..v2     # changes between two commits
 ```
 
-Run `typst-redline` without a file in a terminal and it asks which file and which version to compare with, then prints the command it runs and runs it. Files that another file in the folder includes come last, and with one document there is no file question. The versions are the last reviewed version, the changes since the last commit, and the newest commits that change the document's files, each where it applies:
+Run `typst-redline` without a file in a terminal and it asks which file and which version to compare with, then prints the command it runs and runs it:
 
 ```
 Using paper.typ, the only Typst document in this folder.
@@ -51,7 +55,7 @@ Number [1]: 4
 typst-redline paper.typ --since 833bb8f
 ```
 
-Enter takes the first entry and `q` quits. Several numbers, such as `2 4`, show the changes from the oldest of them on and colour each one's changes on their own, as `--steps` does: here `--since 833bb8f --steps HEAD`. The last reviewed version can only be shown alone. An `s` in the answer, alone or with numbers, adds `--layout side-by-side`. Other options, such as `--layout side-by-side`, apply as given.
+Enter takes the first entry and `q` quits. Several numbers, such as `2 4`, show the changes from the oldest of them on and colour each one's changes on their own, as `--steps` does: here `--since 833bb8f --steps HEAD`. An `s` in the answer, alone or with numbers, adds `--layout side-by-side`. To add any other option, put it on the command line before the questions, as in `typst-redline --each-commit`, and it is kept in the command that is printed and run.
 
 Without git, compare two copies; quote paths that contain spaces:
 
@@ -94,24 +98,22 @@ The PDF is written next to the file, or next to the new file when you give two, 
 
 ## What is marked
 
-- Deleted text is struck out in red and new text highlighted in blue, also in headings, lists, captions and footnotes.
-- Inside a changed formula, the deleted parts are crossed out in red and the new parts are blue, where the change is small; a formula that changed for the most part, or whose lines were joined or split, is shown whole, like a changed figure, table, code block or drawing: the old one in a dashed red frame, the new one in a blue frame.
-- A bar in the margin points to every changed line, dashed for deletions and solid for insertions, with a number for each change that the summary page uses too.
-- A moved paragraph or section is shown once, at its new place, with a "moved" note; at its old place a grey line links to it.
-- Changes in included files and replaced images are marked; with git, the old version of each file comes from the old commit.
-- What cannot carry a mark, such as a title given as a string, a `#set` rule, a data file or a bibliography entry, is listed on the summary page.
+- A small change in a formula is marked in place; a formula that changed a lot, or whose lines were joined or split, is shown whole.
+- A changed figure, table, code block or drawing is shown whole: the old one in a dashed red frame, the new one in a blue frame.
+- A moved paragraph or section is shown once, at its new place; at its old place a grey line links to it.
+- What cannot be marked on the page is listed on the summary page.
 
 The [gallery](docs/gallery.md) has a picture and the details of each. With the deleted parts removed, the marked PDF has the same text, layout and numbering as the new version; [Known problems](docs/known-problems.md#deleted-content-in-the-new-layout) lists the exceptions.
 
 ## The summary page
 
-The last page, or pages, list every change by its number, section by section, and say in words what is not marked on the pages, with its source. A line at the top of the first page, where its top margin has room for it, says where the summary is and how many changes it lists that are not marked on the pages. The [gallery](docs/gallery.md#the-summary-page) describes each part.
+The last page, or pages, list every change by its number, section by section, and say in words what is not marked on the pages, with its source. The [gallery](docs/gallery.md#the-summary-page) describes each part.
 
 <img src="docs/report-summary.png" width="480" alt="The summary page: a sentence with the number of changes, a table of changed sections with the numbers of their changes, counts and pages, a changed title shown as old and new text, a new bibliography entry, the commits in the range, and the legend">
 
 ## Slides and side by side
 
-`--layout side-by-side` shows each changed page of the old version next to the same page of the new version, leaves out pages without changes, and ends with the summary. Use it for slides: in the default layout, deleted content takes room on the page, so a full slide overflows. Where only figures changed, `--graphics-markup new-only` also keeps the slides whole. It needs Typst 0.14 or later and an old version that compiles; the default layout falls back to coarser marks instead.
+`--layout side-by-side` shows each changed page of the old version next to the same page of the new version, leaves out pages without changes, and ends with the summary. Useful for slides that may overflow. It needs Typst 0.14 or later.
 
 ```
 typst-redline talk.typ --since HEAD~1 --layout side-by-side
@@ -129,27 +131,16 @@ typst-redline talk.typ --since HEAD~1 --layout side-by-side
 
 ## Known problems
 
-The ones you are most likely to meet; see [docs/known-problems.md](docs/known-problems.md) for more.
+The ones you are most likely to meet; see [docs/known-problems.md](docs/known-problems.md) for the full list.
 
-- In the default layout, deleted content takes room on the page, so line and page breaks shift, and on a full slide the old and the new version of a figure each take a page of their own; use side by side for slides, or `--graphics-markup new-only`, which leaves the old figure out.
-- Some moved text shows as deleted at one place and inserted at the other, for example a sentence moved within or between paragraphs, or a passage rewritten so much that it keeps less than about 60% of its words.
-- Where a function reads its content as text, a changed text can be missing from the page, not only its mark, and a function that fails on marked content makes the whole document fall back to coarser marks; the summary page says so in both cases.
-- Deleted code that uses a name which meant something else at its place, such as a loop variable or a function parameter, is shown by that name, such as *[unit]*, not as it looked.
-- Deleted content is laid out under the new version's show and set rules, and a reference in it to a label that the new version lacks shows the label, not the number the old version printed.
-- Typst 0.12 and 0.13 are not tested; before Typst 0.14, side by side does not work and a file read only through a computed path, such as `#include name + ".typ"`, is not checked for changes.
+- On a full slide the default layout overflows, because deleted content takes room on the page; use `--layout side-by-side` for slides.
+- Some moved text shows as deleted at one place and inserted at the other.
+- When a function fails on marked content, the whole document falls back to coarser marks; the summary page says so.
+- Only Typst 0.14.2 and 0.15.1 are tested in CI; before Typst 0.14, side by side does not work.
 
 ## VS Code
 
-The extension in [`vscode/`](vscode) runs `typst-redline` from VS Code: open a `.typ` file, click the compare button in the editor's title bar or right-click the file in the Explorer, pick what to compare with, and the PDF with the changes marked opens. It needs `typst-redline` installed as above and is not on the Marketplace; build it with Node.js and install it by hand:
-
-```
-cd vscode
-npm ci
-npm run package     # makes typst-redline-0.1.0.vsix
-code --install-extension typst-redline-0.1.0.vsix
-```
-
-or use *Extensions: Install from VSIX...* in VS Code. [vscode/README.md](vscode/README.md) describes the lists, views, commands and settings.
+The extension in [`vscode/`](vscode) runs `typst-redline` from VS Code: open a `.typ` file, click the compare button in the editor's title bar or right-click the file in the Explorer, pick what to compare with, and the PDF with the changes marked opens. [vscode/README.md](vscode/README.md) describes the lists, views, commands and settings.
 
 ## Claude Code
 
