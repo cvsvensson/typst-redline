@@ -863,6 +863,25 @@
   if runs.len() == 0 { "–" } else { runs.map(r => str(r.first()) + if r.len() > 1 { "–" + str(r.last()) } else { "" }).join(", ") }
 }
 
+// The pages numbered `ps` in this PDF as the summary's table names them,
+// under the head `redline-table-head()`: by these numbers, or, where pages
+// are left out of the output, by the names that the margin uses.
+#let redline-table-pages(ps) = if not redline-only-changes { redline-pages(ps) } else {
+  let at = (:)
+  for m in query(<redline-page>) { at.insert(str(m.location().page()), m.location()) }
+  redline-page-names(ps.map(p => at.at(str(p), default: none)).filter(l => l != none), prefix: false)
+}
+
+// The head of the summary's column of pages: "Page" where its numbers are
+// those printed on the pages.
+#let redline-table-head() = {
+  let printed = query(<redline-page>).all(m => redline-printed(m.location()) in (none, str(m.location().page())))
+  if printed or redline-only-changes [Page] else [PDF page]
+}
+
+// Where the summary is, as the line at the top of the first page says it.
+#let redline-summary-at(loc) = if redline-only-changes [at the end] else [on #redline-page-names((loc,))]
+
 // `body` in text set as `set text(..args)` sets it, also where the document
 // has a rule such as `show text: set text(fill: red)`: a show-set rule wins
 // over set rules and outer show-set rules, a set rule does not. The tool's
@@ -1090,7 +1109,7 @@
   show: redline-own-text.with(6.5pt)
   set par(justify: false)
   let lead = if v.at("empty", default: false) [typst-redline found no changes] else [Changes marked by typst-redline]
-  let pages = if redline-only-changes [at the end] else [on #redline-page-names((at.first().location(),))]
+  let pages = redline-summary-at(at.first().location())
   // The colours inside the link, which the document can style. Without
   // its first words where it would wrap; on white and at the right, to read
   // on a header band beside a title.
@@ -1963,25 +1982,17 @@
     block(text(size: 1.4em, weight: "bold")[Changes from #info.old to #info.new])
     if total == 0 [No changes found between the two versions.] else [#total #if total == 1 [change] else [changes]#if apart == total [, not marked on the pages but listed below] else if apart > 0 [, #apart of them not marked on the pages but listed below].]
 
-    // Pages by their number in this PDF, which is the number printed on
-    // them unless a page prints another. Where pages are left out of the
-    // output, by the names that the margin uses.
-    let printed = query(<redline-page>).all(m => redline-printed(m.location()) in (none, str(m.location().page())))
-    let page-at = (:)
-    for m in query(<redline-page>) { page-at.insert(str(m.location().page()), m.location()) }
     let rows = redline-section-rows(info, lost, nums)
     let min-level = calc.min(..rows.map(r => r.level), 9)
     let rows = rows.map(r => {
-      let pages = if r.pages.len() == 0 { none } else if redline-only-changes {
-        redline-page-names(r.pages.map(p => page-at.at(str(p), default: none)).filter(l => l != none), prefix: false)
-      } else { redline-pages(r.pages) }
+      let pages = if r.pages.len() > 0 { redline-table-pages(r.pages) }
       let (name, pages) = if r.heading == none { (r.name, pages) } else { (link(r.heading, r.name), link(r.heading, pages)) }
       (pad(left: (r.level - min-level) * 1.2em, name), if r.ns.len() > 0 { redline-number(r.ns) }, r.what, pages)
     }).flatten()
     if rows.len() > 0 {
       redline-head[Changes by section]
       let grey = text.with(size: 0.85em, fill: luma(110))
-      let head = (grey[Section], grey[No.], grey[Changes], grey(if printed or redline-only-changes [Page] else [PDF page]))
+      let head = (grey[Section], grey[No.], grey[Changes], grey(redline-table-head()))
       // Columns are as wide as their content. Section names get their width
       // first, as long as the changes keep a third of what the numbers and
       // pages leave; neither gets less than its longest unbreakable part,
