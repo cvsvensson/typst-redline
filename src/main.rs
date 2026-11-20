@@ -63,7 +63,10 @@ How marks look:
                         --style strike=none, or several from a file holding a
                         dictionary such as (del: green, bars: none).
                         Repeatable; later values win. The keys are in
-                        docs/styling.md and at the top of --show-preamble
+                        docs/styling.md and at the top of --show-preamble.
+                        .typst-redline.typ in the document's folder or above
+                        and typst-redline/style.typ in the user's settings
+                        apply first
   --graphics-markup <both|new-only|none>
                         A changed formula, figure, table, code block or
                         drawing, as in latexdiff: both (default) shows the
@@ -715,7 +718,16 @@ fn fallback_note(fallbacks: &[&str]) -> String {
 /// tell which files a compile read; if the proof read a file that the
 /// comparison did not check, it is made again with those files.
 fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<PathBuf, String> {
-    let style = style_inputs(&a)?;
+    let (old, new) = specs(&a, reviewed).map_err(|e| {
+        if a.root_env && e.contains("the root") {
+            format!("{e} (set by TYPST_ROOT)")
+        } else if a.files.len() == 1 && e.contains("not a git repository") {
+            format!("{e}\nhint: with one file, the old version comes from git; to compare two files, give both: typst-redline old.typ new.typ")
+        } else {
+            e
+        }
+    })?;
+    let style = style_inputs(&a, &style_files(&a, &new))?;
     let version = typst_version(&a.typst);
     let deps = version.as_deref().is_some_and(|v| minor(v) >= (0, 14));
     let reads = reads.or_else(|| deps.then(Vec::new));
@@ -735,7 +747,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
                 (
                     !style.is_empty(),
                     "\"redline-style\"",
-                    "--style, --type and --graphics-markup",
+                    "a style file, --style, --type or --graphics-markup",
                 ),
             ];
             if let Some((_, name, what)) = needs.iter().find(|(on, name, _)| *on && !text.contains(name)) {
@@ -760,15 +772,6 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             at.0, at.1, a.typst
         ));
     }
-    let (old, new) = specs(&a, reviewed).map_err(|e| {
-        if a.root_env && e.contains("the root") {
-            format!("{e} (set by TYPST_ROOT)")
-        } else if a.files.len() == 1 && e.contains("not a git repository") {
-            format!("{e}\nhint: with one file, the old version comes from git; to compare two files, give both: typst-redline old.typ new.typ")
-        } else {
-            e
-        }
-    })?;
     if new.tree.read(&new.entry).is_none() {
         return Err(match new.tree {
             Tree::Dir(_) => format!("{} does not exist", new.file.display()),
@@ -1003,12 +1006,12 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
             })?;
             return Ok(pdf);
         }
-        // The preamble's messages about the style start with the option.
+        // The preamble's messages about the style start with where it came from.
         if let Some(e) = stderr
             .lines()
             .filter_map(|l| l.strip_prefix("error: "))
             .map(|e| e.strip_prefix("assertion failed: ").unwrap_or(e))
-            .find(|e| e.starts_with("--style") || e.starts_with("--type"))
+            .find(|e| style_error(e))
         {
             return Err(e.to_string());
         }
@@ -1069,29 +1072,86 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     Err(format!("typst compile failed{hint}"))
 }
 
-/// The `--input` argument that passes the name of --type and the
-/// dictionaries of --style to the preamble, in the order they apply.
-fn style_inputs(a: &Args) -> Result<Vec<String>, String> {
-    let mut parts: Vec<String> = a.style_type.iter().map(|t| format!("{t:?}")).collect();
+/// The style file of a project, in the folder of the document or above.
+const PROJECT_STYLE: &str = ".typst-redline.typ";
+
+/// The style file of the user, `typst-redline/style.typ` in the folder for
+/// settings: `%APPDATA%` on Windows, else `$XDG_CONFIG_HOME` or `~/.config`.
+fn user_style(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let var = |v: &str| var(v).filter(|d| !d.is_empty()).map(PathBuf::from);
+    let dir = if cfg!(windows) {
+        var("APPDATA")
+    } else {
+        var("XDG_CONFIG_HOME").or_else(|| Some(var("HOME")?.join(".config")))
+    };
+    Some(dir?.join("typst-redline").join("style.typ"))
+}
+
+/// The style files that apply to `new`, in the order they apply: the user's,
+/// then the nearest project file from the document's folder up to the root
+/// or the repository.
+fn style_files(a: &Args, new: &Spec) -> Vec<PathBuf> {
+    let top = a.root.clone().or_else(|| repository(new));
+    let top = top.and_then(|t| std::path::absolute(t).ok());
+    let start = std::path::absolute(&new.file).ok();
+    let project = start.iter().flat_map(|f| f.ancestors().skip(1)).find_map(|d| {
+        let f = d.join(PROJECT_STYLE);
+        // Without a root or repository, only the document's folder.
+        let last = top.as_deref().is_none_or(|t| !d.starts_with(t) || d == t);
+        (f.is_file() || last).then_some(f)
+    });
+    [user_style(|v| std::env::var_os(v)), project]
+        .into_iter()
+        .flatten()
+        .filter(|f| f.is_file())
+        .collect()
+}
+
+/// Whether an error is about a value that a style file, --type or --style
+/// gave, which the preamble's messages start with.
+fn style_error(e: &str) -> bool {
+    ["--style", "--type", "style file "].iter().any(|p| e.starts_with(p))
+}
+
+/// The `--input` argument that passes the style `files`, the name of --type
+/// and the values of --style to the preamble, in the order they apply, each
+/// with a label that names where it came from.
+fn style_inputs(a: &Args, files: &[PathBuf]) -> Result<Vec<String>, String> {
+    let read = |f: &Path, label: String| {
+        std::fs::read_to_string(f)
+            .map(|code| (label, code))
+            .map_err(|e| e.to_string())
+    };
+    let mut parts = vec![];
+    for f in files {
+        let label = format!("style file {}", f.display());
+        parts.push(read(f, label.clone()).map_err(|e| format!("{label}: {e}"))?);
+    }
+    parts.extend(a.style_type.iter().map(|t| (format!("--type {t}"), format!("{t:?}"))));
     for s in &a.styles {
-        let part = match s.split_once('=') {
+        let label = format!("--style {s}");
+        parts.push(match s.split_once('=') {
             Some((key, value)) if !key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '-') => {
-                format!("({key}: {value})")
+                (label, format!("({key}: {value})"))
             }
-            _ => std::fs::read_to_string(s).map_err(|e| {
+            _ => read(Path::new(s), label).map_err(|e| {
                 format!("--style {s}: {e}; give key=value, such as del=green, or a file that holds a dictionary")
             })?,
-        };
-        if let Some(e) = typst_syntax::parse_code(&part).errors_and_warnings().0.first() {
-            return Err(format!("--style {s}: {}", e.message));
+        });
+    }
+    for (label, code) in &parts {
+        if let Some(e) = typst_syntax::parse_code(code).errors_and_warnings().0.first() {
+            return Err(format!("{label}: {}", e.message));
         }
-        parts.push(part);
     }
     if parts.is_empty() {
         return Ok(vec![]);
     }
     // A file can end in a line comment.
-    let parts: String = parts.iter().map(|p| format!("{p}\n,")).collect();
+    let parts: String = parts
+        .iter()
+        .map(|(label, code)| format!("({label:?}, {code}\n),"))
+        .collect();
     Ok(vec!["--input".into(), format!("redline-style=({parts})")])
 }
 
@@ -2027,6 +2087,7 @@ fn pick(
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("typ")))
         .filter_map(|p| Some(p.file_name()?.to_str()?.to_string()))
+        .filter(|f| f != PROJECT_STYLE)
         .collect();
     files.sort();
     if files.is_empty() {
@@ -2261,8 +2322,8 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        // A value that --style or --type gave is a usage error.
-        Err(e) if e.starts_with("--style") || e.starts_with("--type") => {
+        // A value that a style file, --type or --style gave is a usage error.
+        Err(e) if style_error(&e) => {
             eprintln!("error: {e}\nsee typst-redline --help");
             ExitCode::from(2)
         }
@@ -2275,7 +2336,9 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{balanced_cuts, pick, reviewed_ref, without_export_args};
+    use super::{balanced_cuts, pick, reviewed_ref, user_style, without_export_args};
+    use std::ffi::OsString;
+    use std::path::PathBuf;
 
     #[test]
     fn picker_yields_the_chosen_file_since_before_the_chosen_commit() {
@@ -2367,5 +2430,24 @@ mod tests {
             without_export_args(&args),
             ["--font-path", "f", "--future", "x", "--input", "a=b"]
         );
+    }
+
+    #[test]
+    fn the_users_style_file_is_in_the_folder_for_settings() {
+        let env = |vars: &'static [(&str, &str)]| {
+            move |v: &str| vars.iter().find(|(k, _)| *k == v).map(|(_, x)| OsString::from(x))
+        };
+        let at = |p: &str| Some(PathBuf::from(p).join("typst-redline").join("style.typ"));
+        if cfg!(windows) {
+            assert_eq!(user_style(env(&[("APPDATA", "C:/a")])), at("C:/a"));
+            assert_eq!(user_style(env(&[])), None);
+        } else {
+            let both = &[("XDG_CONFIG_HOME", "/x"), ("HOME", "/h")];
+            assert_eq!(user_style(env(both)), at("/x"));
+            assert_eq!(
+                user_style(env(&[("XDG_CONFIG_HOME", ""), ("HOME", "/h")])),
+                at("/h/.config")
+            );
+        }
     }
 }

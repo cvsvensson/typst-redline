@@ -13,6 +13,12 @@ with `my-style.typ`:
 (del: rgb("#b00000"), strike: 1pt, bars: none)
 ```
 
+A style file can also start from a latexdiff type, with the key `type`, such as `(type: "UNDERLINE", bars: black)`.
+
+## Style files that apply by themselves
+
+Two style files apply without an option, if they exist: the user's `typst-redline/style.typ` in `%APPDATA%` on Windows, and in `$XDG_CONFIG_HOME` or else `~/.config` on Linux and macOS; then a project's `.typst-redline.typ`, the first one found in the document's folder or a folder above it, up to `--root` or the git repository. `-t` and `--style` apply after them. An error in one of them is reported with its path.
+
 `-t UNDERLINE` gives latexdiff's default look; the [latexdiff types](#latexdiff-types) below lists the others. The page of the [gallery](gallery.md)'s paper example with each of them, and with `--style ins=purple --style ins-fill=none`:
 
 <table>

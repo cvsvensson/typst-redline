@@ -1557,11 +1557,7 @@ fn keeps_the_contract(name: &str) {
             "--layout".as_ref(),
             layout.as_ref(),
         ];
-        let run = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
-            .current_dir(&*out)
-            .args(args)
-            .output()
-            .unwrap();
+        let run = bin().current_dir(&*out).args(args).output().unwrap();
         let stderr = String::from_utf8_lossy(&run.stderr);
         assert!(
             run.status.success() && pdf_pages(&pdf) > 0 && !stderr.contains("did not converge"),
@@ -2164,12 +2160,16 @@ fn a_call_that_reads_a_changed_file_is_a_change_where_it_stands() {
 
 // CLI
 
+/// The binary, without the user's own style file.
+fn bin() -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_typst-redline"));
+    let none = std::env::temp_dir().join("typst-redline-no-settings");
+    c.env("APPDATA", &none).env("XDG_CONFIG_HOME", &none);
+    c
+}
+
 fn cli(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_typst-redline"))
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .unwrap()
+    bin().current_dir(dir).args(args).output().unwrap()
 }
 
 /// The generated entry file of a successful run with `--keep-typ`.
@@ -3429,7 +3429,7 @@ fn typst_root_sets_the_root() {
     std::fs::write(dir.join("shared.typ"), "Shared.\n").unwrap();
     std::fs::write(dir.join("doc/old.typ"), "#include \"/shared.typ\"\nOld.\n").unwrap();
     std::fs::write(dir.join("doc/new.typ"), "#include \"/shared.typ\"\nNew.\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+    let out = bin()
         .current_dir(dir.join("doc"))
         .env("TYPST_ROOT", &*dir)
         .args(["old.typ", "new.typ"])
@@ -3444,7 +3444,7 @@ fn root_from_typst_root_is_named_in_errors() {
     std::fs::create_dir(dir.join("root")).unwrap();
     std::fs::write(dir.join("old.typ"), "Old.").unwrap();
     std::fs::write(dir.join("new.typ"), "New.").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+    let out = bin()
         .current_dir(&*dir)
         .env("TYPST_ROOT", dir.join("root"))
         .args(["old.typ", "new.typ"])
@@ -3469,7 +3469,7 @@ fn file_outside_the_root_suggests_the_repository_as_root() {
         format!("#include \"../shared.typ\"\n{}", doc("beta")),
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_typst-redline"))
+    let out = bin()
         .current_dir(&*dir)
         .env_remove("TYPST_ROOT")
         .args(["doc/main.typ"])
@@ -3956,7 +3956,7 @@ fn a_style_colours_the_strike_through_too() {
     let out = Command::new("typst")
         .args(["compile", "--root"])
         .arg(&*dir)
-        .args(["--input", r##"redline-style=((del: rgb("#00c000")),)"##])
+        .args(["--input", r##"redline-style=(("test", (del: rgb("#00c000"))),)"##])
         .arg(dir.join("main.typ"))
         .arg(dir.join("page-{n}.svg"))
         .output()
@@ -3972,7 +3972,7 @@ fn an_unknown_style_key_or_a_value_of_another_type_is_an_error() {
     std::fs::write(dir.join("old.typ"), "Old.").unwrap();
     std::fs::write(dir.join("new.typ"), "New.").unwrap();
     for (args, error) in [
-        (["--style", "dell=green"], "error: --style: no key dell"),
+        (["--style", "dell=green"], "error: --style dell=green: no key dell"),
         (
             ["--style", "bars=1"],
             "error: --style bars=1: bars takes auto, color or none",
@@ -4013,6 +4013,30 @@ fn a_latexdiff_type_and_a_style_file_apply() {
 }
 
 #[test]
+fn a_project_style_file_applies_from_a_folder_above_before_style() {
+    let dir = temp_dir("project-style");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("sub/old.typ"), "Old words.").unwrap();
+    std::fs::write(dir.join("sub/new.typ"), "New words.").unwrap();
+    std::fs::write(
+        dir.join(".typst-redline.typ"),
+        r##"(ins: rgb("#00a000"), bars: rgb("#00c000"))"##,
+    )
+    .unwrap();
+    let page = |style: &[&str]| {
+        let args = ["sub/old.typ", "sub/new.typ", "--root", ".", "-o", "out.pdf"];
+        let svg = ["--", "--format", "svg", "--pages", "1"];
+        let out = cli(&dir, &[&args[..], style, &svg[..]].concat());
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        std::fs::read_to_string(dir.join("out.pdf")).unwrap()
+    };
+    let svg = page(&[]);
+    assert!(svg.contains(r##"fill="#00a000""##) && svg.contains(r##"stroke="#00c000""##));
+    let svg = page(&["--style", "bars=none"]);
+    assert!(svg.contains(r##"fill="#00a000""##) && !svg.contains(r##"stroke="#00c000""##));
+}
+
+#[test]
 fn show_preamble_prints_the_preamble() {
     let out = cli(Path::new("."), &["--show-preamble"]);
     assert!(out.status.success());
@@ -4026,7 +4050,7 @@ fn styled_probes(name: &str, style: &str, old: &str, new: &str) -> Option<[Strin
     let plain = compile(&format!("{name}-new"), &[("main.typ".into(), new.into())])?;
     let r = redline_of(old, new);
     let dir = compile(name, &[r.files, vec![(PREAMBLE_PATH.into(), PREAMBLE.into())]].concat())?;
-    let input = format!("redline-style=({style},)");
+    let input = format!("redline-style=((\"test\", {style}),)");
     Some([
         query_with(&dir, &[&input], "<probe>", "value"),
         query_with(&dir, &[&input], "<redline-lost>", "key"),

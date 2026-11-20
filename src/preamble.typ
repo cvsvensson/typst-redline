@@ -60,9 +60,10 @@
 // the old version has. The composite of both calls
 // redline-side-by-side(info) (see there).
 
-// The defaults of the style. The binary passes --type and --style as
-// `--input redline-style=(NAME, dict, ...)`, where a string names one of
-// `redline-types`; their keys replace these in order. A stroke takes the
+// The defaults of the style. The binary passes style files, --type and
+// --style as `--input redline-style=((label, part), ...)`, where a part is a
+// dictionary of keys or a string that names one of `redline-types`, as a
+// dictionary's key `type` does; their keys replace these in order. A stroke takes the
 // fields it leaves out from its default, and its paint from the colour that
 // `redline-strokes` names, so that `del: green` also colours the
 // strike-through.
@@ -134,20 +135,25 @@
 )
 
 // The style as given, before strokes are completed. Every message starts
-// with --style or --type, which the binary reports as a usage error.
+// with the label of its part, which names the option or file that gave it.
 #let redline-given = {
   let st = redline-defaults
   let given = sys.inputs.at("redline-style", default: none)
-  for part in if given != none { eval(given) } else { () } {
+  let parts = if given != none { eval(given) } else { () }
+  let parts = parts.map(((label, part)) => if type(part) == dictionary and "type" in part {
+    let keys = part
+    ((label, keys.remove("type")), (label, keys))
+  } else { ((label, part),) }).join(default: ())
+  for (label, part) in parts {
     let part = if type(part) != str { part } else {
-      assert(lower(part) in redline-types, message: "--type " + part + ": no such type; the types are " + redline-types.keys().map(upper).join(", "))
+      assert(lower(part) in redline-types, message: label + ": no such type; the types are " + redline-types.keys().map(upper).join(", "))
       redline-types.at(lower(part))
     }
-    assert(type(part) == dictionary, message: "--style: " + repr(part) + " is not a dictionary such as (del: green)")
+    assert(type(part) == dictionary, message: label + ": " + repr(part) + " is not a dictionary such as (del: green)")
     for (k, v) in part {
-      assert(k in st, message: "--style: no key " + k + "; the keys are " + st.keys().join(", "))
+      assert(k in st, message: label + ": no key " + k + "; the keys are " + st.keys().join(", "))
       let takes = redline-takes.at(k, default: (type(st.at(k)),))
-      assert(type(v) in takes, message: "--style " + k + "=" + repr(v) + ": " + k + " takes " + takes.map(str).join(", ", last: " or "))
+      assert(type(v) in takes, message: label + ": " + k + " takes " + takes.map(str).join(", ", last: " or ") + ", not " + repr(v))
       st.insert(k, v)
     }
   }
