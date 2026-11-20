@@ -22,7 +22,7 @@ cargo install --git https://github.com/cvsvensson/typst-redline
 
 Add `--tag v0.1.0` for a release, or run the command again with `--force` to update; `cargo uninstall typst-redline` removes it.
 
-CI runs the tests with Typst 0.15.1 on Linux, macOS and Windows, and with Typst 0.14.2 on Linux ([ci.yml](.github/workflows/ci.yml)); [Known problems](docs/known-problems.md#typst-versions) says what is known about other versions.
+See below for instructions on the VS Code extension and Claude Code plugin.
 
 ## Use
 
