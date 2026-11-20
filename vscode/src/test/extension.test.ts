@@ -252,8 +252,8 @@ suite("Typst Redline commands", () => {
     picks = ["[button]", "second"];
     await show();
     assert.deepStrictEqual(titles, [
-      "Typst Redline: Show Changes (view: Side by side, coloured by commit, 4 steps)",
-      "Typst Redline: Show Changes (view: Marked, coloured by commit, 4 steps)",
+      "Typst Redline: Show Changes (view: Side by side, coloured by commit, 4 steps) · button at right: marked",
+      "Typst Redline: Show Changes (view: Marked, coloured by commit, 4 steps) · button at right: side by side",
     ]);
     assert.strictEqual(lists.length, 1);
     assert.strictEqual(actives[0] && name(actives[0]), "third – ändrad “här”");
@@ -321,7 +321,7 @@ suite("Typst Redline commands", () => {
     ticks = [["third – ändrad “här”", "second"]];
     await show();
     assertOpenedPdf();
-    assert.strictEqual(titles[1], "Typst Redline: Several Commits (layout: Side by side)");
+    assert.strictEqual(titles[1], "Typst Redline: Several Commits (layout: Side by side) · button at right: marked");
     assert.deepStrictEqual(runs[0].slice(1, 3), ["--since", hash("first")]);
     assert.deepStrictEqual(runs[0].slice(5), ["--layout", "side-by-side", "--steps", hash("second")]);
   });

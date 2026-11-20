@@ -174,7 +174,8 @@ function pick<T extends vscode.QuickPickItem>(
     if (o.view) {
       const showView = () => {
         const v = currentView();
-        list.title = `${o.title} (${o.view}: ${o.view === "view" ? viewName(v) : layoutName(v)})`;
+        const name = o.view === "view" ? viewName(v) : layoutName(v);
+        list.title = `${o.title} (${o.view}: ${name}) · button at right: ${otherLayoutName(v)}`;
         list.buttons = [layoutButton(v)];
       };
       showView();
@@ -444,11 +445,13 @@ function switchLayout() {
   return state.update("view", { ...v, layout: v.layout === "marked" ? "side-by-side" : "marked" });
 }
 
+const otherLayoutName = (v: View) => layouts.find((l) => l.layout !== v.layout)!.label.toLowerCase();
+
+// The icon shows the layout the button switches to.
 function layoutButton(v: View): vscode.QuickInputButton {
-  const other = layouts.find((l) => l.layout !== v.layout)!.label.toLowerCase();
   return {
-    iconPath: new vscode.ThemeIcon(v.layout === "marked" ? "file" : "book"),
-    tooltip: `Switch to ${other}`,
+    iconPath: new vscode.ThemeIcon(v.layout === "marked" ? "split-horizontal" : "file"),
+    tooltip: `Switch to ${otherLayoutName(v)}`,
   };
 }
 
