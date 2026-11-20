@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Inside a changed formula, only the changed parts are marked: deleted ones crossed out in red, new ones in blue. A formula that changed for the most part, or lost a line break or alignment point, is still shown whole. `--math-markup whole` shows every changed formula whole.
+- Inside a changed formula, only the changed parts are marked: deleted ones crossed out in red, new ones in blue. Whole lines added to or removed from an aligned formula are marked as lines. A formula that changed for the most part, or whose lines were joined or split, is still shown whole. `--math-markup whole` shows every changed formula whole.
 
 ## 0.1.0
 

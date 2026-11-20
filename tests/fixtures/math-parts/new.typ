@@ -15,3 +15,6 @@ $ M = mat(1, 2; 3, 5) $
 $ sum_(n=0)^infinity a_n = lim_(N -> infinity) S_N $
 
 $ x &= y + z $
+
+$ p &= q \
+  &= s $

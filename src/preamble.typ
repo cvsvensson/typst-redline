@@ -964,12 +964,22 @@
 // A change inside a formula: `body` is an inline equation whose body is laid
 // out as part of the formula around it, in its style and spacing. Strikes,
 // highlights and boxes do not reach into math, so deleted math is crossed
-// out with a line and both are coloured; the bar marks the line.
+// out with a line, each piece between line breaks and alignment points on
+// its own, and both are coloured; the bar marks the line. Nothing deleted
+// leaves nothing in the formula.
 #let redline-math(kind, body, st, step, id) = {
   let b = if type(body) == content and body.func() == math.equation { body.body } else { body }
-  let fill = if kind == "del" { st.del } else { st.ins }
+  let breaks = (linebreak, $&$.body.func())
+  let cross(run) = if run.any(c => c != [ ]) { math.cancel(redline-neutral(run.join()), stroke: st.strike) } else { run.join() }
+  let shown = if kind == "ins" or b == [] { b } else {
+    let (out, run) = ([], ())
+    for c in if b.func() == [].func() { b.children } else { (b,) } {
+      if c.func() in breaks { out += cross(run) + c; run = () } else { run.push(c) }
+    }
+    out + cross(run)
+  }
   redline-tag(kind, -0.8em, step: step, id: id)
-  redline-fill(fill, if kind == "del" { math.cancel(redline-neutral(b), stroke: st.strike) } else { b })
+  redline-fill(if kind == "del" { st.del } else { st.ins }, shown)
   context redline-tag("end", 0.3em, width: 0pt)
 }
 

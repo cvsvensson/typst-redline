@@ -91,7 +91,7 @@ The PDF is written next to the file, or next to the new file when you give two, 
 ## What is marked
 
 - Deleted text is struck out in red and new text highlighted in blue, also in headings, lists, captions and footnotes.
-- Inside a changed formula, the deleted parts are crossed out in red and the new parts are blue, where the change is small; a formula that changed for the most part, or lost a line break or alignment point, is shown whole, like a changed figure, table, code block or drawing: the old one in a dashed red frame, the new one in a blue frame. `--math-markup whole` shows every changed formula whole.
+- Inside a changed formula, the deleted parts are crossed out in red and the new parts are blue, where the change is small; a formula that changed for the most part, or whose lines were joined or split, is shown whole, like a changed figure, table, code block or drawing: the old one in a dashed red frame, the new one in a blue frame. `--math-markup whole` shows every changed formula whole.
 - A bar in the margin points to every changed line, dashed for deletions and solid for insertions, with a number for each change that the summary page uses too.
 - A moved paragraph or section is shown once, at its new place, with a "moved" note; at its old place a grey line links to it.
 - Changes in included files and replaced images are marked; with git, the old version of each file comes from the old commit.

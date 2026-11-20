@@ -12,6 +12,7 @@ Each of these was tried with the current version. Within each group, the ones a 
 - A figure whose body changed is deleted and inserted whole, caption and all, when it is passed to another call, as in `#align(center, figure(...))`, when it is inline, or when an argument other than its body and content in brackets changed.
 - A raw block with one changed line is deleted and inserted whole.
 - New parts of a formula are only coloured blue, which does not show in greyscale; the bar in the margin marks their line. A changed part is marked with what it is attached to where it cannot stand alone: a changed base such as the `x` of `x^2` marks all of `x^2`. A formula right next to changed words can be shown whole, with them.
+- Deleted parts of a display formula widen it, and a wide formula can then reach its equation number. `--math-markup whole` shows the old formula on a line of its own.
 - A heading, list item or code line deleted or inserted directly between two lines of text, with no blank line, shows the unchanged text next to it as deleted and inserted again.
 - A citation added to or removed from a group such as `@a @b` marks the whole group.
 - Inserted or deleted text that the document gives a colour of its own, such as a link or a white tag on a dark box, keeps that colour and is marked only by its strike, highlight or bar; under a rule such as `show text: set text(fill: ...)` it takes that rule's colour.

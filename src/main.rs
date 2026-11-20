@@ -694,7 +694,7 @@ fn fallback_options(fallbacks: &[&str], fine_math: bool) -> Options {
     Options {
         eval_deleted: !fallbacks.contains(&"names"),
         content_blocks: !fallbacks.contains(&"whole"),
-        fine_math,
+        fine_math: fine_math && !fallbacks.contains(&"whole"),
     }
 }
 

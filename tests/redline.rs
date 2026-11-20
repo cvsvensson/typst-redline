@@ -183,6 +183,33 @@ fn changed_parts_of_a_formula_are_marked_inside_it() {
 }
 
 #[test]
+fn embedded_code_in_a_formula_is_marked_with_its_hash() {
+    let out = body("math-code");
+    assert!(out.contains("#redline-ins(math: true)[$#y$]; + 1"), "{out}");
+    assert!(!out.contains("##"), "{out}");
+}
+
+#[test]
+fn changed_parts_of_a_formula_apart_by_spaces_are_one_change() {
+    let out = body("math-signs");
+    assert!(
+        out.contains("[$alpha beta gamma$]};#redline-ins(math: true)[$delta epsilon zeta$]"),
+        "{out}"
+    );
+}
+
+#[test]
+fn side_by_side_pairs_a_line_inserted_in_an_aligned_formula() {
+    if !typst_available() || typst_before_0_14() {
+        return;
+    }
+    let dir = temp_dir("side-by-side-aligned-line");
+    std::fs::write(dir.join("old.typ"), "$ a &= b + c \\\n  &= d $\n").unwrap();
+    std::fs::write(dir.join("new.typ"), "$ a &= b + c \\\n  &= d \\\n  &= e $\n").unwrap();
+    assert_eq!(shown_pairs(&dir), ["(1,), new: (1,)"]);
+}
+
+#[test]
 fn rewritten_formula_and_deleted_line_break_are_marked_whole() {
     let out = body("math-parts");
     assert!(
