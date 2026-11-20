@@ -1,6 +1,6 @@
 # Gallery
 
-Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again. [Known problems](known-problems.md) lists the cases where the marks fall short, and [Styling](styling.md) shows the paper example in latexdiff's markup types and in colours of its own.
+Each picture is a page of a PDF that `typst-redline` made from the files linked next to it, rendered unchanged. [make-pictures.sh](make-pictures.sh) makes them all again. [Known problems](known-problems.md) lists the cases where the marks fall short, and [Styling](styling.md) shows the paper example in types modelled on latexdiff's and in styles of its own.
 
 ## Text, formulas and figures
 
@@ -19,6 +19,16 @@ Text is marked the same way inside headings, list items, captions, bold and emph
 In an old formula, figure, code block or drawing, text is struck through where it can be; an image or a drawing, such as a plot, is crossed out, and anything else, such as a formula, a table, a code block or a chart built from boxes, is tinted red. A drawing in a box in the text, such as an icon, gets a frame of its own size. Code blocks and filled boxes keep their colours inside the frame. With `--graphics-markup new-only`, as in latexdiff, the old formula and plot are left out, and a short dashed bar with the change's number marks where they stood; with `--graphics-markup none`, the new ones also have no frame and only their bar marks them. In side by side, the old one is on the old page in either case, and `none` leaves out the frames on both pages.
 
 Change numbers count in the reading order of the new version, so that a co-author can write "change 14 is wrong". A change in a column between others, or next to a margin too narrow for its number, has its number in the other margin on the same line.
+
+## A style of its own
+
+The paper page again with [loud.typ](styles/loud.typ), a style file that sets most keys of [Styling](styling.md) to heavy values: a neon highlight, thick lines, heavy frames and wide bars.
+
+```
+typst-redline old.typ new.typ --style loud.typ
+```
+
+<img src="styles/loud.png" width="560" alt="The paper page with neon green highlight on new words, thick pink strike-through on deleted words, a heavy dotted pink frame with a thick cross around the old plot, a heavy green frame around the new figure and wide bars in the margin">
 
 ## Footnotes
 

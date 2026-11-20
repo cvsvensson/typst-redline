@@ -1,4 +1,4 @@
-// For printing in black and white: new text black on grey, deleted text
+// Greys only: new text black on grey, deleted text
 // grey and struck through.
 (
   ins: black,
