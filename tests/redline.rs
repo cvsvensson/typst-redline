@@ -9,12 +9,14 @@ use typst_redline::{
 const FULL: Options = Options {
     eval_deleted: true,
     content_blocks: true,
+    fine_math: true,
 };
 
 /// Deleted code shown by name instead of evaluated.
 const BY_NAME: Options = Options {
     eval_deleted: false,
     content_blocks: true,
+    fine_math: true,
 };
 
 fn fixtures() -> impl Iterator<Item = String> {
@@ -170,10 +172,24 @@ fn changed_spacing_in_raw_text_is_marked() {
 }
 
 #[test]
-fn inline_math_is_atomic() {
-    let out = body("inline-math");
-    assert!(out.contains("[$T_R^((N))$]"), "{out}");
-    assert!(out.contains("[$T_R^((N,k))$]"), "{out}");
+fn changed_parts_of_a_formula_are_marked_inside_it() {
+    let out = body("math-parts");
+    assert!(out.contains("c^(#{import \"/.redline-old/main.typ\": *; redline-del(math: true, gap: true)[$2$]};#redline-ins(math: true)[$3$];)$"), "{out}");
+    assert!(
+        out.contains("V(x) #redline-ins(math: true)[$+ lambda x^4$]; $"),
+        "{out}"
+    );
+    assert!(out.contains("mat(1, 2; 3, #{"), "{out}");
+}
+
+#[test]
+fn rewritten_formula_and_deleted_line_break_are_marked_whole() {
+    let out = body("math-parts");
+    assert!(
+        out.contains("#redline-ins(block: true)[$ sum_(n=0)^infinity a_n = lim_(N -> infinity) S_N $]"),
+        "{out}"
+    );
+    assert!(out.contains("#redline-ins(block: true)[$ x &= y + z $]"), "{out}");
 }
 
 #[test]

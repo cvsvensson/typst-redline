@@ -22,6 +22,7 @@ The document is the `.typ` file the user names. Otherwise, take the one that is 
   - Another look: `-t UNDERLINE` for latexdiff's (underlined, no highlight, no bars); `--style key=value`, such as `--style ins-fill=none` or `--style bars=none`, for one setting. A `.typst-redline.typ` in the project or the user's `typst-redline/style.typ` may already set the look.
   - Only the new version of changed figures and formulas, as latexdiff does: `--graphics-markup new-only`.
   - A long document with few changes: add `--only-changes` to keep only the pages with marks and the summary.
+  - Changed formulas shown whole instead of with their changed parts marked: `--math-markup whole`.
   - What changed since the user last reviewed it: `--since reviewed`; once they have read it, `typst-redline <file.typ> --mark-reviewed` records the last commit as reviewed.
 - `typst-redline --help` lists the rest.
 

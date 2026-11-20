@@ -2,9 +2,9 @@
 
 Like latexdiff, for Typst.
 
-`typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document. It makes a PDF of the new version with deleted text struck out, new text highlighted, changed formulas and figures framed, and bars and change numbers in the margin; a summary at the end lists every change, including those it cannot mark on the page. AI agents wrote this tool.
+`typst-redline` shows what changed between two versions of a [Typst](https://typst.app) document. It makes a PDF of the new version with deleted text struck out, new text highlighted, changed parts of formulas coloured, changed figures framed, and bars and change numbers in the margin; a summary at the end lists every change, including those it cannot mark on the page. AI agents wrote this tool.
 
-<img src="docs/paper.png" width="480" alt="A paper page: a deleted word struck out in red, new words highlighted in blue, the old formula tinted and the old plot crossed out in dashed red frames above the new ones in blue frames, a new paragraph in blue, and bars in the margin next to each changed line, with the number of each change beside them">
+<img src="docs/paper.png" width="480" alt="A paper page: a deleted word struck out in red, new words highlighted in blue, a new term of a formula in blue, the old plot crossed out in a dashed red frame above the new one in a blue frame, a new paragraph in blue, and bars in the margin next to each changed line, with the number of each change beside them">
 
 The [gallery](docs/gallery.md) shows every kind of mark, each with the files it was made from.
 
@@ -91,7 +91,7 @@ The PDF is written next to the file, or next to the new file when you give two, 
 ## What is marked
 
 - Deleted text is struck out in red and new text highlighted in blue, also in headings, lists, captions and footnotes.
-- A changed formula, figure, table, code block or drawing is shown whole: the old one in a dashed red frame, the new one in a blue frame.
+- Inside a changed formula, the deleted parts are crossed out in red and the new parts are blue, where the change is small; a formula that changed for the most part, or lost a line break or alignment point, is shown whole, like a changed figure, table, code block or drawing: the old one in a dashed red frame, the new one in a blue frame. `--math-markup whole` shows every changed formula whole.
 - A bar in the margin points to every changed line, dashed for deletions and solid for insertions, with a number for each change that the summary page uses too.
 - A moved paragraph or section is shown once, at its new place, with a "moved" note; at its old place a grey line links to it.
 - Changes in included files and replaced images are marked; with git, the old version of each file comes from the old commit.

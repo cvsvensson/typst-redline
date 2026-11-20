@@ -54,6 +54,9 @@ What to mark:
                         tool splits the commits, and then the uncommitted
                         changes, into n steps that change about the same
                         amount of the document (one file only)
+  --math-markup <mode>  fine (default): mark the changed parts of a formula,
+                        or the formula whole where most of it changed; whole:
+                        mark every changed formula whole
 
 How marks look:
   -t, --type <name>     Start from a latexdiff markup type: UNDERLINE, COLOR,
@@ -124,6 +127,8 @@ struct Args {
     no_moves: bool,
     /// Labels of the old and the new version given with `-L`.
     labels: Vec<String>,
+    /// Mark the changed parts of a formula rather than the formula whole.
+    fine_math: bool,
     typst_args: Vec<String>,
 }
 
@@ -199,6 +204,7 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
         list_files: false,
         no_moves: false,
         labels: vec![],
+        fine_math: true,
         typst_args: vec![],
     };
     let mut revs = vec![];
@@ -238,6 +244,13 @@ fn parse_args(argv: &[String], interactive: bool) -> Result<Parsed, String> {
             "--no-moves" => a.no_moves = true,
             "--graphics-markup" => a.graphics_markup = Some(val()?),
             "--only-changes" => a.only_changes = true,
+            "--math-markup" => {
+                a.fine_math = match val()?.as_str() {
+                    "fine" => true,
+                    "whole" => false,
+                    m => return Err(format!("unknown math markup {m}; give fine or whole")),
+                }
+            }
             "--layout" => {
                 a.side_by_side = match val()?.as_str() {
                     "inline" => false,
@@ -677,10 +690,11 @@ const LADDER: [&[&str]; 6] = [
     &["frames", "names", "whole"],
 ];
 
-fn fallback_options(fallbacks: &[&str]) -> Options {
+fn fallback_options(fallbacks: &[&str], fine_math: bool) -> Options {
     Options {
         eval_deleted: !fallbacks.contains(&"names"),
         content_blocks: !fallbacks.contains(&"whole"),
+        fine_math,
     }
 }
 
@@ -692,7 +706,7 @@ fn fallback_note(fallbacks: &[&str]) -> String {
             "states" => "state and counter updates in deleted content are kept",
             "frames" => "changed content computed at layout is not framed",
             "names" => "deleted code is shown by name",
-            _ => "changed code is marked whole",
+            _ => "changed code and formulas are marked whole",
         })
         .collect();
     match parts.split_last() {
@@ -833,7 +847,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
     let mut result = redline(
         &old_v,
         &new_v,
-        fallback_options(LADDER[0]),
+        fallback_options(LADDER[0], a.fine_math),
         &history,
         moves,
         reads.as_deref(),
@@ -873,7 +887,7 @@ fn run(a: Args, reviewed: Option<&str>, reads: Option<Vec<String>>) -> Result<Pa
         if fallbacks.contains(&"states") && a.side_by_side {
             continue;
         }
-        let opts = fallback_options(fallbacks);
+        let opts = fallback_options(fallbacks, a.fine_math);
         if i > 0 {
             result = redline(&old_v, &new_v, opts, &history, moves, reads.as_deref());
         }

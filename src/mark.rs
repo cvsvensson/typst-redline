@@ -2122,6 +2122,9 @@ impl<'a> Writer<'a> {
             }
             return same;
         }
+        if n.kind() == K::Math && self.ctx.opts.fine_math {
+            return self.diff_math(o, n);
+        }
         let call = (n.kind() == K::Args).then_some(before);
         // A set rule that a show rule applies is named with it.
         let start = if n.kind() == K::SetRule && before.starts_with("show") {
@@ -2130,6 +2133,158 @@ impl<'a> Writer<'a> {
             ""
         };
         self.diff_code_nodes(&children(o), &children(n), list && n.kind() != K::Closure, call, start)
+    }
+
+    /// Write formula `n` with the changed parts against `o` marked inside
+    /// it, see the preamble's `redline-math`. False, with nothing written, if
+    /// most of the formula changed, which reads better as the formula
+    /// replaced whole, or a change cannot be marked inside it.
+    fn diff_math(&mut self, o: &SyntaxNode, n: &SyntaxNode) -> bool {
+        let (at, count) = (self.out.len(), self.changes.len());
+        let outer = std::mem::take(&mut self.bare);
+        let mut kept = 0;
+        let ok = self.math_nodes(o, n, &mut kept) && 2 * kept >= math_size(o).max(math_size(n));
+        self.bare = outer;
+        if !ok {
+            self.out.truncate(at);
+            self.changes.truncate(count);
+        }
+        ok
+    }
+
+    /// Write node `n` of a formula with the changes against `o` inside it
+    /// marked; false if they cannot be. `kept` counts the unchanged leaves.
+    fn math_nodes(&mut self, o: &SyntaxNode, n: &SyntaxNode, kept: &mut usize) -> bool {
+        if o.kind() != n.kind() || n.children().len() == 0 {
+            return false;
+        }
+        if n.kind() == K::Math {
+            let children = |m: &SyntaxNode| m.children().cloned().collect::<Vec<_>>();
+            return self.math_seq(&children(o), &children(n), kept);
+        }
+        let mut rest = o.children().filter(|x| !math_trivia(x));
+        let mut before = None;
+        for x in n.children() {
+            if math_trivia(x) {
+                self.out.push_str(&x.full_text());
+                continue;
+            }
+            let Some(y) = rest.next() else { return false };
+            // A part that a mark can replace: the operand of an attachment or
+            // a fraction, whose parentheses do not show, or a positional
+            // argument of a call.
+            let operand = match n.kind() {
+                K::MathAttach => before.is_some_and(|b| matches!(b, K::Hat | K::Underscore)),
+                K::MathFrac => x.kind() != K::Slash,
+                K::MathArgs => !matches!(
+                    x.kind(),
+                    K::LeftParen | K::RightParen | K::Comma | K::Semicolon | K::Named | K::Spread
+                ),
+                _ => false,
+            };
+            before = Some(x.kind());
+            let same = collapse_ws(y.full_text().as_str()) == collapse_ws(x.full_text().as_str());
+            if same {
+                self.out.push_str(&x.full_text());
+                *kept += math_size(x);
+            } else if !self.math_try(y, x, kept)
+                && !(operand && self.math_change(&operand_body(y), &operand_body(x), n.kind() != K::MathArgs))
+            {
+                return false;
+            }
+        }
+        rest.next().is_none()
+    }
+
+    /// [`Self::math_nodes`], with nothing written if it fails.
+    fn math_try(&mut self, o: &SyntaxNode, n: &SyntaxNode, kept: &mut usize) -> bool {
+        let (at, count, k) = (self.out.len(), self.changes.len(), *kept);
+        let ok = self.math_nodes(o, n, kept);
+        if !ok {
+            self.out.truncate(at);
+            self.changes.truncate(count);
+            *kept = k;
+        }
+        ok
+    }
+
+    /// Write the nodes `n` of a sequence in a formula with the changed runs
+    /// against `o` marked.
+    fn math_seq(&mut self, o: &[SyntaxNode], n: &[SyntaxNode], kept: &mut usize) -> bool {
+        let key = |x: &SyntaxNode| match x.kind() {
+            K::Space => " ".to_string(),
+            _ => collapse_ws(x.full_text().as_str()),
+        };
+        let keys = |v: &[SyntaxNode]| v.iter().map(key).collect::<Vec<_>>();
+        let trim = |v: &[SyntaxNode]| {
+            let a = v.iter().position(|x| !math_trivia(x)).unwrap_or(v.len());
+            let b = v.iter().rposition(|x| !math_trivia(x)).map_or(a, |b| b + 1);
+            (a, b)
+        };
+        for s in segments(&keys(o), &keys(n)) {
+            let new = &n[s.new.clone()];
+            if s.equal {
+                for x in new {
+                    self.out.push_str(&x.full_text());
+                    *kept += math_size(x);
+                }
+                continue;
+            }
+            let old = &o[s.old.clone()];
+            let ((oa, ob), (na, nb)) = (trim(old), trim(new));
+            let (oc, nc) = (&old[oa..ob], &new[na..nb]);
+            for x in &new[..na] {
+                self.out.push_str(&x.full_text());
+            }
+            let inside = oc.len() == 1 && nc.len() == 1 && self.math_try(&oc[0], &nc[0], kept);
+            if !inside && !self.math_change(oc, nc, false) {
+                return false;
+            }
+            for x in &new[nb..] {
+                self.out.push_str(&x.full_text());
+            }
+        }
+        true
+    }
+
+    /// Mark the nodes `o` of a formula deleted and `n` inserted, in
+    /// parentheses if `group`; false if a line break or alignment point is
+    /// deleted, or inserted alone, as no mark shows it.
+    fn math_change(&mut self, o: &[SyntaxNode], n: &[SyntaxNode], group: bool) -> bool {
+        let layout = |x: &SyntaxNode| matches!(x.kind(), K::Linebreak | K::MathAlignPoint);
+        if o.iter().any(layout) || n.iter().all(|x| layout(x) || math_trivia(x)) && !n.is_empty() {
+            return false;
+        }
+        let tok = |v: &[SyntaxNode]| Tok {
+            kind: TK::Atom,
+            key: String::new(),
+            text: text(v),
+            nodes: v.to_vec(),
+            block: false,
+            at: (v[0].span(), 0),
+        };
+        let start = self.changes.len();
+        if group {
+            self.out.push('(');
+        }
+        if !o.is_empty() {
+            let Some(src) = self.sanitize(o) else { return false };
+            let args = if n.is_empty() {
+                "math: true"
+            } else {
+                "math: true, gap: true"
+            };
+            self.mark(ChangeKind::Del, args, math_body(&src), &[tok(o)]);
+        }
+        if !n.is_empty() {
+            let t = tok(n);
+            self.mark(ChangeKind::Ins, "math: true", math_body(&t.text), &[t]);
+        }
+        if group {
+            self.out.push(')');
+        }
+        self.join_from(start);
+        true
     }
 
     /// Write the changed body `n` of a call as it is and keep the old body
@@ -2312,6 +2467,38 @@ impl<'a> Writer<'a> {
         }
         self.out.push_str(&ntrail);
         self.join_from(start);
+    }
+}
+
+/// Spaces and comments in a formula, which do not show.
+fn math_trivia(n: &SyntaxNode) -> bool {
+    matches!(n.kind(), K::Space | K::LineComment | K::BlockComment)
+}
+
+/// An operand of an attachment or fraction without the parentheses that
+/// do not show around it.
+fn operand_body(n: &SyntaxNode) -> Vec<SyntaxNode> {
+    let parts: Vec<&SyntaxNode> = n.children().collect();
+    match parts[..] {
+        [l, m, r] if l.leaf_text() == "(" && r.leaf_text() == ")" && m.kind() == K::Math => {
+            m.children().cloned().collect()
+        }
+        _ => vec![n.clone()],
+    }
+}
+
+/// Math source as an inline equation; a line break at its end would
+/// escape the closing dollar.
+fn math_body(src: &str) -> String {
+    let pad = if src.ends_with('\\') { " " } else { "" };
+    format!("${src}{pad}$")
+}
+
+/// The number of leaves of a formula that show.
+fn math_size(n: &SyntaxNode) -> usize {
+    match n.children().len() {
+        0 => usize::from(!math_trivia(n)),
+        _ => n.children().map(math_size).sum(),
     }
 }
 

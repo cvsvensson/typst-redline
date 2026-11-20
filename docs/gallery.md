@@ -4,13 +4,13 @@ Each picture is a page of a PDF that `typst-redline` made from the files linked 
 
 ## Text, formulas and figures
 
-Deleted words are struck out in red and new ones highlighted in blue; a new paragraph is blue. The old formula is tinted in a dashed red frame above the new one in a blue frame. The figure's plot changed: the old plot, crossed out, stands before the new figure, whose caption appears once with its new words marked. The equation and the figure keep their numbers. Bars in the margin mark each changed line, with the number of each change next to them; the old and the new formula are one change and share a number, and a line with two changes is labelled *7–8*.
+Deleted words are struck out in red and new ones highlighted in blue; a new paragraph is blue. The formula gained a term, which is blue inside it; deleted parts of a formula are crossed out in red. A formula that changed for the most part, or lost a line break or alignment point, is shown whole instead, the old one tinted in a dashed red frame above the new one in a blue frame, as with `--math-markup whole`. The figure's plot changed: the old plot, crossed out, stands before the new figure, whose caption appears once with its new words marked. The equation and the figure keep their numbers. Bars in the margin mark each changed line, with the number of each change next to them; a deleted and an inserted piece that replace each other are one change and share a number, and a line with two changes is labelled *7–8*.
 
 ```
 typst-redline old.typ new.typ
 ```
 
-<img src="paper.png" width="560" alt="A paper page with a deleted word, new words, the old formula tinted and the old plot crossed out in dashed red frames above the new ones in blue frames, a new paragraph, and bars and change numbers in the margin">
+<img src="paper.png" width="560" alt="A paper page with a deleted word, new words, a new term of a formula in blue, the old plot crossed out in a dashed red frame above the new one in a blue frame, a new paragraph, and bars and change numbers in the margin">
 
 Files: [paper/old.typ](paper/old.typ), [paper/new.typ](paper/new.typ).
 

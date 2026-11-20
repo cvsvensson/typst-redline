@@ -267,7 +267,7 @@
     states: [Numbers after deleted content can differ from the new version, because counters that it changes are not set back.],
     frames: [Changed drawings, and other content that the document lays out by code, have no frame; the bar in the margin still marks them.],
     names: [Deleted code is shown by its name instead of as it looked.],
-    whole: [A changed call is marked whole, the old call deleted and the new one inserted, even where only text inside it changed.],
+    whole: [A changed call or formula is marked whole, the old one deleted and the new one inserted, even where only a part of it changed.],
   )
   let lines = redline-fallback.filter(f => f in says).map(f => says.at(f))
   if lines.len() > 0 [Some changes are marked more coarsely, because the document did not compile with every change marked in full. #lines.join[ ]]
@@ -961,7 +961,19 @@
   parbreak()
 }
 
-#let redline-ins(body, block: false, bare: none, step: none, move: none, id: none) = {
+// A change inside a formula: `body` is an inline equation whose body is laid
+// out as part of the formula around it, in its style and spacing. Strikes,
+// highlights and boxes do not reach into math, so deleted math is crossed
+// out with a line and both are coloured; the bar marks the line.
+#let redline-math(kind, body, st, step, id) = {
+  let b = if type(body) == content and body.func() == math.equation { body.body } else { body }
+  let fill = if kind == "del" { st.del } else { st.ins }
+  redline-tag(kind, -0.8em, step: step, id: id)
+  redline-fill(fill, if kind == "del" { math.cancel(redline-neutral(b), stroke: st.strike) } else { b })
+  context redline-tag("end", 0.3em, width: 0pt)
+}
+
+#let redline-ins(body, block: false, bare: none, step: none, move: none, math: false, id: none) = {
   if move != none {
     let end = move.at("end", default: false)
     // Both ends, so that the pages a long move spans are shown.
@@ -969,7 +981,9 @@
     return side + redline-move-tag(if end { "end" } else { "to" }, move.id, step: step, block: move.block, heading: move.at("heading", default: false))
   }
   let st = redline-step-style(step)
-  if redline-side != none { redline-side-mark("ins", body, id: id) }
+  let side = if redline-side != none { redline-side-mark("ins", body, id: id) }
+  if math { return side + redline-math(if redline-side == "old" { "del" } else { "ins" }, body, st, step, id) }
+  side
   if redline-side == "old" {
     let look = redline-del-look.with(st: st)
     redline-mark("del", redline-footnotes(body, look), block, look, st.del-frame, frame-style: look, bare: bare, step: step, id: id)
@@ -1011,13 +1025,14 @@
 
 // On a side of the side-by-side layout, a deletion is content the version
 // does not have: the page next to it shows it.
-#let redline-del(body, block: false, heading: none, item: none, gap: false, bare: none, step: none, move: none, id: none) = {
+#let redline-del(body, block: false, heading: none, item: none, gap: false, bare: none, step: none, move: none, math: false, id: none) = {
   let st = redline-step-style(step)
   // The binary pairs the pages of a move's two places by the marks around
   // its content, which each side has.
   if redline-side != none and move != none { return }
   if redline-side != none { return redline-side-mark("del", body, id: id, block: block or heading != none or item != none) }
   if move != none { return redline-move-line(move, body, step) }
+  if math { return redline-math("del", body, st, step, id) + if gap { h(0.2em) } }
   let block = block or heading != none or item != none
   let body = if st.del-text and st.del-blocks { body } else { redline-kept(body, block, st) }
   let (item, gap) = if body == [] { (none, false) } else { (item, gap) }
