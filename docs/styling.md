@@ -30,7 +30,6 @@ Two style files apply without an option, if they exist: the user's `typst-redlin
 </tr>
 <tr>
 <td><img src="styles/underline.png" width="260" alt="The paper page with new words underlined without highlight and no bars"><br><a href="styles/underline.typ"><code>underline.typ</code></a>, lines only</td>
-<td><img src="styles/loud.png" width="260" alt="The paper page with neon green highlight, thick pink strike-through, heavy frames and wide bars"><br><a href="styles/loud.typ"><code>loud.typ</code></a>, every mark as heavy as the keys allow</td>
 </tr>
 </table>
 
@@ -92,7 +91,7 @@ Where they differ from latexdiff's types of the same name:
 - Changed formulas and figures keep their frames, which latexdiff does not draw.
 - latexdiff's other types are not offered: `CTRADITIONAL`, `TRADITIONAL` and `CFONTCHBAR` (deleted text moved to a footnote or set in other fonts), `CFONT` and `FONTSTRIKE` (other fonts), `BOLD`, `INVISIBLE`, `PDFCOMMENT` and `LUAUNDERLINE`. The keys have no font settings.
 
-The keys, not the types, set the look in detail; [loud.typ](styles/loud.typ) shows how far they go.
+The keys, not the types, set the look in detail; the [gallery](gallery.md#a-style-of-its-own) has a style that sets most of them.
 
 ## A preamble of your own
 

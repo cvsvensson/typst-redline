@@ -20,16 +20,6 @@ In an old formula, figure, code block or drawing, text is struck through where i
 
 Change numbers count in the reading order of the new version, so that a co-author can write "change 14 is wrong". A change in a column between others, or next to a margin too narrow for its number, has its number in the other margin on the same line.
 
-## A style of its own
-
-The paper page again with [loud.typ](styles/loud.typ), a style file that sets most keys of [Styling](styling.md) to heavy values: a neon highlight, thick lines, heavy frames and wide bars.
-
-```
-typst-redline old.typ new.typ --style loud.typ
-```
-
-<img src="styles/loud.png" width="560" alt="The paper page with neon green highlight on new words, thick pink strike-through on deleted words, a heavy dotted pink frame with a thick cross around the old plot, a heavy green frame around the new figure and wide bars in the margin">
-
 ## Footnotes
 
 A new footnote is highlighted at the foot of the page. A deleted footnote is struck through in parentheses where it stood, so that the remaining footnotes keep the new version's numbers.
@@ -122,3 +112,13 @@ typst-redline old.typ new.typ --layout side-by-side
 Files: [slides/old.typ](slides/old.typ), [slides/new.typ](slides/new.typ).
 
 The first page lists which pages are shown, and the last pages are the same summary as in the default layout, without its legend. Change numbers are on the new pages only. A page that moved is shown next to its old page. A page that a change only listed on the summary draws differently, such as one with renumbered headings, is shown as well. Deleted content looks as it did in the old version, since the old pages are shown as they were.
+
+## A style of its own
+
+The paper page again with [loud.typ](styles/loud.typ), a style file that sets most keys of [Styling](styling.md) to heavy values: a neon highlight, thick lines, heavy frames and wide bars.
+
+```
+typst-redline old.typ new.typ --style loud.typ
+```
+
+<img src="styles/loud.png" width="560" alt="The paper page with neon green highlight on new words, thick pink strike-through on deleted words, a heavy dotted pink frame with a thick cross around the old plot, a heavy green frame around the new figure and wide bars in the margin">
