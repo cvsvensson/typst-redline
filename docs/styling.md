@@ -70,7 +70,7 @@ Two style files apply without an option, if they exist: the user's `typst-redlin
 | `number` | grey | Change numbers in the margin and on the summary |
 | `steps` | six colours | Colours of `--each-commit` and `--steps`, which replace `ins` and `del` |
 
-`--graphics-markup new-only` sets `del-blocks: false`, and `--graphics-markup none` also `block-color: false` and both frames to `none`; `both`, the default, sets nothing. latexdiff's default is `new-only`, but there it is an option of its own, so the types below leave graphics markup at `both`.
+`--graphics-markup new-only` sets `del-blocks: false`, and `--graphics-markup none` also `block-color: false` and both frames to `none`; `both`, the default, sets nothing. latexdiff's default is `new-only`, but there it is an option of its own, so the types below leave graphics markup at `both`. These keys and `--graphics-markup` act on formulas shown whole, in frames; the changed parts marked inside a formula take `ins`, `del`, `strike` and `del-text` as text does.
 
 A stroke takes what it leaves out from its default, and its colour from its mark (`move` for `move-stroke`): `strike: 1pt` is a thicker strike-through in the colour of `del`, `del-frame: (dash: "dotted")` a dotted frame of the default thickness, and `del: green` also makes the strike-through green. An unknown key is an error that lists the keys, and so is a value of a type the key does not take, such as `bars: 1`.
 
